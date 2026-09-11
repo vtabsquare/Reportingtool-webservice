@@ -5,7 +5,7 @@ services:
     runtime: docker
     plan: free
     rootDir: api
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./api/Dockerfile
     healthCheckPath: /api/v1/health
     envVars:
       - key: VTAB_ENVIRONMENT
