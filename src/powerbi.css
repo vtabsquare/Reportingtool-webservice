@@ -1,0 +1,936 @@
+/* VTAB 5 authoring system. Imported last so the application has one coherent shell. */
+:root{
+  --v5-accent:#0f6cbd;--v5-accent-hover:#0b5aa0;--v5-text:#242424;--v5-muted:#616161;
+  --v5-border:#d1d1d1;--v5-border-soft:#e5e5e5;--v5-canvas:#e9e9e9;--v5-surface:#fff;
+  --v5-hover:#f3f3f3;--v5-selected:#e4f2ef;--v5-rail:48px;--v5-topbar:46px;--v5-viewtabs:35px;
+  font-family:"Segoe UI Variable","Segoe UI",Aptos,Arial,sans-serif;
+}
+html,body,#root{height:100%;overflow:hidden}.appShell{height:100vh!important;background:#f3f3f3!important}
+.appShell>.content{min-width:0!important;background:#f3f3f3!important}
+
+/* Slim Power BI-style view rail */
+[data-theme="vtab"] .sidebar.powerBiRail,[data-theme="vtab"] .sidebar.powerBiRail:hover{
+  width:var(--v5-rail)!important;min-width:var(--v5-rail)!important;height:100vh!important;padding:0!important;
+  background:#f5f5f5!important;border-right:1px solid var(--v5-border)!important;box-shadow:none!important;overflow:visible!important
+}
+.powerBiRail .brand{height:var(--v5-topbar);min-height:var(--v5-topbar);padding:0!important;display:grid!important;place-items:center!important;border-bottom:1px solid var(--v5-border)!important}
+.powerBiRail .brandMark{width:28px!important;height:28px!important;min-width:28px!important;border-radius:5px!important;background:var(--v5-accent)!important;font-size:15px!important;box-shadow:none!important}
+.powerBiRail .brandName,.powerBiRail .navLabel,.powerBiRail .navSectionLabel{display:none!important}
+.powerBiRail .navDock{padding:6px 0!important;gap:1px!important;overflow-y:auto!important;overflow-x:visible!important}
+.powerBiRail .navItem{position:relative!important;width:47px!important;height:42px!important;min-height:42px!important;padding:0!important;display:grid!important;place-items:center!important;border-radius:0!important;color:#4b4b4b!important;background:transparent!important}
+.powerBiRail .navItem:hover{background:#e9e9e9!important;color:#111!important}.powerBiRail .navItem.active{background:var(--v5-selected)!important;color:var(--v5-accent)!important}
+.powerBiRail .navItem.active:before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px!important;border-radius:0 2px 2px 0;background:var(--v5-accent)!important}
+.powerBiRail .navIcon{width:22px!important;height:22px!important;min-width:22px!important;display:grid!important;place-items:center!important}.powerBiRail .navIcon svg{width:20px;height:20px}
+.powerBiRail .railSeparator{height:1px;background:#ddd;margin:5px 8px}.powerBiRail .railBottomActions{margin-top:auto;display:flex;flex-direction:column;align-items:center;border-top:1px solid #ddd;padding-top:4px}.powerBiRail .copilotItem{margin-top:0!important}
+.powerBiRail .navItem:hover:after{content:attr(title);position:absolute;left:51px;top:6px;z-index:1000;padding:7px 9px;border-radius:3px;background:#252525;color:#fff;font-size:11px;white-space:nowrap;box-shadow:0 3px 10px #0003}
+
+/* Compact application title and authoring view tabs */
+[data-theme="vtab"] .topbarGlass{position:relative;height:var(--v5-topbar)!important;min-height:var(--v5-topbar)!important;padding:0 10px!important;background:#fff!important;border-bottom:1px solid var(--v5-border-soft)!important;box-shadow:none!important}
+[data-theme="vtab"] .topbarGlass .crumbGlass{min-width:310px;max-width:38%;gap:8px;overflow:hidden}
+[data-theme="vtab"] .topbarGlass .productTitle{font-size:12px;font-weight:600;color:#242424;white-space:nowrap}
+[data-theme="vtab"] .topbarGlass .titleDivider{height:18px;width:1px;background:#d1d1d1;flex:0 0 1px}
+[data-theme="vtab"] .topbarGlass .crumbTitle{font-size:11px;font-weight:400;color:#616161;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+[data-theme="vtab"] .topbarGlass .buildBadgeGlass{font-size:9px;font-weight:600;color:#616161;background:#f3f3f3;border:1px solid #e1e1e1;border-radius:2px;padding:2px 5px}
+[data-theme="vtab"] .topbarGlass .topActionsGlass{flex:1;justify-content:flex-end;min-width:0;gap:5px}
+[data-theme="vtab"] .topbarGlass .commandSearch{position:absolute;left:50%;top:7px;transform:translateX(-50%);width:min(430px,34vw);z-index:10}
+[data-theme="vtab"] .topbarGlass .searchGlass{height:31px;border:1px solid #c8c8c8;border-radius:3px;background:#fafafa;box-shadow:none}
+[data-theme="vtab"] .topbarGlass .searchGlass:focus-within{border-color:var(--v5-accent);box-shadow:0 0 0 1px var(--v5-accent)}
+[data-theme="vtab"] .topbarGlass .searchGlass input{font-size:11px}
+[data-theme="vtab"] .topbarGlass .btnGlass,[data-theme="vtab"] .topbarGlass .btnIconGlass{height:30px;border-radius:3px;font-size:10px;box-shadow:none!important}
+[data-theme="vtab"] .authoringFlow{height:var(--v5-viewtabs)!important;min-height:var(--v5-viewtabs)!important;flex:0 0 var(--v5-viewtabs)!important;padding:0 10px!important;gap:0!important;justify-content:flex-start!important;background:#fff!important;border-bottom:1px solid var(--v5-border)!important}
+[data-theme="vtab"] .authoringFlow .flowStage{position:relative;min-width:0!important;height:34px!important;padding:0 13px!important;gap:6px!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;color:#4b4b4b!important;transform:none!important;font-size:11px!important;font-weight:400!important}
+[data-theme="vtab"] .authoringFlow .flowStage:hover{background:#f5f5f5!important;color:#111!important}.authoringFlow .flowStage.active{color:var(--v5-accent)!important;border-bottom:2px solid var(--v5-accent)!important}.authoringFlow .flowStage.contextual:before{content:"";position:absolute;left:7px;right:7px;top:0;height:2px;background:#8764b8}.authoringFlow .flowStageNumber{display:none!important}
+
+button,input,select,textarea{font-family:inherit}.btnGlass{box-shadow:none!important}.btnGlass.primary{background:var(--v5-accent)!important;border-color:var(--v5-accent)!important}.btnGlass.primary:hover{background:var(--v5-accent-hover)!important}
+*:focus-visible{outline:2px solid #0f6cbd!important;outline-offset:1px}
+
+/* Report designer: canvas first, then independent Filters, Visualizations and Data panes. */
+[data-theme="vtab"] .view-report .reportWorkspaceGlass{background:#fff!important}
+[data-theme="vtab"] .view-report .reportRibbonGlass{height:62px!important;min-height:62px!important;padding:4px 7px 3px!important;gap:2px!important;background:#fff!important;border-bottom:1px solid var(--v5-border)!important;overflow-x:auto!important}
+[data-theme="vtab"] .view-report .reportRibbonGlass .btnGlass{position:relative;height:52px!important;min-height:52px!important;padding:4px 8px 13px!important;border-radius:2px!important;font-size:9px!important;line-height:1.1!important;flex-direction:column!important;gap:3px!important;background:#fff!important;border-color:transparent!important;color:#333!important;white-space:nowrap!important}
+[data-theme="vtab"] .view-report .reportRibbonGlass .btnGlass svg{width:17px;height:17px}
+[data-theme="vtab"] .view-report .reportRibbonGlass .btnGlass:hover,[data-theme="vtab"] .view-report .reportRibbonGlass .btnGlass.active{background:var(--v5-hover)!important;border-color:var(--v5-border-soft)!important}
+[data-theme="vtab"] .view-report .reportRibbonGlass .ribbonSpacerGlass{flex:1;min-width:8px}
+[data-theme="vtab"] .view-report .designerViewToggleGlass,[data-theme="vtab"] .view-report .layoutModeToggleGlass{height:54px;padding:0 5px;border-left:1px solid #e1e1e1;border-right:0;display:flex;align-items:flex-start;gap:1px}
+[data-theme="vtab"] .view-report .zoomControls{align-self:center;height:25px}
+[data-theme="vtab"] .view-report .reportBodyGlass{display:flex!important;min-width:0!important;min-height:0!important;background:var(--v5-canvas)!important}
+[data-theme="vtab"] .view-report .canvasStageGlass{order:1!important;flex:1 1 auto!important;min-width:360px!important;background:var(--v5-canvas)!important}
+[data-theme="vtab"] .view-report .filtersDock{order:2!important;width:220px!important;min-width:190px!important;max-width:260px!important}
+[data-theme="vtab"] .view-report .professionalRightPane{order:3!important;width:292px!important;min-width:260px!important;max-width:340px!important;padding:0!important}
+[data-theme="vtab"] .view-report .advancedFields{order:4!important;width:210px!important;min-width:180px!important;max-width:250px!important;padding:0 9px 10px!important}
+.professionalDockPane,.view-report .professionalRightPane,.view-report .advancedFields{background:#fff!important;border-left:1px solid var(--v5-border)!important;overflow:auto!important;box-shadow:none!important}
+.dockPaneTitle{height:37px;min-height:37px;display:flex;align-items:center;gap:7px;padding:0 10px;border-bottom:1px solid var(--v5-border-soft);font-size:12px;color:var(--v5-text)}
+.dockPaneScroll{height:calc(100% - 38px);overflow:auto;padding:8px}.filtersDock .scopeBlock{margin:0 0 8px!important;padding:8px!important;border:1px solid var(--v5-border-soft)!important;border-radius:3px!important;background:#fff!important}
+.filtersDock .scopeHead{font-size:11px!important}.filtersDock .inlineFilterBuilder{grid-template-columns:1fr!important;gap:5px!important}.filtersDock input,.filtersDock select{min-width:0!important;width:100%!important;height:28px!important;font-size:10px!important}
+.view-report .formatTabs.four{grid-template-columns:repeat(4,1fr)!important;height:44px!important}.view-report .formatTabs.four button{height:44px!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:2px!important;font-size:9px!important;border-radius:0!important}.view-report .formatTabs.four button span{display:block!important}.view-report .formatTabs.four button.active{color:var(--v5-accent)!important;border-bottom:2px solid var(--v5-accent)!important}.view-report .formatTabs.four button:disabled{opacity:.35!important}
+.view-report .formatPaneHeader{position:sticky;top:0;z-index:4;background:#fff;border-bottom:1px solid var(--v5-border-soft)!important}
+.view-report .rightVisualGallery{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:3px!important}.view-report .rightVisualGallery button{height:45px!important;padding:3px!important;border-radius:2px!important}.view-report .rightVisualGallery button>span:not(.visualGlyph){display:none!important}.view-report .rightVisualGallery .visualGlyph{display:grid!important;width:30px!important;height:30px!important;border-radius:2px!important;background:transparent!important;border:0!important;color:#424242!important}.view-report .rightVisualGallery svg{display:block!important;width:22px!important;height:22px!important;stroke:currentColor!important}.view-report .rightVisualGallery button:hover .visualGlyph{color:var(--v5-accent)!important}
+.view-report .visualizationsHeader{padding:9px 10px 5px!important}.view-report .visualCategoryTabs{padding:0 8px 5px!important}.view-report .visualCategoryTabs button{font-size:9px!important;padding:4px!important}
+.view-report .canvasWrapGlass{padding:16px!important}.view-report .canvasToplineGlass{height:34px!important;min-height:34px!important;padding:0 10px!important;background:#f8f8f8!important;border-bottom:1px solid var(--v5-border)!important}
+.view-report .reportPageSurfaceGlass{outline:1px dashed #777!important;outline-offset:0!important;box-shadow:0 2px 8px #0002!important}
+.view-report .reportPageSurfaceGlass:focus-visible{outline:2px solid var(--v5-accent)!important}
+.reportPaneEdgeStack{position:absolute;right:0;top:8px;z-index:30;display:flex;flex-direction:column;gap:2px;pointer-events:none}.reportPaneEdgeStack:empty{display:none}.reportPaneEdgeStack .reportPaneEdgeToggle{pointer-events:auto;position:static!important;width:31px!important;min-height:92px!important;padding:6px 4px!important;border:1px solid var(--v5-border)!important;border-right:0!important;border-radius:3px 0 0 3px!important;background:#fff!important;color:#444!important;display:flex!important;align-items:center!important;justify-content:flex-start!important;gap:5px!important;writing-mode:vertical-rl!important;transform:rotate(180deg)!important;font-size:10px!important;box-shadow:0 2px 7px #0001!important}.reportPaneEdgeStack .reportPaneEdgeToggle svg{transform:rotate(180deg);flex:0 0 auto}.reportPaneEdgeStack .reportPaneEdgeToggle:hover{background:#f1f1f1!important;color:var(--v5-accent)!important}
+.view-report .formatSection{border:0!important;border-bottom:1px solid var(--v5-border-soft)!important;border-radius:0!important;margin:0!important;box-shadow:none!important}.view-report .formatSection>summary{height:36px!important;padding:0 10px!important;font-size:11px!important;background:#fff!important}.view-report .formatSectionBody{padding:8px 10px 11px!important;background:#fff!important}.view-report .propertyList{padding:0!important}.view-report .formatSearch{margin:8px!important;border-radius:2px!important;height:29px!important}
+.view-report .pageTabsGlass{height:34px!important;min-height:34px!important;padding:2px 8px!important;background:#fafafa!important;border-top:1px solid var(--v5-border)!important;gap:3px!important}
+.reportStatusSpacer{flex:1;min-width:20px}.reportStatusText,.reportStatusZoom{font-size:10px;color:var(--v5-muted);white-space:nowrap}.statusFitButton{height:24px;padding:0 7px;border:0;background:transparent;color:#444;font-size:10px;cursor:pointer}.statusFitButton:hover{background:#e9e9e9}.statusZoomSlider{width:92px;height:16px;accent-color:var(--v5-accent)}
+.view-report .pageTabGlass{height:29px!important;padding:4px 12px!important;border:0!important;border-radius:0!important;background:transparent!important;font-size:10px!important}.view-report .pageTabGlass.active{color:var(--v5-accent)!important;border-bottom:2px solid var(--v5-accent)!important;background:#fff!important}
+@media(max-width:1550px){[data-theme="vtab"] .view-report .filtersDock{width:190px!important;min-width:170px!important}[data-theme="vtab"] .view-report .professionalRightPane{width:270px!important;min-width:245px!important}[data-theme="vtab"] .view-report .advancedFields{width:185px!important;min-width:165px!important}}
+@media(max-width:1200px){[data-theme="vtab"] .view-report .filtersDock{display:none!important}[data-theme="vtab"] .view-report .advancedFields{width:170px!important;min-width:155px!important}}
+@media(max-width:1050px){[data-theme="vtab"] .topbarGlass .productTitle,[data-theme="vtab"] .topbarGlass .titleDivider{display:none}[data-theme="vtab"] .topbarGlass .crumbGlass{min-width:130px}.topbarGlass .btnGlass{padding-inline:7px}.topbarGlass .btnGlass:not(.primary) span{display:none}}
+
+/* Contextual report authoring: every visible tab exposes working commands. */
+[data-theme="vtab"] .view-report .reportContextTabs{height:29px;min-height:29px;display:flex;align-items:stretch;padding:0 8px;background:#fff;border-bottom:1px solid var(--v5-border);gap:1px}
+[data-theme="vtab"] .view-report .reportContextTabs button{height:29px;padding:0 13px;border:0;border-bottom:2px solid transparent;background:transparent;color:#424242;font-size:10px;cursor:pointer;text-transform:none}
+[data-theme="vtab"] .view-report .reportContextTabs button:hover{background:#f3f3f3}.view-report .reportContextTabs button.active{color:var(--v5-accent);border-bottom-color:var(--v5-accent);font-weight:600}
+[data-theme="vtab"] .view-report .legacyReportRibbon{display:none!important}
+[data-theme="vtab"] .view-report .reportCommandRibbon{height:47px!important;min-height:47px!important;padding:2px 7px!important;gap:1px!important;overflow:visible!important}
+[data-theme="vtab"] .view-report .reportCommandRibbon>.btnGlass,[data-theme="vtab"] .view-report .reportCommandRibbon>.panelMenuWrap>.btnGlass{height:42px!important;min-height:42px!important;min-width:58px!important;padding:3px 8px 4px!important;display:flex!important;flex-direction:column!important;justify-content:center!important;gap:2px!important;font-size:9px!important;border:0!important;border-right:1px solid #e5e5e5!important;border-radius:0!important;background:#fff!important;color:#333!important}
+[data-theme="vtab"] .view-report .reportCommandRibbon .btnGlass svg{display:block!important;width:17px!important;height:17px!important}.view-report .reportCommandRibbon .btnGlass:hover,.view-report .reportCommandRibbon .btnGlass.active{background:#f1f1f1!important;color:var(--v5-accent)!important}
+.view-report .reportCommandRibbon .panelMenuWrap{height:42px}.view-report .reportCommandRibbon .panelMenuGlass{top:44px;left:0}
+.view-report .canvasToplineGlass{display:none!important}
+.view-report .dockPaneTitle,.view-report .advancedFields .paneTitle,.view-report .formatPaneIdentity{min-height:34px;display:flex;align-items:center;gap:6px;padding:0 8px;border-bottom:1px solid var(--v5-border-soft)}
+.view-report .advancedFields .paneTitle small,.view-report .formatPaneIdentity>div{margin-left:auto}.view-report .formatPaneIdentity>div{display:flex;flex-direction:column;min-width:0;margin-left:0;flex:1}.view-report .formatPaneIdentity small{font-size:8px;color:#777}.view-report .formatPaneIdentity b{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.view-report .dockCollapseButton{margin-left:auto;width:24px;height:24px;display:grid;place-items:center;border:0;background:transparent;color:#555;cursor:pointer;border-radius:2px}.view-report .dockCollapseButton:hover{background:#ededed;color:var(--v5-accent)}
+.view-report .scopeBlock{border:0!important;border-bottom:1px solid var(--v5-border-soft)!important;margin:0!important;padding:0!important}.view-report .scopeBlock>.scopeHead{list-style:none;min-height:34px;padding:0 8px;display:flex;align-items:center;gap:5px;cursor:pointer;background:#fff}.view-report .scopeBlock>.scopeHead::-webkit-details-marker{display:none}.view-report .scopeBlock>.scopeHead span{margin-left:auto}.view-report .scopeBlock[open]>.scopeHead svg{transform:rotate(0)}.view-report .scopeBlock:not([open])>.scopeHead svg{transform:rotate(-90deg)}.view-report .scopeContent{padding:7px 8px 10px}
+.view-report .rightVisualGallery{grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:1px!important;padding:2px 8px 7px!important}.view-report .rightVisualGallery button{height:38px!important;padding:1px!important;border:0!important}.view-report .rightVisualGallery .visualGlyph{width:27px!important;height:27px!important}.view-report .rightVisualGallery svg{width:20px!important;height:20px!important;stroke-width:1.7!important}
+[data-theme="vtab"] .view-report .advancedFields .fieldCheck{width:12px;height:12px;flex:0 0 12px;display:grid;place-items:center;border:1px solid #a6a6a6;background:#fff;color:#fff;font-size:9px;line-height:1}
+[data-theme="vtab"] .view-report .advancedFields .field.boundField{background:#eaf3fb!important;color:#174a7c!important}
+[data-theme="vtab"] .view-report .advancedFields .field.boundField .fieldCheck{background:var(--v5-accent);border-color:var(--v5-accent);color:#fff}
+
+/* Data, Transform and Model share the same desktop authoring language. */
+[data-theme="vtab"] .view-data .workspaceGlass,[data-theme="vtab"] .view-transform .workspaceGlass,[data-theme="vtab"] .view-model .modelWorkspace{background:#f3f3f3!important;color:var(--v5-text)!important}
+[data-theme="vtab"] .view-data .paneGlass,[data-theme="vtab"] .view-transform .paneGlass{background:#fff!important;border-color:var(--v5-border)!important;box-shadow:none!important}
+[data-theme="vtab"] .paneTitleGlass{height:38px!important;padding:0 10px!important;border-bottom:1px solid var(--v5-border-soft)!important;font-size:12px!important}
+[data-theme="vtab"] .view-data .sourceGroupGlass{padding:7px 8px!important;border-bottom:1px solid #ededed!important}.view-data .sourceGroupGlass>small{padding:0 5px 4px!important;font-size:9px!important;letter-spacing:.08em!important;color:#737373!important}.view-data .sourceGlass{min-height:31px!important;padding:5px 7px!important;border-radius:2px!important;font-size:10px!important;color:#3b3b3b!important}.view-data .sourceGlass:hover{background:#f3f3f3!important}.view-data .sourceGlass.active{background:#e8f2fb!important;color:var(--v5-accent)!important;border-color:transparent!important}
+[data-theme="vtab"] .view-data .mainPanelGlass{background:#f3f3f3!important}.view-data .connectorFocusGlass,.view-data .connectorFocusCardGlass,.view-data .connectorFormGlass{background:#fff!important;border-color:var(--v5-border)!important;border-radius:3px!important;box-shadow:none!important}.view-data .dataCatalogHeaderGlass{background:#fff!important;border-bottom:1px solid var(--v5-border)!important}
+
+[data-theme="vtab"] .view-transform .transformGlass>.panelHeaderGlass.transformCommandHeader{min-height:40px!important;height:40px!important;padding:3px 8px!important;background:#fff!important;border-bottom:1px solid var(--v5-border)!important}.view-transform .transformTitleBlock{display:flex!important;align-items:baseline!important;gap:8px!important;min-width:180px!important}.view-transform .transformTitleBlock .eyebrowGlass{display:none!important}.view-transform .transformTitleBlock h2{font-size:12px!important;margin:0!important}.view-transform .transformTitleBlock p{font-size:9px!important;margin:0!important;color:#6a6a6a!important}.view-transform .transformPrimaryActions{gap:1px!important}.view-transform .transformPrimaryActions .btnGlass{height:32px!important;min-height:32px!important;border-radius:2px!important;flex-direction:row!important;font-size:9px!important;gap:4px!important;padding:3px 6px!important}.view-transform .transformPrimaryActions .iconOnly{width:30px!important;padding:0!important}.view-transform .closeApplyAction{padding-inline:10px!important}
+[data-theme="vtab"] .view-transform .groupedTransformRibbon{min-height:42px!important;height:42px!important;padding:2px 6px!important;background:#fff!important;border-bottom:1px solid var(--v5-border)!important;gap:1px!important}.view-transform .groupedTransformRibbon>details>summary,.view-transform .groupedTransformRibbon>.btnGlass{height:37px!important;min-width:0!important;padding:3px 8px!important;border:0!important;border-right:1px solid #e5e5e5!important;border-radius:0!important;background:#fff!important;flex-direction:row!important;justify-content:center!important;gap:4px!important;font-size:9px!important}.view-transform .groupedTransformRibbon>details>summary svg{display:block!important;width:16px!important;height:16px!important}.view-transform .groupedTransformRibbon>details>summary:hover{background:#f3f3f3!important}
+.powerQueryFormulaBar{height:29px;min-height:29px;display:flex;align-items:center;gap:4px;padding:2px 8px;background:#fff;border-bottom:1px solid var(--v5-border);color:#333}.powerQueryFormulaBar>b{font-family:Georgia,serif;font-style:italic;font-size:14px;width:24px;color:#555}.powerQueryFormulaBar>button{width:22px;height:22px;border:0;background:transparent;color:#555;cursor:pointer}.powerQueryFormulaBar>button:hover{background:#ededed}.powerQueryFormulaBar>code{height:22px;line-height:22px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 8px;border:1px solid #d1d1d1;background:#fff;color:#333;font:10px Consolas,monospace}.view-transform .transformBodyGlass{height:calc(100% - 111px)!important}.view-transform .previewGridGlass,.view-transform .stepsPaneGlass{background:#fff!important;border-color:var(--v5-border)!important}.view-transform .excelGridGlass th{background:#f8f8f8!important;color:#333!important;border-color:#d9d9d9!important}.view-transform .excelGridGlass td{background:#fff!important;border-color:#e5e5e5!important;color:#333!important}
+
+/* Report authoring parity pass: canvas-first workspace with compact Power BI panes. */
+[data-theme="vtab"] .view-report .reportWorkspaceGlass{display:flex!important;flex-direction:column!important;height:100%!important;min-height:0!important;background:#e9e9e9!important}
+[data-theme="vtab"] .view-report .reportContextTabs,[data-theme="vtab"] .view-report .reportCommandRibbon,[data-theme="vtab"] .view-report .legacyReportRibbon{display:none!important}
+[data-theme="vtab"] .view-report .reportBodyGlass{flex:1 1 auto!important;height:auto!important;min-height:0!important;display:flex!important;overflow:hidden!important;background:#e9e9e9!important}
+[data-theme="vtab"] .view-report .canvasStageGlass{order:1!important;flex:1 1 auto!important;min-width:420px!important;background:#e9e9e9!important}
+[data-theme="vtab"] .view-report .filtersDock{order:2!important;width:216px!important;min-width:196px!important;max-width:236px!important}
+[data-theme="vtab"] .view-report .professionalRightPane{order:3!important;width:272px!important;min-width:272px!important;max-width:272px!important;padding:0!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;background:#fff!important;border-left:1px solid #d1d1d1!important}
+[data-theme="vtab"] .view-report .advancedFields{order:4!important;width:244px!important;min-width:244px!important;max-width:244px!important;padding:0!important;overflow:auto!important;background:#fff!important;border-left:1px solid #d1d1d1!important}
+
+/* Visualizations pane: the mode replaces the content instead of stacking below it. */
+[data-theme="vtab"] .view-report .formatPaneHeader{position:static!important;flex:0 0 auto!important;padding:0!important;background:#fff!important;border-bottom:1px solid #d1d1d1!important}
+[data-theme="vtab"] .view-report .formatPaneIdentity{height:42px!important;min-height:42px!important;padding:0 11px!important;border:0!important;font-size:16px!important;font-weight:600!important;color:#242424!important}
+[data-theme="vtab"] .view-report .formatPaneIdentity b{font-size:16px!important;font-weight:600!important;color:#242424!important}
+[data-theme="vtab"] .view-report .formatTabs.four{height:55px!important;display:grid!important;grid-template-columns:repeat(4,1fr)!important;padding:0 7px!important;border:0!important;border-radius:0!important;background:#fff!important;box-shadow:none!important}
+[data-theme="vtab"] .view-report .formatTabs.four button{position:relative!important;height:55px!important;padding:0!important;border:0!important;border-bottom:2px solid transparent!important;border-radius:0!important;background:#fff!important;color:#242424!important;box-shadow:none!important}
+[data-theme="vtab"] .view-report .formatTabs.four button:hover{background:#f3f3f3!important}
+[data-theme="vtab"] .view-report .formatTabs.four button.active{color:#0f6cbd!important;border-bottom-color:#0f6cbd!important;background:#f3f3f3!important}
+[data-theme="vtab"] .view-report .formatTabs.four button span{position:absolute;left:50%;bottom:2px;transform:translateX(-50%);font-size:8px!important;font-weight:400!important;display:block!important}
+[data-theme="vtab"] .view-report .visualizationsPane{flex:0 0 auto!important;max-height:none!important;padding:0!important;overflow:hidden!important;border-bottom:1px solid #d1d1d1!important;background:#fff!important}
+[data-theme="vtab"] .view-report .visualizationsHeader{height:30px!important;padding:7px 11px 3px!important;display:flex!important;align-items:center!important;color:#242424!important}
+[data-theme="vtab"] .view-report .visualizationsHeader b{font-size:11px!important;font-weight:600!important}
+[data-theme="vtab"] .view-report .rightVisualGallery{width:100%!important;min-width:0!important;display:grid!important;grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:0!important;padding:3px 7px 7px!important;overflow:hidden!important;background:#fff!important}
+[data-theme="vtab"] .view-report .rightVisualGallery button{position:relative!important;width:auto!important;min-width:0!important;height:34px!important;min-height:34px!important;padding:2px!important;border:1px solid transparent!important;border-radius:0!important;background:#fff!important;box-shadow:none!important;transform:none!important;display:grid!important;place-items:center!important}
+[data-theme="vtab"] .view-report .rightVisualGallery button:hover{border-color:#a6a6a6!important;background:#f3f3f3!important;transform:none!important}
+[data-theme="vtab"] .view-report .rightVisualGallery button>span:last-child{display:none!important}
+[data-theme="vtab"] .view-report .rightVisualGallery .visualGlyph{width:25px!important;height:25px!important;display:grid!important;place-items:center!important;color:#333!important;background:transparent!important;border:0!important;border-radius:0!important}
+[data-theme="vtab"] .view-report .rightVisualGallery svg{width:23px!important;height:23px!important;stroke-width:1.65!important}
+[data-theme="vtab"] .view-report .professionalRightPane>.propertyList{flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important;background:#fff!important;padding:0!important}
+
+/* Compact build wells and formatting cards. */
+[data-theme="vtab"] .view-report .formatSearch{height:31px!important;margin:8px!important;padding:0 9px!important;border:1px solid #a6a6a6!important;border-radius:0!important;background:#fff!important;color:#424242!important;font-size:11px!important}
+[data-theme="vtab"] .view-report .formatSection{margin:0!important;border:0!important;border-bottom:1px solid #e5e5e5!important;border-radius:0!important;background:#fff!important;box-shadow:none!important}
+[data-theme="vtab"] .view-report .formatSection>summary{height:37px!important;min-height:37px!important;padding:0 10px!important;gap:6px!important;background:#fff!important;color:#242424!important;font-size:11px!important;font-weight:600!important}
+[data-theme="vtab"] .view-report .formatSection>summary:hover{background:#f5f5f5!important}
+[data-theme="vtab"] .view-report .formatSection>summary>span:last-child{margin-left:auto!important;color:#616161!important;transition:transform .1s}
+[data-theme="vtab"] .view-report .formatSection:not([open])>summary>span:last-child{transform:rotate(-90deg)}
+[data-theme="vtab"] .view-report .formatSectionBody{padding:8px 10px 10px!important;gap:8px!important;border-top:0!important;background:#f8f8f8!important}
+[data-theme="vtab"] .view-report .formatSectionBody label,[data-theme="vtab"] .view-report .numberFormatting label{gap:4px!important;color:#424242!important;font-size:10px!important;font-weight:400!important}
+[data-theme="vtab"] .view-report .formatSectionBody input,[data-theme="vtab"] .view-report .formatSectionBody select,[data-theme="vtab"] .view-report .numberFormatting input,[data-theme="vtab"] .view-report .numberFormatting select{height:29px!important;min-height:29px!important;padding:4px 7px!important;border:1px solid #a6a6a6!important;border-radius:2px!important;background:#fff!important;color:#242424!important;font-size:10px!important;box-shadow:none!important}
+[data-theme="vtab"] .view-report .switchRow{min-height:25px!important;display:flex!important;flex-direction:row!important;align-items:center!important;justify-content:space-between!important}
+[data-theme="vtab"] .view-report .switchRow input{width:30px!important;height:16px!important;min-height:16px!important;padding:0!important;border-radius:10px!important;background:#777!important;border:0!important}
+[data-theme="vtab"] .view-report .switchRow input:after{width:12px!important;height:12px!important;left:2px!important;top:2px!important;background:#fff!important}
+[data-theme="vtab"] .view-report .switchRow input:checked{background:#0f6cbd!important}
+[data-theme="vtab"] .view-report .switchRow input:checked:after{left:16px!important}
+[data-theme="vtab"] .view-report .well.dropWell{min-height:42px!important;margin:5px 0!important;padding:5px!important;border:1px dashed #a6a6a6!important;border-radius:0!important;background:#fff!important}
+[data-theme="vtab"] .view-report .wellLabel{margin-bottom:4px!important}.view-report .wellLabel span{font-size:10px!important;font-weight:600!important;color:#424242!important}.view-report .wellLabel small{font-size:8px!important;color:#777!important}
+[data-theme="vtab"] .view-report .well.dropWell b{min-height:26px!important;margin:2px 0!important;padding:4px 6px!important;border:1px solid #d1d1d1!important;border-radius:0!important;background:#f3f3f3!important;color:#242424!important;font-size:9px!important;font-weight:400!important}
+[data-theme="vtab"] .view-report .visualActions{padding:8px 10px!important;margin:0!important;gap:5px!important}.view-report .visualActions button{height:29px!important;border:1px solid #a6a6a6!important;border-radius:2px!important;background:#fff!important;color:#242424!important;font-size:9px!important}
+
+/* Data pane: readable table/field hierarchy with full names. */
+[data-theme="vtab"] .view-report .advancedFields .paneTitle{height:42px!important;min-height:42px!important;margin:0!important;padding:0 11px!important;border-bottom:1px solid #d1d1d1!important;color:#242424!important;justify-content:flex-start!important;font-size:16px!important;font-weight:600!important}
+[data-theme="vtab"] .view-report .advancedFields .paneTitle span{font-size:16px!important}.view-report .advancedFields .paneTitle small{margin-left:8px!important;font-size:10px!important;font-weight:400!important;color:#616161!important}.view-report .advancedFields .paneTitle .dockCollapseButton{margin-left:auto!important}
+[data-theme="vtab"] .view-report .fieldSearch{width:calc(100% - 16px)!important;height:32px!important;margin:8px!important;padding:5px 9px!important;border:1px solid #a6a6a6!important;border-radius:2px!important;background:#fff!important;color:#242424!important;font-size:11px!important}
+[data-theme="vtab"] .view-report .advancedFields details{margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:#fff!important;overflow:visible!important}
+[data-theme="vtab"] .view-report .advancedFields summary{height:31px!important;min-height:31px!important;margin:0!important;padding:0 8px!important;gap:6px!important;border:0!important;border-radius:0!important;background:#fff!important;color:#242424!important;font-size:11px!important;font-weight:400!important}
+[data-theme="vtab"] .view-report .advancedFields summary:hover{background:#f3f3f3!important}
+[data-theme="vtab"] .view-report .advancedFields .tableGlyph,[data-theme="vtab"] .view-report .advancedFields .measureGlyph{width:17px!important;height:17px!important;border:0!important;border-radius:0!important;background:transparent!important;color:#333!important;font-size:10px!important}
+[data-theme="vtab"] .view-report .advancedFields .tableName{flex:1!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;font-weight:400!important}
+[data-theme="vtab"] .view-report .advancedFields .field{min-height:27px!important;height:27px!important;padding:0 8px 0 21px!important;display:grid!important;grid-template-columns:14px 20px minmax(0,1fr)!important;gap:5px!important;align-items:center!important;border:0!important;border-radius:0!important;background:#fff!important;color:#242424!important;font-size:10px!important;cursor:grab!important}
+[data-theme="vtab"] .view-report .advancedFields .field:hover{background:#f3f3f3!important;color:#242424!important}
+[data-theme="vtab"] .view-report .advancedFields .fieldName{display:block!important;min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important;color:#242424!important;font-weight:400!important}
+[data-theme="vtab"] .view-report .advancedFields .fieldType{width:18px!important;height:18px!important;border:0!important;border-radius:0!important;background:transparent!important;color:#333!important;font-size:9px!important}
+[data-theme="vtab"] .view-report .advancedFields .field.numericField,[data-theme="vtab"] .view-report .advancedFields .field.measure{background:#fff!important;color:#242424!important}
+[data-theme="vtab"] .view-report .advancedFields .field.numericField .fieldType,[data-theme="vtab"] .view-report .advancedFields .fieldType.textType,[data-theme="vtab"] .view-report .advancedFields .fieldType.dateType{border:0!important;background:transparent!important;color:#333!important}
+[data-theme="vtab"] .view-report .advancedFields .field.boundField{background:#e5f1fb!important;color:#174a7c!important}
+
+/* Canvas and selected-visual interaction. */
+[data-theme="vtab"] .view-report .canvasWrapGlass{padding:10px!important;background:#e9e9e9!important;background-image:none!important}
+[data-theme="vtab"] .view-report .reportPageSurfaceGlass{outline:2px dotted #777!important;outline-offset:-1px!important;border:0!important;border-radius:0!important;box-shadow:none!important}
+[data-theme="vtab"] .view-report .advancedReport .visualCard,[data-theme="vtab"] .view-report .visualCard{background:var(--visual-background,#fff)!important;border-top:var(--visual-border-top,0)!important;border-right:var(--visual-border-right,0)!important;border-bottom:var(--visual-border-bottom,0)!important;border-left:var(--visual-border-left,0)!important;border-radius:var(--visual-radius,0)!important;box-shadow:var(--visual-shadow,none)!important;backdrop-filter:none!important;color:#242424!important}
+[data-theme="vtab"] .view-report .visualCard:hover{box-shadow:var(--visual-shadow,none)!important}
+[data-theme="vtab"] .view-report .visualCard.selected{outline:1px solid #777!important;outline-offset:0!important;box-shadow:none!important}
+[data-theme="vtab"] .view-report .visualTitle{min-height:25px!important;height:25px!important;padding:0 5px!important;border:0!important;background:#fff!important;color:#242424!important;font-size:10px!important;font-weight:400!important}
+[data-theme="vtab"] .view-report .visualBody{height:calc(100% - 25px)!important;padding:5px!important}
+[data-theme="vtab"] .view-report .visualCard.selected .visualTitle.visualMoveZone{background:#fff!important}
+[data-theme="vtab"] .view-report .visualCard.selected .visualTitle.visualMoveZone:before{display:none!important}
+[data-theme="vtab"] .view-report .react-grid-item>.react-resizable-handle{display:none!important}
+[data-theme="vtab"] .view-report .react-grid-item:has(.visualCard.selected)>.react-resizable-handle{position:absolute!important;z-index:80!important;display:block!important;opacity:1!important;width:10px!important;height:10px!important;margin:0!important;border:1px solid #666!important;border-radius:1px!important;background:#fff!important;box-sizing:border-box!important;background-image:none!important}
+[data-theme="vtab"] .view-report .react-grid-item:has(.visualCard.selected)>.react-resizable-handle:after{display:none!important}
+[data-theme="vtab"] .view-report .react-grid-item:has(.visualCard.selected)>.react-resizable-handle-e{right:-5px!important;top:calc(50% - 5px)!important;transform:none!important}
+[data-theme="vtab"] .view-report .react-grid-item:has(.visualCard.selected)>.react-resizable-handle-w{left:-5px!important;top:calc(50% - 5px)!important;transform:none!important}
+[data-theme="vtab"] .view-report .react-grid-item:has(.visualCard.selected)>.react-resizable-handle-n{top:-5px!important;left:calc(50% - 5px)!important;transform:none!important}
+[data-theme="vtab"] .view-report .react-grid-item:has(.visualCard.selected)>.react-resizable-handle-s{bottom:-5px!important;left:calc(50% - 5px)!important;transform:none!important}
+[data-theme="vtab"] .view-report .react-grid-item:has(.visualCard.selected)>.react-resizable-handle-ne{top:-5px!important;right:-5px!important}
+[data-theme="vtab"] .view-report .react-grid-item:has(.visualCard.selected)>.react-resizable-handle-nw{top:-5px!important;left:-5px!important}
+[data-theme="vtab"] .view-report .react-grid-item:has(.visualCard.selected)>.react-resizable-handle-se{bottom:-5px!important;right:-5px!important}
+[data-theme="vtab"] .view-report .react-grid-item:has(.visualCard.selected)>.react-resizable-handle-sw{bottom:-5px!important;left:-5px!important}
+
+/* Matrix has grouped column bands, indented hierarchy headers and an explicit total row. */
+[data-theme="vtab"] .view-report .matrixTable th.matrixColumnGroup{text-align:center!important;background:#edf4fb!important;border-bottom:1px solid #a9c6df!important;color:#174a7c!important}
+[data-theme="vtab"] .view-report .matrixTable .matrixRowHeader{font-weight:600!important;color:#242424!important;background:#fafafa!important;white-space:nowrap!important}
+[data-theme="vtab"] .view-report .matrixTable tfoot th{position:sticky!important;bottom:0!important;background:#e5f1fb!important;color:#174a7c!important;font-weight:700!important;border-top:2px solid #8fb8d8!important}
+
+/* Power BI-style slicer surface and selection state. */
+[data-theme="vtab"] .view-report .slicerList{background:#fff!important;color:#242424!important}
+[data-theme="vtab"] .view-report .slicerList button{background:#fff!important;color:#242424!important;border:1px solid #d1d1d1!important;box-shadow:none!important}
+[data-theme="vtab"] .view-report .slicerList button:hover{background:#f3f3f3!important;border-color:#a6a6a6!important}
+[data-theme="vtab"] .view-report .slicerList button.active{background:#e5f1fb!important;color:#174a7c!important;border-color:#0f6cbd!important;box-shadow:inset 3px 0 0 #0f6cbd!important;font-weight:600!important}
+[data-theme="vtab"] .view-report .pageTabsGlass{flex:0 0 36px!important;height:36px!important;min-height:36px!important;padding:1px 8px!important;border-top:1px solid #d1d1d1!important;background:#fafafa!important}
+[data-theme="vtab"] .view-report .pageTabGlass{height:34px!important;padding:0 16px!important;border-radius:0!important;font-size:11px!important;color:#242424!important}
+
+@media(max-width:1450px){
+ [data-theme="vtab"] .view-report .professionalRightPane{width:258px!important;min-width:258px!important;max-width:258px!important}
+ [data-theme="vtab"] .view-report .advancedFields{width:220px!important;min-width:220px!important;max-width:220px!important}
+ [data-theme="vtab"] .view-report .rightVisualGallery button{width:auto!important}
+}
+
+/* Measures pane collapse states must reclaim their columns and keep restore commands visible. */
+[data-theme="vtab"] .view-measures .measuresWorkspace.measureFieldsHidden.measureAiHidden{grid-template-columns:minmax(0,1fr)!important}
+[data-theme="vtab"] .view-measures .measuresWorkspace.measureFieldsHidden:not(.measureAiHidden){grid-template-columns:minmax(0,1fr) 300px!important}
+[data-theme="vtab"] .view-measures .measuresWorkspace.measureAiHidden:not(.measureFieldsHidden){grid-template-columns:245px minmax(0,1fr)!important}
+[data-theme="vtab"] .view-measures .measureActions{overflow:visible!important;flex-wrap:wrap!important}
+[data-theme="vtab"] .view-measures .measureActions button{flex:0 0 auto!important}
+
+[data-theme="vtab"] .view-model .professionalModelWorkspace{background:#f3f3f3!important}.view-model .modelTop{min-height:46px!important;height:46px!important;padding:3px 8px!important;background:#fff!important;border-bottom:1px solid var(--v5-border)!important}.view-model .modelTop>div:first-child .eyebrow{display:none!important}.view-model .modelTop h2{font-size:12px!important;margin:0!important}.view-model .modelTop p{font-size:9px!important;margin:1px 0!important;color:#616161!important}.view-model .modelToolbar{gap:1px!important}.view-model .modelToolbar button{height:39px!important;min-width:0!important;padding:3px 8px!important;border:0!important;border-right:1px solid #e5e5e5!important;border-radius:0!important;background:#fff!important;box-shadow:none!important;flex-direction:row!important;gap:4px!important;font-size:9px!important;color:#333!important}.view-model .modelToolbar button svg{display:block!important;width:17px!important;height:17px!important;stroke-width:1.8!important}.view-model .modelToolbar button:hover{background:#f3f3f3!important;color:var(--v5-accent)!important}.view-model .modelToolbar button.primary{background:#e8f2fb!important;color:var(--v5-accent)!important;border-color:#d6e9f8!important}.view-model .modelLegend{min-height:25px!important;padding:2px 8px!important;background:#fafafa!important;border-bottom:1px solid var(--v5-border)!important;font-size:9px!important}.view-model .modelCanvas,.view-model .react-flow{background:#f3f3f3!important}.view-model .modelNodePro{border-radius:2px!important;border-color:#a6a6a6!important;box-shadow:0 2px 7px #0002!important}.view-model .modelNodeHead{background:#f7f7f7!important;border-bottom:1px solid #d1d1d1!important}.view-model .modelField{background:#fff!important;border-color:#ededed!important;color:#333!important}
+
+/* Working Power Query-style ribbon: commands stay visible after switching tabs. */
+[data-theme="vtab"] .view-transform .powerQueryRibbon{flex:0 0 83px!important;height:83px!important;background:#fff!important;border-bottom:1px solid #d1d1d1!important;overflow:hidden!important}
+[data-theme="vtab"] .view-transform .powerQueryRibbonTabs{height:27px!important;display:flex!important;align-items:flex-end!important;gap:2px!important;padding:0 8px!important;background:#fafafa!important;border-bottom:1px solid #e5e5e5!important}
+[data-theme="vtab"] .view-transform .powerQueryRibbonTabs button{height:27px!important;padding:0 12px!important;border:0!important;border-bottom:2px solid transparent!important;background:transparent!important;color:#242424!important;font:11px "Segoe UI",sans-serif!important;cursor:pointer!important}
+[data-theme="vtab"] .view-transform .powerQueryRibbonTabs button:hover{background:#f0f0f0!important}
+[data-theme="vtab"] .view-transform .powerQueryRibbonTabs button.active{border-bottom-color:#0f6cbd!important;color:#0f6cbd!important;font-weight:600!important;background:#fff!important}
+[data-theme="vtab"] .view-transform .powerQueryCommands{height:56px!important;min-height:56px!important;padding:3px 8px!important;display:flex!important;align-items:stretch!important;gap:1px!important;overflow-x:auto!important;background:#fff!important;border:0!important}
+[data-theme="vtab"] .view-transform .powerQueryCommands,[data-theme="vtab"] .view-report .reportRibbonGlass,[data-theme="vtab"] .view-measures .daxFunctionBar{scrollbar-width:none!important}
+[data-theme="vtab"] .view-transform .powerQueryCommands::-webkit-scrollbar,[data-theme="vtab"] .view-report .reportRibbonGlass::-webkit-scrollbar,[data-theme="vtab"] .view-measures .daxFunctionBar::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}
+[data-theme="vtab"] .view-transform .powerQueryCommands>button{height:49px!important;min-width:58px!important;padding:3px 7px!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:2px!important;border:0!important;border-right:1px solid #e5e5e5!important;border-radius:0!important;background:#fff!important;color:#242424!important;font:9px/1.05 "Segoe UI",sans-serif!important;white-space:normal!important;text-align:center!important;cursor:pointer!important}
+[data-theme="vtab"] .view-transform .powerQueryCommands>button:hover,[data-theme="vtab"] .view-transform .powerQueryCommands>button.active{background:#e8f2fb!important;color:#0f6cbd!important}
+[data-theme="vtab"] .view-transform .powerQueryCommands>button svg{width:18px!important;height:18px!important;stroke-width:1.7!important}
+[data-theme="vtab"] .view-transform .transformBodyGlass{height:calc(100% - 152px)!important}
+
+/* Compact field-well ordering and Top N controls. */
+[data-theme="vtab"] .view-report .well.dropWell b>span:first-child{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+[data-theme="vtab"] .view-report .wellItemActions{flex:0 0 auto!important;display:flex!important;align-items:center!important;margin-left:4px!important}
+[data-theme="vtab"] .view-report .wellItemActions button{width:18px!important;height:18px!important;min-height:18px!important;padding:0!important;display:grid!important;place-items:center!important;border:0!important;background:transparent!important;color:#616161!important;font-size:10px!important}
+[data-theme="vtab"] .view-report .wellItemActions button:hover:not(:disabled){background:#ddd!important;color:#0f6cbd!important}
+[data-theme="vtab"] .view-report .wellItemActions button:disabled{opacity:.25!important}
+[data-theme="vtab"] .view-report .inlineFilterBuilder{grid-template-columns:1fr!important;gap:4px!important}
+[data-theme="vtab"] .view-report .inlineFilterBuilder select,[data-theme="vtab"] .view-report .inlineFilterBuilder input,[data-theme="vtab"] .view-report .inlineFilterBuilder button{width:100%!important;height:28px!important;min-height:28px!important;border-radius:2px!important;font-size:9px!important}
+[data-theme="vtab"] .view-report .reportPaneEdgeStack{right:24px!important}
+
+.copilotPrompt{display:flex;gap:8px;max-width:900px;margin:20px auto;padding:8px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;box-shadow:0 5px 18px rgba(15,23,42,.08)}
+.copilotPrompt input{flex:1;min-width:0;height:42px;padding:0 12px;border:0;outline:0;color:#242424;font:13px "Segoe UI",sans-serif}
+.copilotPrompt button{min-width:120px;border:0;border-radius:5px;background:#0f6cbd;color:#fff;font-weight:600;cursor:pointer}
+.copilotPrompt button:disabled{opacity:.55;cursor:default}
+
+.settingsHubPopover{width:360px!important;max-height:min(650px,calc(100vh - 62px))!important;padding:0!important;overflow:hidden!important}
+.settingsHubPopover .appearanceHeader{position:relative;padding:14px 40px 10px 14px!important;border-bottom:1px solid #e5e7eb}
+.settingsHubPopover .appearanceHeader button{position:absolute;right:10px;top:9px;width:28px;height:28px;border:0;background:transparent;color:#616161;font-size:20px;cursor:pointer}
+.settingsHubScroll{max-height:560px;overflow:auto;padding:6px 10px 12px}
+.settingsHubScroll details{border-bottom:1px solid #e5e7eb;padding:0}
+.settingsHubScroll summary{height:38px;display:flex;align-items:center;list-style:none;color:#242424;font-size:11px;font-weight:600;cursor:pointer}
+.settingsHubScroll summary::-webkit-details-marker{display:none}
+.settingsHubScroll details>label,.settingsHubScroll details>p{margin:0 4px 9px!important}
+.settingsHubScroll .settingsCheck{min-height:27px!important;display:flex!important;flex-direction:row!important;align-items:center!important;gap:8px!important;color:#424242!important}
+.settingsHubScroll .settingsCheck input{width:15px!important;height:15px!important;margin:0!important}
+.settingsHubScroll details>button{margin:0 4px 10px;padding:7px 10px;border:1px solid #a6a6a6;border-radius:3px;background:#fff;color:#0f6cbd;cursor:pointer}
+
+/* Type menus must remain opaque over dense preview grids. */
+[data-theme="vtab"] .view-transform .typeMenuGlass{z-index:400!important;background:#fff!important;opacity:1!important;backdrop-filter:none!important;border:1px solid #8a8a8a!important;box-shadow:0 4px 14px rgba(0,0,0,.2)!important}
+[data-theme="vtab"] .view-transform .typeMenuGlass button{background:#fff!important;color:#242424!important;opacity:1!important}
+[data-theme="vtab"] .view-transform .typeMenuGlass button:hover{background:#e5f1fb!important;color:#0f6cbd!important}
+
+/* Fixed Power BI pane order plus a permanent recovery tab for every collapsed pane. */
+[data-theme="vtab"] .view-report .canvasStageGlass{order:1!important}
+[data-theme="vtab"] .view-report .filtersDock,[data-theme="vtab"] .view-report .collapsedDockTab.filters{order:2!important}
+[data-theme="vtab"] .view-report .selectionPaneGlass,[data-theme="vtab"] .view-report .collapsedDockTab.selection{order:3!important}
+[data-theme="vtab"] .view-report .professionalRightPane,[data-theme="vtab"] .view-report .collapsedDockTab.visualizations{order:4!important}
+[data-theme="vtab"] .view-report .advancedFields,[data-theme="vtab"] .view-report .collapsedDockTab.data{order:5!important}
+[data-theme="vtab"] .view-report .collapsedDockTab{position:relative!important;z-index:3!important;width:35px!important;min-width:35px!important;max-width:35px!important;height:100%!important;padding:8px 0!important;border:0!important;border-left:1px solid #d1d1d1!important;border-right:1px solid #d1d1d1!important;border-radius:0!important;background:#fafafa!important;color:#242424!important;display:flex!important;flex-direction:column!important;align-items:center!important;gap:9px!important;cursor:pointer!important;box-shadow:none!important}
+[data-theme="vtab"] .view-report .collapsedDockTab span{writing-mode:vertical-rl;transform:rotate(180deg);font-size:11px;font-weight:600;letter-spacing:.02em}
+[data-theme="vtab"] .view-report .collapsedDockTab:hover{background:#ededed!important;color:#0f6cbd!important}
+[data-theme="vtab"] .view-report .selectionBringFront{width:28px;height:28px;padding:0;border:0;background:transparent;color:#0f6cbd;display:grid;place-items:center;cursor:pointer}
+[data-theme="vtab"] .view-report .selectionBringFront:disabled{cursor:default;color:#2563eb;opacity:1}
+[data-theme="vtab"] .view-report .selectionBringFront em{font-size:8px;font-style:normal;font-weight:800}
+
+/* Shared authoring color mode. Dark mode uses the exact same Power BI layout
+   selectors as light mode; only these semantic colors change. */
+html[data-color-mode="dark"]{
+  --background:#101214;--surface:#1b1d20;--surface-solid:#1b1d20;--surface-secondary:#202327;--surface-elevated:#25282d;--surface-hover:#2c3035;--surface-active:#343940;
+  --text-primary:#f5f7fa;--text-secondary:#d1d5db;--text-muted:#a5adb8;--text-disabled:#737b86;
+  --border:#3b4047;--border-strong:#555c66;--v5-text:#f5f7fa;--v5-muted:#a5adb8;--v5-border:#444a52;--v5-border-soft:#343940;--v5-canvas:#17191c;--v5-surface:#202327;--v5-hover:#2c3035;--v5-selected:#173a55;
+  font-family:"Segoe UI Variable","Segoe UI",Aptos,Arial,sans-serif!important;color-scheme:dark;
+}
+html[data-color-mode="dark"] body,html[data-color-mode="dark"] button,html[data-color-mode="dark"] input,html[data-color-mode="dark"] select,html[data-color-mode="dark"] textarea{font-family:"Segoe UI Variable","Segoe UI",Aptos,Arial,sans-serif!important;font-synthesis:none;text-rendering:optimizeLegibility}
+html[data-color-mode="dark"] body,html[data-color-mode="dark"] .appShell,html[data-color-mode="dark"] .appShell>.content,html[data-color-mode="dark"] main{background:#17191c!important;color:var(--text-primary)!important}
+html[data-color-mode="dark"] ::placeholder{color:#8f98a4!important;opacity:1}
+html[data-color-mode="dark"] :disabled{color:var(--text-disabled)!important;opacity:.58}
+
+/* Global authoring chrome and shared controls. */
+html[data-color-mode="dark"] :is(.topbarGlass,.authoringFlow,.reportContextTabs,.reportCommandRibbon,.reportRibbonGlass,.powerQueryRibbon,.powerQueryRibbonTabs,.powerQueryCommands,.powerQueryFormulaBar,.panelHeaderGlass,.paneGlass,.mainPanelGlass,.modelTop,.modelLegend,.measureTopbar,.daxFunctionBar,.pageTabsGlass,.settingsHubPopover,.appearancePopover,.commandMenu,.panelMenuGlass,.arrangeMenuGlass,.transformMoreMenu>div,.queryActionMenuGlass){background:#202327!important;color:#f5f7fa!important;border-color:#3b4047!important;box-shadow:none!important}
+html[data-color-mode="dark"] :is(.productTitle,.crumbTitle,.buildBadgeGlass,.flowStage,.paneTitleGlass,.panelHeaderGlass h1,.panelHeaderGlass h2,.panelHeaderGlass h3,.modelTop h2,.modelTop p,.measureTopbar h2,.settingsHubPopover h2,.settingsHubPopover h3,.settingsHubPopover summary,.settingsHubPopover label,.settingsHubPopover p,.settingsHubPopover small){color:#f5f7fa!important}
+html[data-color-mode="dark"] :is(.crumbTitle,.buildBadgeGlass,.panelHeaderGlass p,.eyebrowGlass,.dialogHint,.formatHint,.sourceHintGlass,.hintGlass,.gridStatusGlass,.foldBarGlass span,.paneEmpty span,.selectionPaneHint,.selectionPaneEmpty,.advancedEditorStatus,.settingsHubPopover small){color:#a5adb8!important}
+html[data-color-mode="dark"] .buildBadgeGlass{background:#2c3035!important;border-color:#444a52!important}
+html[data-color-mode="dark"] :is(.btnGlass,.btnIconGlass,.iconGlass,.dockCollapseButton,.paneQuickToggle,.dialogActions button,.visualActions button,.filterAdd,.placementButtons button,.nudgePad button,.premiumPresetGrid button,.segmentedFormat button,.settingsSecondaryAction){background:#292d32!important;color:#eef2f7!important;border-color:#555c66!important;box-shadow:none!important}
+html[data-color-mode="dark"] :is(.btnGlass,.btnIconGlass,.iconGlass,.dockCollapseButton,.paneQuickToggle,.dialogActions button,.visualActions button,.filterAdd,.placementButtons button,.nudgePad button,.premiumPresetGrid button,.segmentedFormat button,.settingsSecondaryAction):hover:not(:disabled){background:#343940!important;color:#fff!important;border-color:#6b7480!important}
+html[data-color-mode="dark"] :is(.btnGlass.primary,.dialogActions button.primary,.segmentedFormat button.active){background:#0f6cbd!important;color:#fff!important;border-color:#3395d4!important}
+html[data-color-mode="dark"] :is(input:not([type="range"]):not([type="color"]),select,textarea,.inputGlass,.fieldSearch,.formatSearch,.searchGlass,.commandSearch input){background:#181a1d!important;color:#f5f7fa!important;border-color:#555c66!important;box-shadow:none!important}
+html[data-color-mode="dark"] :is(input:not([type="range"]):not([type="color"]),select,textarea,.inputGlass,.fieldSearch,.formatSearch,.searchGlass):focus,html[data-color-mode="dark"] :is(input,select,textarea):focus-visible{border-color:#4ba3d8!important;outline:2px solid rgba(75,163,216,.35)!important;outline-offset:0}
+html[data-color-mode="dark"] option{background:#202327!important;color:#f5f7fa!important}
+html[data-color-mode="dark"] input[type="checkbox"],html[data-color-mode="dark"] input[type="radio"]{accent-color:#2b88c8}
+
+/* Navigation, pages and cards outside the report canvas. */
+html[data-color-mode="dark"] .sidebar.powerBiRail,html[data-color-mode="dark"] .sidebar.powerBiRail:hover{background:#1d2024!important;border-color:#3b4047!important}
+html[data-color-mode="dark"] .powerBiRail :is(.navItem,.railToggle){color:#cbd2dc!important}
+html[data-color-mode="dark"] .powerBiRail .navItem:hover{background:#2b2f34!important;color:#fff!important}
+html[data-color-mode="dark"] .powerBiRail .navItem.active{background:#173a55!important;color:#62b5e5!important}
+html[data-color-mode="dark"] :is(.page,.homePage,.packagePage,.publish,.securityPage,.catalogPage,.adminPage){background:#17191c!important;color:#f5f7fa!important}
+html[data-color-mode="dark"] :is(.homeCard,.packageCard,.packageSecurity,.packageInspection,.packageRules,.packageFlow>div,.sourceCardGlass,.connectorFocusCardGlass,.connectorFormGlass,.storageAccelerationCardGlass,.securityCard,.catalogCard,.publishCard,.publishedCard,.settingsCard,.adminSection,.adminHero){background:#202327!important;color:#f5f7fa!important;border-color:#444a52!important;box-shadow:none!important}
+html[data-color-mode="dark"] :is(.packagePage h1,.packagePage h2,.packagePage h3,.packagePage strong,.packagePage td,.packagePage th,.packagePage p,.packagePage span,.packagePage code,.catalogCard h3,.catalogCard p,.securityCard h3,.publish h1,.publish h2){color:inherit!important}
+html[data-color-mode="dark"] :is(.packageRules th,.packageRules td,.tableGlass th,.tableGlass td){border-color:#3b4047!important}
+
+/* Transform surface, previews and every portal-based transformation dialog. */
+html[data-color-mode="dark"] :is(.view-transform .workspaceGlass,.view-transform .transformGlass,.view-transform .previewGridGlass,.view-transform .transformBodyGlass,.view-transform .excelGridWrapGlass,.view-transform .stepsPaneGlass,.view-transform .powerBiAppliedSteps,.view-data .workspaceGlass,.view-data .mainPanelGlass){background:#17191c!important;color:#f5f7fa!important;border-color:#3b4047!important}
+html[data-color-mode="dark"] .view-transform :is(.transformQueriesGlass,.queryRowGlass,.queryItemGlass,.querySearchBoxGlass,.foldBarGlass,.sqlDetailsGlass,.stepGlass,.advancedEditorTabs){background:#202327!important;color:#f5f7fa!important;border-color:#3b4047!important}
+html[data-color-mode="dark"] .view-transform :is(.queryTextGlass b,.stepName,.powerBiAppliedSteps h3,.excelGridGlass th,.excelGridGlass td,.columnHeaderGlass>span){color:#eef2f7!important}
+html[data-color-mode="dark"] .view-transform :is(.queryTextGlass small,.sourceHintGlass,.gridStatusGlass,.powerBiAppliedSteps .appliedStepsFooter){color:#a5adb8!important}
+html[data-color-mode="dark"] .view-transform .excelGridGlass{background:#181a1d!important;color:#eef2f7!important}
+html[data-color-mode="dark"] .view-transform .excelGridGlass th{background:#282c31!important;border-color:#4a5058!important}
+html[data-color-mode="dark"] .view-transform .excelGridGlass td{background:#1b1e22!important;border-color:#343940!important}
+html[data-color-mode="dark"] .view-transform .excelGridGlass tbody tr:nth-child(even) td{background:#202327!important}
+html[data-color-mode="dark"] .view-transform .excelGridGlass tbody tr:hover td{background:#293540!important}
+html[data-color-mode="dark"] .view-transform :is(.dtypeGlass,.headDropGlass){background:#282c31!important;color:#9bd5f5!important;border-color:#4a5058!important}
+html[data-color-mode="dark"] :is(.modalCard,.fancyDialogContent,.catalogEditModal,.settingsPowerBiDialog,.adminDialog){background:#202327!important;color:#f5f7fa!important;border-color:#555c66!important;box-shadow:0 24px 70px rgba(0,0,0,.55)!important}
+html[data-color-mode="dark"] :is(.modalHead,.fancyDialogHeader,.dialogActions){border-color:#3b4047!important}
+html[data-color-mode="dark"] :is(.modalHead h3,.formField,.formField span,.joinTop label,.joinTable h4,.joinField,.checkList label,.bulkTypeRow,.textFunctionIntro,.textFunctionDialog,.calendarDialog,.advancedQueryEditor,.advancedEditorTabs button){color:#eef2f7!important}
+html[data-color-mode="dark"] :is(.checkList,.joinTable,.joinField,.formulaBuilder,.caseBuilder,.bulkTypeGrid,.functionLibrary,.advancedQueryEditor textarea.powerQueryScript){background:#181a1d!important;color:#eef2f7!important;border-color:#4a5058!important}
+html[data-color-mode="dark"] :is(.contextMenu,.typeMenuGlass){background:#202327!important;color:#f5f7fa!important;border-color:#626a75!important;opacity:1!important;backdrop-filter:none!important}
+html[data-color-mode="dark"] :is(.contextMenu,.typeMenuGlass) button{background:#202327!important;color:#eef2f7!important}
+html[data-color-mode="dark"] :is(.contextMenu,.typeMenuGlass) button:hover{background:#304252!important;color:#fff!important}
+
+/* Model, measures and report-authoring panes. */
+html[data-color-mode="dark"] :is(.view-model .professionalModelWorkspace,.view-model .modelCanvas,.view-model .react-flow,.view-measures .measuresWorkspace){background:#17191c!important;color:#f5f7fa!important}
+html[data-color-mode="dark"] :is(.modelNodePro,.modelNodeHead,.modelField,.measureFields,.measureEditor,.measureActions){background:#202327!important;color:#eef2f7!important;border-color:#444a52!important}
+html[data-color-mode="dark"] .view-report :is(.reportWorkspaceGlass,.reportBodyGlass,.canvasStageGlass,.canvasWrapGlass){background:#17191c!important}
+html[data-color-mode="dark"] .view-report :is(.professionalRightPane,.advancedFields,.filtersDock,.selectionPaneGlass,.formatPaneHeader,.formatTabs.four,.visualizationsPane,.propertyList,.formatSection,.formatSection>summary,.formatSectionBody,.scopeBlock,.scopeContent,.rightVisualGallery,.rightVisualGallery button,.dockPaneTitle,.selectionPaneHeader,.selectionLayerActions,.pageTabsGlass,.collapsedDockTab){background:#202327!important;color:#eef2f7!important;border-color:#3b4047!important;box-shadow:none!important}
+html[data-color-mode="dark"] .view-report :is(.formatPaneIdentity,.formatPaneIdentity b,.formatTabs.four button,.visualizationsHeader,.visualizationsHeader b,.advancedFields .paneTitle,.advancedFields summary,.advancedFields .field,.advancedFields .fieldName,.wellLabel span,.formatSection>summary,.formatSectionBody label,.switchRow span,.selectionLayerRow b,.dockPaneTitle b){color:#eef2f7!important}
+html[data-color-mode="dark"] .view-report :is(.advancedFields .field:hover,.selectionLayerRow:hover,.formatTabs.four button:hover,.rightVisualGallery button:hover,.formatSection>summary:hover){background:#2c3035!important;color:#fff!important}
+html[data-color-mode="dark"] .view-report :is(.advancedFields .field.boundField,.selectionLayerRow.selected,.formatTabs.four button.active){background:#173a55!important;color:#bfe5fb!important;border-color:#408fbd!important}
+html[data-color-mode="dark"] .view-report :is(.rightVisualGallery .visualGlyph,.advancedFields .fieldType,.advancedFields .tableGlyph,.advancedFields .measureGlyph){color:#d7dde5!important}
+html[data-color-mode="dark"] .view-report :is(.well.dropWell,.inlineFilterBuilder,.edgeGrid .switchRow,.formatHint,.categoryScrollQuick,.visualSizeStatus){background:#181a1d!important;color:#cbd2dc!important;border-color:#555c66!important}
+html[data-color-mode="dark"] .view-report .well.dropWell b{background:#273947!important;color:#d8edf9!important;border-color:#41627a!important}
+
+/* Visualization pane owns its scroll area; the format/build area keeps the rest. */
+[data-theme="vtab"] .view-report .professionalRightPane{min-height:0!important}
+[data-theme="vtab"] .view-report .visualizationsPane{flex:0 1 min(330px,42vh)!important;min-height:92px!important;max-height:42vh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
+[data-theme="vtab"] .view-report .visualizationsHeader{flex:0 0 30px!important}
+[data-theme="vtab"] .view-report .rightVisualGallery{flex:1 1 auto!important;min-height:0!important;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important;align-content:start!important;scrollbar-gutter:stable}
+[data-theme="vtab"] .view-report .professionalRightPane>.propertyList{flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important}
+
+/* Responsive visual chrome follows the persisted grid width/height. */
+.view-report .visualCard.visualCompact .visualTitle{height:22px!important;min-height:22px!important;padding:0 3px!important;font-size:9px!important}
+.view-report .visualCard.visualCompact .visualBody{height:calc(100% - 22px)!important;padding:3px!important}
+.view-report .visualCard.visualCompact .visualTitleText small,.view-report .visualCard.visualCompact .drillControls span{display:none!important}
+.view-report .visualCard.visualCompact .visualHeaderActions{gap:0!important}.view-report .visualCard.visualCompact .visualMenuButton{width:22px!important;height:22px!important;padding:2px!important}
+.view-report .visualCard.visualWide .visualBody{padding:var(--visual-padding,8px)!important}
+.view-report .visualSizeStatus{display:flex;align-items:center;justify-content:space-between;padding:7px 8px;border:1px solid var(--v5-border-soft);border-radius:3px;background:#f7f7f7;color:#424242;font-size:9px}
+.view-report .visualSizeStatus span{color:var(--v5-muted)}
+
+/* 5.0.8: Format cards own one reliable vertical scroll region. Expanded
+   sections are never clipped by the pane or by legacy max-content rules. */
+[data-theme="vtab"] .view-report .professionalRightPane{
+  height:100%!important;min-height:0!important;overflow:hidden!important
+}
+[data-theme="vtab"] .view-report .professionalRightPane>.propertyList{
+  height:0!important;flex:1 1 0!important;min-width:0!important;min-height:0!important;
+  overflow-y:auto!important;overflow-x:hidden!important;padding:0 0 104px!important;
+  scroll-padding-block:96px!important;scrollbar-gutter:stable!important;overscroll-behavior:contain!important
+}
+[data-theme="vtab"] .view-report .professionalRightPane>.propertyList>.formatSection{
+  display:block!important;min-width:0!important;overflow:visible!important
+}
+[data-theme="vtab"] .view-report .professionalRightPane>.propertyList>.formatSection[open]>.formatSectionBody{
+  display:flex!important;max-height:none!important;overflow:visible!important
+}
+
+/* 5.0.8: authoritative dark-theme parity. These selectors intentionally
+   match the high-specificity light authoring layer while leaving the report
+   page itself controlled by the report's own canvas theme. */
+html[data-theme="vtab"][data-color-mode="dark"] :is(.topbarGlass,.authoringFlow,.reportContextTabs,.reportCommandRibbon,.reportRibbonGlass,.pageTabsGlass){background:#202327!important;color:#f5f7fa!important;border-color:#3b4047!important}
+html[data-theme="vtab"][data-color-mode="dark"] .topbarGlass :is(.productTitle,.crumbTitle,.searchGlass input),
+html[data-theme="vtab"][data-color-mode="dark"] .authoringFlow .flowStage{color:#eef2f7!important}
+html[data-theme="vtab"][data-color-mode="dark"] .authoringFlow .flowStage:hover{background:#2c3035!important;color:#fff!important}
+
+html[data-theme="vtab"][data-color-mode="dark"] .view-data :is(.workspaceGlass,.paneGlass,.leftPaneGlass,.paneTitleGlass,.sourceGroupGlass,.sourceGlass,.mainPanelGlass,.dataCatalogHeaderGlass,.connectorFocusGlass,.connectorFocusCardGlass,.sourceLandingCard,.sourceCardGlass),
+html[data-theme="vtab"][data-color-mode="dark"] .view-transform :is(.workspaceGlass,.paneGlass,.leftPaneGlass,.mainPanelGlass,.transformGlass,.previewGridGlass,.stepsPaneGlass),
+html[data-theme="vtab"][data-color-mode="dark"] .view-model :is(.professionalModelWorkspace,.modelTop,.modelLegend,.modelCanvas,.react-flow,.react-flow__renderer),
+html[data-theme="vtab"][data-color-mode="dark"] .view-measures :is(.measuresWorkspace,.measureTopbar,.measureFields,.measureEditor,.measureEditorPro,.measureModelPane,.aiMeasurePane){background:#17191c!important;color:#f5f7fa!important;border-color:#3b4047!important;box-shadow:none!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-data :is(h1,h2,h3,h4,b,strong,p,span,label,small,summary),
+html[data-theme="vtab"][data-color-mode="dark"] .view-transform :is(h1,h2,h3,h4,b,strong,p,span,label,small,summary),
+html[data-theme="vtab"][data-color-mode="dark"] .view-model :is(h1,h2,h3,h4,b,strong,p,span,label,small),
+html[data-theme="vtab"][data-color-mode="dark"] .view-measures :is(h1,h2,h3,h4,b,strong,p,span,label,small){color:#eef2f7!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-data :is(.sourceGlass,.sourceCardGlass,.sourceLandingCard,.connectorFocusCardGlass),
+html[data-theme="vtab"][data-color-mode="dark"] .view-model :is(.modelNodePro,.modelNodeHead,.modelField),
+html[data-theme="vtab"][data-color-mode="dark"] .view-measures :is(.measureFields,.measureEditor,.measureEditorPro,.measureModelPane,.aiMeasurePane){background:#202327!important;color:#eef2f7!important;border-color:#444a52!important;box-shadow:none!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-model .modelNodeHead{background:#282c31!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-model .modelField{background:#202327!important;border-color:#343940!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-model :is(.react-flow__controls,.react-flow__minimap){background:#202327!important;border-color:#444a52!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-model .react-flow__controls-button{background:#25282d!important;color:#eef2f7!important;border-color:#444a52!important;fill:#eef2f7!important}
+
+html[data-theme="vtab"][data-color-mode="dark"] .view-report :is(.reportWorkspaceGlass,.reportBodyGlass,.canvasStageGlass){background:#17191c!important;border-color:#3b4047!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-report :is(.professionalRightPane,.advancedFields,.filtersDock,.selectionPaneGlass,.formatPaneHeader,.formatPaneIdentity,.formatTabs.four,.visualizationsPane,.visualizationsHeader,.rightVisualGallery,.rightVisualGallery button,.propertyList,.formatSection,.formatSection>summary,.formatSectionBody,.advancedFields details,.advancedFields summary,.advancedFields .field,.dockPaneTitle,.dockPaneScroll,.scopeBlock,.scopeHead,.scopeContent,.selectionPaneHeader,.selectionLayerActions,.selectionLayerRow,.collapsedDockTab){background:#202327!important;color:#eef2f7!important;border-color:#3b4047!important;box-shadow:none!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-report :is(.formatPaneIdentity b,.formatTabs.four button,.visualizationsHeader b,.rightVisualGallery .visualGlyph,.formatSection>summary,.formatSectionBody label,.switchRow span,.advancedFields .paneTitle,.advancedFields summary,.advancedFields .field,.advancedFields .fieldName,.dockPaneTitle b,.scopeHead b,.selectionLayerRow b,.selectionLayerRow small){color:#eef2f7!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-report :is(.formatTabs.four button,.rightVisualGallery button,.selectionLayerActions button,.reportPaneEdgeToggle){background:#25282d!important;color:#eef2f7!important;border-color:#444a52!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-report :is(.formatTabs.four button:hover,.rightVisualGallery button:hover,.advancedFields .field:hover,.selectionLayerRow:hover){background:#2c3035!important;color:#fff!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-report :is(.formatTabs.four button.active,.advancedFields .field.boundField,.selectionLayerRow.selected){background:#173a55!important;color:#bfe5fb!important;border-color:#408fbd!important}
+html[data-theme="vtab"][data-color-mode="dark"] .view-report :is(.formatSearch,.formatSectionBody input,.formatSectionBody select,.formatSectionBody textarea,.categoryScrollQuick,.well.dropWell,.inlineFilterBuilder,.edgeGrid .switchRow){background:#181a1d!important;color:#f5f7fa!important;border-color:#555c66!important}
+html[data-theme="vtab"][data-color-mode="dark"] .settingsPowerBiDialog,
+html[data-theme="vtab"][data-color-mode="dark"] .settingsPowerBiDialog>header,
+html[data-theme="vtab"][data-color-mode="dark"] .settingsDialogBody>nav,
+html[data-theme="vtab"][data-color-mode="dark"] .settingsDialogBody>main,
+html[data-theme="vtab"][data-color-mode="dark"] .settingsPowerBiDialog>footer,
+html[data-theme="vtab"][data-color-mode="dark"] .settingsAbout{background:#202327!important;color:#eef2f7!important;border-color:#3b4047!important}
+html[data-theme="vtab"][data-color-mode="dark"] .settingsPowerBiDialog :is(h1,h2,h3,b,span,p,label,small){color:#eef2f7!important}
+html[data-theme="vtab"][data-color-mode="dark"] .settingsDialogBody>nav button{color:#d1d5db!important}
+html[data-theme="vtab"][data-color-mode="dark"] .settingsDialogBody>nav button:hover,
+html[data-theme="vtab"][data-color-mode="dark"] .settingsDialogBody>nav button.active{background:#2c3035!important;color:#fff!important}
+
+/* DARK MODE OVERRIDES */
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .stepRibbonGlass,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformBodyGlass,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .previewGridGlass,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerBiAppliedSteps,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .excelGridWrapGlass,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .sqlDetailsGlass,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .tableGlass,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerBiAppliedSteps .stepGlass {
+  background: #17191c !important;
+  color: #f5f7fa !important;
+  border-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerBiAppliedSteps > h3,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerBiAppliedSteps .stepName,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .excelGridGlass th,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .excelGridGlass td {
+  color: #eef2f7 !important;
+  background: transparent !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .excelGridGlass th {
+  background: #202327 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryRibbonTabs button,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .sqlDetailsGlass summary {
+  color: #eef2f7 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryRibbonTabs button.active {
+  background: #17191c !important;
+  color: #60a5fa !important;
+  border-bottom-color: #60a5fa !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryFormulaBar,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .foldBarGlass,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .gridStatusGlass {
+  background: #202327 !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryScript,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryFormulaBar code,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .sqlDetailsGlass code {
+  color: #eef2f7 !important;
+  background: #181a1d !important;
+  border-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerBiAppliedSteps .stepGlass:hover {
+  background: #2c3035 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerBiAppliedSteps .stepGlass.selected {
+  background: #173a55 !important;
+  border-left-color: #60a5fa !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .modelRelationshipHint {
+  background: #342704 !important;
+  color: #fef08a !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4) !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .modelRelationshipHint strong {
+  color: #fde047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .modelRelationshipHint svg {
+  color: #eab308 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .aiCatalogPage {
+  background: #17191c !important;
+  color: #f5f7fa !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .aiCatalogHero {
+  background: #08111c !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .aiCatalogHero h1,
+html[data-theme='vtab'][data-color-mode='dark'] .aiCatalogHero p,
+html[data-theme='vtab'][data-color-mode='dark'] .aiCatalogHero span,
+html[data-theme='vtab'][data-color-mode='dark'] .aiCatalogHero b,
+html[data-theme='vtab'][data-color-mode='dark'] .catalogWorkflow b,
+html[data-theme='vtab'][data-color-mode='dark'] .catalogWorkflow span,
+html[data-theme='vtab'][data-color-mode='dark'] .catalogToolbar select {
+  color: #eef2f7 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .catalogSummary {
+  background: #202327 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .catalogSummary b,
+html[data-theme='vtab'][data-color-mode='dark'] .catalogSummary span {
+  color: #eef2f7 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .catalogCard {
+  background: #202327 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .catalogCard h3,
+html[data-theme='vtab'][data-color-mode='dark'] .catalogCard p,
+html[data-theme='vtab'][data-color-mode='dark'] .catalogCard code {
+  color: #eef2f7 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .catalogSummary button:hover {
+  background: #2c3035 !important;
+}
+
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform textarea {
+  color: #eef2f7 !important;
+  background: #181a1d !important;
+  border-color: #3b4047 !important;
+}
+
+
+/* COMPREHENSIVE DARK MODE OVERRIDES */
+
+/* Fix missing icons in DataWorkbench (Pills and Icons) */
+html[data-theme='vtab'][data-color-mode='dark'] .view-data .sourceTypeBadge,
+html[data-theme='vtab'][data-color-mode='dark'] .view-data .sourceCardIconGlass svg {
+  color: #60a5fa !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-data .sourceTypeBadge {
+  background: rgba(37, 99, 235, 0.2) !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-data .sourceCardIconGlass {
+  background: rgba(37, 99, 235, 0.15) !important;
+}
+
+/* Fix TransformWorkbench ribbon being white and icons invisible */
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryRibbon,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryRibbonTabs {
+  background: #17191c !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .stepRibbonGlass button {
+  color: #eef2f7 !important;
+}
+
+/* Fix ModelView toolbar buttons being white */
+html[data-theme='vtab'][data-color-mode='dark'] .view-model .modelTop {
+  background: #17191c !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-model .modelToolbar button {
+  background: #202327 !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-model .modelToolbar button.primary {
+  background: #2563eb !important;
+}
+
+/* Fix AIMeasureCatalog toolbar and cards */
+html[data-theme='vtab'][data-color-mode='dark'] .catalogToolbar,
+html[data-theme='vtab'][data-color-mode='dark'] .catalogToolbar button {
+  background: #202327 !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .catalogToolbar button.primary {
+  background: #2563eb !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .catalogToolbar input {
+  background: #181a1d !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+
+/* Fix MeasuresWorkbench (Create Measure) missing visibility */
+html[data-theme='vtab'][data-color-mode='dark'] .view-measures .measureFields input,
+html[data-theme='vtab'][data-color-mode='dark'] .view-measures .daxFunctionBar button {
+  background: #181a1d !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-measures .daxFunctionBar {
+  background: #202327 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-measures .measureActions button {
+  background: #2563eb !important;
+  color: #fff !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-measures .measureTopbar button.btnOutline {
+  background: #202327 !important;
+  color: #eef2f7 !important;
+}
+
+
+/* COMPREHENSIVE DARK MODE OVERRIDES V2 */
+
+/* DataWorkbench: Table Grid */
+html[data-theme='vtab'][data-color-mode='dark'] .view-data .tableGlass,
+html[data-theme='vtab'][data-color-mode='dark'] .view-data .tableGlass th,
+html[data-theme='vtab'][data-color-mode='dark'] .view-data .tableGlass td {
+  background: #17191c !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-data .tableGlass th {
+  background: #202327 !important;
+}
+
+/* TransformWorkbench: Selected Query Item in left sidebar */
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .queryItemGlass.selected {
+  background: #173a55 !important;
+  color: #bfe5fb !important;
+  border-left-color: #60a5fa !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .queryItemGlass.selected b,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .queryItemGlass.selected small {
+  color: #eef2f7 !important;
+}
+
+/* AIMeasureCatalog: Workflow banner, Summary buttons, Policy box */
+html[data-theme='vtab'][data-color-mode='dark'] .catalogWorkflow {
+  background: #202327 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .catalogSummary button {
+  background: #202327 !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .catalogPolicy {
+  background: #17191c !important;
+  border-color: #3b4047 !important;
+}
+
+/* MeasuresWorkbench: Left pane, Search, Tree items, DAX keyboard, Right pane inputs */
+html[data-theme='vtab'][data-color-mode='dark'] .measureListHead,
+html[data-theme='vtab'][data-color-mode='dark'] .measureListHead h3,
+html[data-theme='vtab'][data-color-mode='dark'] .measureListHead span,
+html[data-theme='vtab'][data-color-mode='dark'] .measureListHead .eyebrow {
+  background: #202327 !important;
+  color: #eef2f7 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .modelFieldSearch,
+html[data-theme='vtab'][data-color-mode='dark'] .modelFieldSearch input {
+  background: #181a1d !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .treeHierarchy,
+html[data-theme='vtab'][data-color-mode='dark'] .treeField,
+html[data-theme='vtab'][data-color-mode='dark'] .treeMeasure {
+  background: #17191c !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .treeHierarchy span,
+html[data-theme='vtab'][data-color-mode='dark'] .treeHierarchy small,
+html[data-theme='vtab'][data-color-mode='dark'] .treeField span,
+html[data-theme='vtab'][data-color-mode='dark'] .treeMeasure span {
+  color: #eef2f7 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .treeMeasure.active {
+  background: #173a55 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-measures .daxFunctionBar b {
+  background: #181a1d !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-measures .daxFunctionBar b:hover {
+  background: #2c3035 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .aiMeasureGrounding,
+html[data-theme='vtab'][data-color-mode='dark'] .calcAiGrounding {
+  background: #17191c !important;
+  border-color: #3b4047 !important;
+  color: #eef2f7 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .aiMeasureGrounding b,
+html[data-theme='vtab'][data-color-mode='dark'] .aiMeasureGrounding span {
+  color: #eef2f7 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .promptAutoWrap textarea {
+  background: #181a1d !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+
+
+html[data-theme='vtab'][data-color-mode='dark'] .aiGrounding {
+  background: #17191c !important;
+  border-color: #3b4047 !important;
+  color: #eef2f7 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .aiGrounding b,
+html[data-theme='vtab'][data-color-mode='dark'] .aiGrounding span {
+  color: #eef2f7 !important;
+}
+
+
+/* COMPREHENSIVE DARK MODE OVERRIDES V3 */
+/* Fix TransformWorkbench top header bar (Sheet1 name, Queries/Steps buttons) */
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformGlass,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformHeaderGlass {
+  background: #17191c !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformHeaderGlass h2,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformHeaderGlass small {
+  color: #eef2f7 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformHeaderGlass .toolbarGlass button {
+  background: #202327 !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformHeaderGlass .toolbarGlass button:hover {
+  background: #2c3035 !important;
+}
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformHeaderGlass .toolbarGlass button.primary {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  border-color: #2563eb !important;
+}
+
+
+/* COMPREHENSIVE DARK MODE OVERRIDES V4 - Ribbon Buttons and Hovers */
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryCommands > button {
+  background: #181a1d !important;
+  color: #eef2f7 !important;
+  border-right-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryCommands > button:hover,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryCommands > button.active {
+  background: #2c3035 !important;
+  color: #60a5fa !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryCommands > button svg {
+  color: inherit !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .powerQueryRibbonTabs button:hover {
+  background: #2c3035 !important;
+  color: #eef2f7 !important;
+}
+
+
+/* COMPREHENSIVE DARK MODE OVERRIDES V5 - Panel Header Glass */
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformGlass > .panelHeaderGlass.transformCommandHeader {
+  background: #17191c !important;
+  border-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformGlass > .panelHeaderGlass.transformCommandHeader h2,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformGlass > .panelHeaderGlass.transformCommandHeader p,
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformGlass > .panelHeaderGlass.transformCommandHeader .eyebrowGlass {
+  color: #eef2f7 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformPrimaryActions .btnGlass {
+  background: #202327 !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformPrimaryActions .btnGlass:hover {
+  background: #2c3035 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-transform .transformPrimaryActions .btnGlass.primary {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  border-color: #2563eb !important;
+}
+
+
+/* COMPREHENSIVE DARK MODE OVERRIDES V6 - Model Designer Toolbar */
+html[data-theme='vtab'][data-color-mode='dark'] .view-model .modelDesignerV27 .modelToolbar button,
+html[data-theme='vtab'][data-color-mode='dark'] .modelDesignerV27 .modelToolbar button {
+  background: #181a1d !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-model .modelDesignerV27 .modelToolbar button:hover,
+html[data-theme='vtab'][data-color-mode='dark'] .modelDesignerV27 .modelToolbar button:hover {
+  background: #2c3035 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-model .modelDesignerV27 .modelToolbar button.primary,
+html[data-theme='vtab'][data-color-mode='dark'] .modelDesignerV27 .modelToolbar button.primary {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  border-color: #2563eb !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-model .modelDesignerV27 .modelToolbar button svg,
+html[data-theme='vtab'][data-color-mode='dark'] .modelDesignerV27 .modelToolbar button svg {
+  color: inherit !important;
+  stroke: inherit !important;
+  fill: currentColor !important;
+}
+
+
+/* COMPREHENSIVE DARK MODE OVERRIDES V7 - Semantic Tree Summary */
+html[data-theme='vtab'][data-color-mode='dark'] .semanticTree details {
+  background: #17191c !important;
+  border-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .semanticTree summary {
+  background: #202327 !important;
+  color: #eef2f7 !important;
+  border-bottom-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .semanticTree summary b,
+html[data-theme='vtab'][data-color-mode='dark'] .semanticTree summary small,
+html[data-theme='vtab'][data-color-mode='dark'] .semanticTree summary svg {
+  color: #eef2f7 !important;
+}
+
+
+/* COMPREHENSIVE DARK MODE OVERRIDES V8 - Report Fields Pane */
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-report .paneTitle span {
+  color: #eef2f7 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-report .fieldSearch {
+  background: #181a1d !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-report .advancedFields details summary b,
+html[data-theme='vtab'][data-color-mode='dark'] .view-report .advancedFields details summary .tableName {
+  color: #eef2f7 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-report .measuresEmptyState {
+  background: #17191c !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-report .measuresEmptyState b,
+html[data-theme='vtab'][data-color-mode='dark'] .view-report .measuresEmptyState span {
+  color: #eef2f7 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-report .measuresEmptyState button {
+  background: #202327 !important;
+  color: #eef2f7 !important;
+  border-color: #3b4047 !important;
+}
+
+html[data-theme='vtab'][data-color-mode='dark'] .view-report .measuresEmptyState button:hover {
+  background: #2c3035 !important;
+}
+
+/* Fix hierarchy field layout in Power BI theme */
+[data-theme="vtab"] .view-report .advancedFields .field.hierarchyField {
+  display: grid !important;
+  grid-template-columns: 24px minmax(0, 1fr) !important;
+  height: auto !important;
+  min-height: 38px !important;
+  padding: 6px 9px 6px 21px !important;
+  align-items: flex-start !important;
+}
+
+[data-theme="vtab"] .view-report .advancedFields .field.hierarchyField > div {
+  display: flex !important;
+  flex-direction: column !important;
+  min-width: 0 !important;
+  gap: 2px !important;
+}
+
+[data-theme="vtab"] .view-report .advancedFields .field.hierarchyField b {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #242424 !important;
+  display: block !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+[data-theme="vtab"] .view-report .advancedFields .field.hierarchyField small {
+  font-size: 9px !important;
+  color: #666 !important;
+  display: block !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+[data-theme="vtab"] .view-report .advancedFields .field.hierarchyField svg {
+  margin-top: 2px !important;
+  color: #555 !important;
+}
+
+html[data-color-mode="dark"] [data-theme="vtab"] .view-report .advancedFields .field.hierarchyField b,
+html[data-color-mode="dark"] [data-theme="vtab"] .view-report .advancedFields .field.hierarchyField small,
+html[data-color-mode="dark"] [data-theme="vtab"] .view-report .advancedFields .field.hierarchyField svg {
+  color: #eef2f7 !important;
+}

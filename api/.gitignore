@@ -1,0 +1,24 @@
+# Never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Build artifacts (PyInstaller)
+build/
+dist/
+*.spec
+
+# DuckDB / SQLite data files — never commit user data
+*.duckdb
+*.db
+*.sqlite
+vtab_data/
+
+# Logs
+*.log

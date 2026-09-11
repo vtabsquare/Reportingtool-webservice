@@ -1,0 +1,49 @@
+{
+  "tables": {
+    "DimRegion": {
+      "table": "DimRegion",
+      "rows": 4,
+      "sourceBytes": 378,
+      "compressedBytes": 401,
+      "compressionRatio": 0.94,
+      "path": "columnar/DimRegion.parquet",
+      "kind": "reference"
+    },
+    "DimCustomer": {
+      "table": "DimCustomer",
+      "rows": 60,
+      "sourceBytes": 8092,
+      "compressedBytes": 1166,
+      "compressionRatio": 6.94,
+      "path": "columnar/DimCustomer.parquet",
+      "kind": "reference"
+    },
+    "DimProduct": {
+      "table": "DimProduct",
+      "rows": 24,
+      "sourceBytes": 3126,
+      "compressedBytes": 830,
+      "compressionRatio": 3.77,
+      "path": "columnar/DimProduct.parquet",
+      "kind": "reference"
+    },
+    "DimDate": {
+      "table": "DimDate",
+      "rows": 950,
+      "sourceBytes": 169232,
+      "compressedBytes": 1885,
+      "compressionRatio": 89.78,
+      "path": "columnar/DimDate.parquet",
+      "kind": "reference"
+    },
+    "FactSales": {
+      "table": "FactSales",
+      "rows": 9276,
+      "sourceBytes": 1614156,
+      "compressedBytes": 118151,
+      "compressionRatio": 13.66,
+      "path": "columnar/FactSales.parquet",
+      "kind": "reference"
+    }
+  }
+}

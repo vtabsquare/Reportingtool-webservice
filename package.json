@@ -1,0 +1,92 @@
+{
+  "name": "vtab-reporting-studio-web",
+  "private": true,
+  "version": "5.2.1",
+  "description": "VTAB Reporting Services with governed scheduled refresh",
+  "author": "VTAB Square",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "node tools/build-frontend.mjs",
+    "build:web": "cross-env VITE_APP_MODE=WORKSPACE_ONLY node tools/build-frontend.mjs",
+    "preview": "vite preview",
+    "desktop": "electron .",
+    "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-backend.ps1",
+    "release": "npm run build:backend && npm run build && electron-builder --win nsis --publish never --config.electronDownload.cache=.electron-cache"
+  },
+  "devDependencies": {
+    "@supabase/supabase-js": "^2.112.3",
+    "@xyflow/react": "12.8.2",
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "@types/react-grid-layout": "1.3.5",
+    "@vitejs/plugin-react": "4.3.4",
+    "cross-env": "^10.1.0",
+    "echarts": "5.6.0",
+    "echarts-for-react": "3.0.2",
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12",
+    "lucide-react": "0.468.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-grid-layout": "^1.5.4",
+    "typescript": "5.7.2",
+    "vite": "6.0.7",
+    "zustand": "5.0.2"
+  },
+  "build": {
+    "npmRebuild": false,
+    "appId": "com.vtabsquare.reportingstudio",
+    "productName": "VTAB Reporting Studio",
+    "copyright": "Copyright \u00a9 2026 VTAB Square",
+    "directories": {
+      "output": "release",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "dist-web/**/*",
+      "electron/**/*",
+      "build-resources/icon.ico",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "api/dist/vtab-backend.exe",
+        "to": "backend/vtab-backend.exe"
+      },
+      {
+        "from": "desktop.env",
+        "to": "desktop.env"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build-resources/icon.ico",
+      "artifactName": "VTAB Reporting Studio Setup ${version}.${ext}",
+      "requestedExecutionLevel": "requireAdministrator"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "VTAB Reporting Studio",
+      "installerIcon": "build-resources/icon.ico",
+      "uninstallerIcon": "build-resources/icon.ico",
+      "installerHeaderIcon": "build-resources/icon.ico",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "build-resources/installer.nsh"
+    }
+  }
+}

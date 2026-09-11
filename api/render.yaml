@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: vtab-backend-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: VTAB_CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+      - key: VTAB_REFRESH_WORKER_ENABLED
+        value: 1
+      - key: VTAB_REFRESH_POLL_SECONDS
+        value: 30
+      - key: VTAB_WEB_URL
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: VTAB_SMTP_FROM
+        sync: false
+      - key: VTAB_ALLOWED_ORIGINS
+        sync: false
+      - key: PORT
+        value: 8820

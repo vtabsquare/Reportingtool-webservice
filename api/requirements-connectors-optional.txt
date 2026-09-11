@@ -1,0 +1,10 @@
+# Optional enterprise connector drivers. Install only those needed by your deployment.
+psycopg[binary]>=3.2,<4
+pyodbc>=5.1,<6
+pymysql>=1.1,<2
+oracledb>=2.5,<4
+snowflake-connector-python>=3.12,<5
+databricks-sql-connector>=3.4,<5
+google-cloud-bigquery>=3.25,<4
+ibm-db>=3.2,<4
+# Cloud/SaaS connectors can also use vendor SDKs/OAuth libraries according to enterprise policy.

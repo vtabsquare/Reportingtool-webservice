@@ -1,0 +1,56 @@
+VTAB REPORTING SERVICES 5.2.1
+================================
+
+This folder is the complete updated Services application source.
+
+LOCAL START
+-----------
+1. Copy web.env.example to web.env.
+2. Replace the placeholder Supabase URL and keys in web.env.
+3. The local runner securely generates VTAB_CREDENTIAL_ENCRYPTION_KEY on first run.
+4. In Supabase SQL Editor, run api/supabase_migrations/008_refresh_runtime.sql.
+5. Run:
+
+   python run_web_tool.py
+
+The launcher checks the required programs and packages, starts the API and
+web application, and prints the local URL.
+
+CLOUD DEPLOYMENT
+----------------
+The root render.yaml deploys both the Python API and the static web site.
+The root vercel.json deploys the static web site when the API is hosted
+separately. api/railway.json can be used for the API on Railway.
+
+Required server settings:
+  VITE_SUPABASE_URL
+  VITE_SUPABASE_ANON_KEY
+  SUPABASE_SERVICE_ROLE_KEY
+  VTAB_WEB_URL
+  VTAB_ALLOWED_ORIGINS
+  VTAB_CREDENTIAL_ENCRYPTION_KEY
+  VTAB_REFRESH_WORKER_ENABLED=1
+
+Required web build settings:
+  VITE_APP_MODE=WORKSPACE_ONLY
+  VITE_SUPABASE_URL
+  VITE_SUPABASE_ANON_KEY
+  VITE_API_URL
+  VITE_WEB_URL
+
+SECURITY NOTE
+-------------
+Never put SUPABASE_SERVICE_ROLE_KEY in a public frontend setting or commit a
+real web.env file. It belongs only in the private environment settings of the
+Python API service.
+
+PUBLISHING DATA
+---------------
+Desktop imports data from the selected source into managed Parquet snapshots.
+Publishing uploads every model table to private Supabase Storage. The Services
+API downloads those snapshots with the signed-in viewer/service-account token,
+then runs the report query. Database passwords are not placed in the report.
+
+After updating the Services deployment, republish existing reports from the
+updated Desktop application so all tables have current private snapshots and
+geometry-v2 page coordinates.
