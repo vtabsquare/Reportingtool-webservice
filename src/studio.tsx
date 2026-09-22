@@ -220,7 +220,17 @@ function CloudPortal(){
        if(data.session){localStorage.setItem('vtab_supabase_token',data.session.access_token);setCloudSession(data.session);}
        setCloudReady(true);
      });
-     const{data:{subscription}}=supabase.auth.onAuthStateChange((_,session)=>{if(session)localStorage.setItem('vtab_supabase_token',session.access_token);else localStorage.removeItem('vtab_supabase_token');setCloudSession(session)});
+     const{data:{subscription}}=supabase.auth.onAuthStateChange((event,session)=>{
+       if(session){
+         localStorage.setItem('vtab_supabase_token',session.access_token);
+         // Keep the new token for API/share actions. CloudWorkspace keys its data
+         // load to the user id, so TOKEN_REFRESHED no longer resets open UI state.
+         setCloudSession(session);
+       }else if(event==='SIGNED_OUT'){
+         localStorage.removeItem('vtab_supabase_token');
+         setCloudSession(null);
+       }
+     });
      return()=>subscription.unsubscribe();
    });
  },[]);

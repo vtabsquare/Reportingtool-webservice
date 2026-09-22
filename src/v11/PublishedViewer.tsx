@@ -1,9 +1,11 @@
 import{useEffect,useMemo,useRef,useState}from'react';
 import{createPortal}from'react-dom';
-import{ChevronLeft,ChevronRight,RefreshCcw,Maximize2,Minimize2,Home,CalendarDays,ShieldCheck,MonitorUp,Expand,Scaling,Eraser,BarChart3,PieChart,Table2,LayoutGrid,Filter,TrendingUp,MousePointerClick,FileDown,Presentation,Mail}from'lucide-react';
+import{ChevronLeft,ChevronRight,RefreshCcw,Maximize2,Minimize2,Home,CalendarDays,ShieldCheck,MonitorUp,Expand,Scaling,Eraser,BarChart3,PieChart,Table2,LayoutGrid,Filter,TrendingUp,MousePointerClick,FileDown,Presentation,Mail,FileText}from'lucide-react';
 import Chart from'../components/Chart';
+import PaginatedReportViewer from'./PaginatedReportViewer';
 import{api,apiDownload}from'../api';
 import{richTextHtml}from'../richText';
+import{resolveActionButtonLabel,resolveActionCommands,visualIsHidden}from'../buttonActions';
 import type{Visual,VisualFilter}from'../types';
 
 // In WORKSPACE_ONLY (web portal) mode, report metadata comes from Supabase and
@@ -56,6 +58,7 @@ function ViewerVisual({reportId,v,roleId,extraFilters,onCrossFilter,onAction,pro
  const[rows,setRows]=useState<any[]>([]),[err,setErr]=useState(''),[focus,setFocus]=useState(false),[slicerSelected,setSlicerSelected]=useState<string[]>([]),[slicerSearch,setSlicerSearch]=useState('');
  const load=()=>{if(v.type==='textbox'||v.type==='button'){setRows([]);setErr('');return Promise.resolve()}return queryVisual(reportId,v,roleId,extraFilters,project).then(r=>{setRows(r.rows||[]);setErr('')}).catch(e=>{setRows([]);setErr(e.message||String(e))})};
  useEffect(()=>{load()},[JSON.stringify(v.bindings),JSON.stringify(v.filters),JSON.stringify(v.sort),JSON.stringify(extraFilters),roleId,project?.id]);
+ useEffect(()=>{const reset=()=>{setSlicerSelected([]);setSlicerSearch('')};window.addEventListener('vtab-reset-state',reset);return()=>window.removeEventListener('vtab-reset-state',reset)},[]);
  const f:any=v.format||{};const bg=f.background||'#fff';const dark=/^#0|^#1/.test(bg.toLowerCase());const accent=f.accent||({kpi:'#2563eb',card:'#16a34a',bar:'#2563eb',column:'#0ea5e9',line:'#16a34a',area:'#10b981',pie:'#f59e0b',donut:'#8b5cf6',gauge:'#16a34a',table:'#2563eb',matrix:'#4f46e5',slicer:'#e11d48'} as any)[v.type]||'#2563eb';
  const transparency=f.backgroundEnabled===false?100:Math.max(0,Math.min(100,f.backgroundTransparency||0));
  const edges=f.borderEdges||{top:true,right:true,bottom:true,left:true};
@@ -76,9 +79,11 @@ function ViewerVisual({reportId,v,roleId,extraFilters,onCrossFilter,onAction,pro
  </div>;
  return <>{card}{focus&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>setFocus(false)}><div className="visualFocusPanel viewerFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>FOCUS MODE</small><b>{v.title}</b></div><button onClick={()=>setFocus(false)}>Close</button></div><div className="visualFocusBody">{content}</div></div></div>,document.body)}</>
 }
-export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean}){
+export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string}){
  const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(!embedded),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'>('actual'),[scale,setScale]=useState(1),[interactionFilters,setInteractionFilters]=useState<VisualFilter[]>([]),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'',password:''});
+ const[publishedMode,setPublishedMode]=useState<'interactive'|'paginated'>(initialPaginatedId?'paginated':'interactive');
  const stageRef=useRef<HTMLElement|null>(null);
+ const actionPageHistoryRef=useRef<number[]>([]),runtimeVisibilityDefaultsRef=useRef<Record<string,boolean>>({});
  const load=()=>{
   if(initialItem && initialItem.project){setItem(initialItem);setError('');return;}
   if(WORKSPACE_ONLY){
@@ -92,7 +97,8 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
   if(WORKSPACE_ONLY){load();return;}
   api<any>('/auth/status').then(s=>{setAuthRequired(!!s.required);if(s.required){api('/auth/me').then(()=>{setSignedIn(true);load()}).catch(()=>setSignedIn(false))}else load()})
  },[reportId,initialItem?.id]);
- const project=item?.project,report=project?.report,pages=report?.pages||[],page=pages[pageIndex]||pages[0],s=page?.settings||{};
+ const project=item?.project,report=project?.report,pages=report?.pages||[],page=pages[pageIndex]||pages[0],s=page?.settings||{},paginatedReports=project?.paginatedReports||[];
+ useEffect(()=>{const targetPage=new URLSearchParams(location.search).get('page');if(targetPage){const index=pages.findIndex((item:any)=>item.id===targetPage);if(index>=0)setPageIndex(index)}},[item?.id]);
  const width=s.pageWidth||1600,height=s.pageHeight||900;
  const pixelLayout=(page?.visuals||[]).some((visual:Visual)=>visual.geometryVersion===2);
  const visualBottom=(page?.visuals||[]).reduce((m:any,v:any)=>Math.max(m,v.geometryVersion===2?(v.y||0)+(v.h||100):(v.y||0)*70+(v.h||2)*54+Math.max(0,(v.h||2)-1)*16),0);
@@ -121,7 +127,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    compute();const ro=new ResizeObserver(compute);ro.observe(stage);window.addEventListener('resize',compute);return()=>{ro.disconnect();window.removeEventListener('resize',compute)};
  },[width,effectiveHeight,viewMode,full,item?.id,page?.id]);
  useEffect(()=>{const stage=stageRef.current;if(stage)stage.scrollTo({top:0,left:0,behavior:'instant' as ScrollBehavior})},[pageIndex,viewMode,full,item?.id]);
- useEffect(()=>{setRuntimeHidden({});setInteractionFilters([])},[page?.id]);
+ useEffect(()=>{for(const reportPage of pages)for(const visual of reportPage.visuals||[])if(Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,visual.id))visual.hidden=runtimeVisibilityDefaultsRef.current[visual.id];setRuntimeHidden({});setInteractionFilters([])},[page?.id]);
  const doLogin=async()=>{try{const r=await api<any>('/auth/login',{method:'POST',body:JSON.stringify(login)});localStorage.setItem('vtab_workspace_token',r.token);setSignedIn(true);load()}catch(e:any){alert(e.message)}};
  if(authRequired&&!signedIn)return <div className="workspaceLogin"><div className="workspaceLoginCard"><div className="brandMark">V</div><h2>Sign in to VTAB Workspace</h2><p>This published report requires a workspace account.</p><input placeholder="Email" value={login.email} onChange={e=>setLogin({...login,email:e.target.value})}/><input type="password" placeholder="Password" value={login.password} onChange={e=>setLogin({...login,password:e.target.value})}/><button className="primary" onClick={doLogin}>Sign In</button></div></div>;
  if(error)return <div className="viewerLoading"><b>Published report could not be opened</b><span>{error}</span><button onClick={()=>location.href='/?workspace=1'}>Open Workspace</button></div>;
@@ -129,10 +135,21 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  if(!page)return <div className="viewerLoading">This published report has no pages.</div>;
  const exportFile=(fmt:'pdf'|'pptx')=>apiDownload(`/published/${reportId}/export/${fmt}`,`${(report?.name||'VTAB_Report').replace(/[^A-Za-z0-9_-]+/g,'_')}.${fmt==='pdf'?'pdf':'pptx'}`).catch((e:any)=>alert(e.message));
  const shareEmail=()=>{const to=window.prompt('Recipient email(s), comma separated:','');if(!to)return;const attach=(window.prompt('Attachment: none, pdf or pptx','none')||'none').toLowerCase();api(`/published/${reportId}/share-email`,{method:'POST',body:JSON.stringify({to,attach:attach==='none'?'':attach,subject:`VTAB Report: ${report.name}`,message:'A VTAB Workspace report has been shared with you.',reportUrl:location.href})}).then(()=>alert('Report shared by email.')).catch((e:any)=>alert(e.message))};
- const executeAction=(v:Visual)=>{const a=v.action;if(!a||a.type==='none')return;if(a.type==='navigate'&&a.targetPageId){const i=pages.findIndex((p:any)=>p.id===a.targetPageId);if(i>=0){setPageIndex(i);setInteractionFilters([])}return}if(a.type==='clearFilters'){setInteractionFilters([]);return}if(a.targetVisualId&&['toggleVisual','showVisual','hideVisual'].includes(a.type||'')){setRuntimeHidden(h=>{const n={...h};if(a.type==='toggleVisual')n[a.targetVisualId!]=!n[a.targetVisualId!];if(a.type==='showVisual')n[a.targetVisualId!]=false;if(a.type==='hideVisual')n[a.targetVisualId!]=true;return n})}};
+ const executeAction=(v:Visual)=>{
+  const a=v.action;if(!a||a.type==='none')return;
+  if(a.type==='navigate'){
+   if(a.targetReportId&&a.targetReportId!==reportId){const url=new URL(location.href);url.searchParams.set('workspace','1');url.searchParams.set('report',a.targetReportId);if(a.targetPageId)url.searchParams.set('page',a.targetPageId);else url.searchParams.delete('page');location.href=url.toString();return}
+   if(a.targetPageId){const i=pages.findIndex((item:any)=>item.id===a.targetPageId);if(i>=0){actionPageHistoryRef.current.push(pageIndex);setPageIndex(i);setInteractionFilters([])}}return;
+  }
+  if(a.type==='back'){const previous=actionPageHistoryRef.current.pop();setPageIndex(previous??Math.max(0,pageIndex-1));setInteractionFilters([]);return}
+  if(a.type==='resetState'||a.type==='clearFilters'){setInteractionFilters([]);if(a.type==='resetState'){for(const item of page.visuals||[])if(Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,item.id))item.hidden=runtimeVisibilityDefaultsRef.current[item.id];setRuntimeHidden({});window.dispatchEvent(new Event('vtab-reset-state'))}return}
+  const commands=resolveActionCommands(a,page);if(!commands.length)return;
+  setRuntimeHidden(hidden=>{const next={...hidden};for(const command of commands){const allHidden=command.targets.length>0&&command.targets.every((target:Visual)=>visualIsHidden(target,next));for(const target of command.targets){if(!Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,target.id))runtimeVisibilityDefaultsRef.current[target.id]=!!target.hidden;const value=command.operation==='show'?false:command.operation==='hide'?true:!allHidden;target.hidden=value;next[target.id]=value}}return next});
+ };
+ for(const visual of page.visuals||[])if(visual.type==='button'&&visual.action?.dynamicLabel!==false)visual.buttonLabel=resolveActionButtonLabel(visual,page,pages,runtimeHidden);
  return <div className={'publishedViewer '+(full?'viewerFull':'')}>
-  <header className="viewerTopbar"><div className="viewerBrand"><span>V</span><div><b>VTAB Workspace</b><small>Published Analytics</small></div></div><div className="viewerReportName"><small>PUBLISHED REPORT</small><b>{report.name}</b></div><div className="viewerActions"><span><ShieldCheck size={14}/>Governed</span><span><CalendarDays size={14}/>{new Date(item.updated_at||item.published_at).toLocaleString()}</span>{interactionFilters.length>0&&<button onClick={()=>setInteractionFilters([])}><Eraser size={15}/>Clear Selection</button>}<button onClick={load}><RefreshCcw size={15}/>Refresh</button><button onClick={()=>exportFile('pdf')}><FileDown size={15}/>PDF</button><button onClick={()=>exportFile('pptx')}><Presentation size={15}/>PPT</button><button onClick={shareEmail}><Mail size={15}/>Share</button><div className="viewerViewModes"><button className={viewMode==='fitPage'?'active':''} onClick={()=>setViewMode('fitPage')} title="Show the complete report page"><Scaling size={15}/>Full Report</button><button className={viewMode==='fitWidth'?'active':''} onClick={()=>setViewMode('fitWidth')} title="Fit report to browser width"><MonitorUp size={15}/>Fit Width</button><button className={viewMode==='actual'?'active':''} onClick={()=>setViewMode('actual')} title="Use report design size"><Expand size={15}/>Actual</button></div><button onClick={()=>setFull(x=>!x)}>{full?<Minimize2 size={15}/>:<Maximize2 size={15}/>}{full?'Exit Full Screen':'Full Screen'}</button><button onClick={()=>location.href='/?workspace=1'}><Home size={15}/>Workspace</button></div></header>
-  <main className="viewerStage" ref={stageRef}>
+  <header className="viewerTopbar"><div className="viewerBrand"><span>V</span><div><b>VTAB Workspace</b><small>Published Analytics</small></div></div><div className="viewerReportName"><small>PUBLISHED REPORT</small><b>{report.name}</b></div><div className="viewerActions"><span><ShieldCheck size={14}/>Governed</span><span><CalendarDays size={14}/>{new Date(item.updated_at||item.published_at).toLocaleString()}</span>{interactionFilters.length>0&&<button onClick={()=>setInteractionFilters([])}><Eraser size={15}/>Clear Selection</button>}<button onClick={load}><RefreshCcw size={15}/>Refresh</button>{paginatedReports.length>0&&<button className={publishedMode==='paginated'?'active':''} onClick={()=>setPublishedMode(value=>value==='paginated'?'interactive':'paginated')}><FileText size={15}/>{publishedMode==='paginated'?'Dashboard':'Paginated Reports'}</button>}<button onClick={()=>exportFile('pdf')}><FileDown size={15}/>PDF</button><button onClick={()=>exportFile('pptx')}><Presentation size={15}/>PPT</button><button onClick={shareEmail}><Mail size={15}/>Share</button><div className="viewerViewModes"><button className={viewMode==='fitPage'?'active':''} onClick={()=>setViewMode('fitPage')} title="Show the complete report page"><Scaling size={15}/>Full Report</button><button className={viewMode==='fitWidth'?'active':''} onClick={()=>setViewMode('fitWidth')} title="Fit report to browser width"><MonitorUp size={15}/>Fit Width</button><button className={viewMode==='actual'?'active':''} onClick={()=>setViewMode('actual')} title="Use report design size"><Expand size={15}/>Actual</button></div><button onClick={()=>setFull(x=>!x)}>{full?<Minimize2 size={15}/>:<Maximize2 size={15}/>}{full?'Exit Full Screen':'Full Screen'}</button><button onClick={()=>location.href='/?workspace=1'}><Home size={15}/>Workspace</button></div></header>
+  {publishedMode==='paginated'?<PaginatedReportViewer reportId={reportId} project={project} filters={[...(report.filters||[]),...(page.filters||[]),...interactionFilters]} cloudMode={cloudMode||WORKSPACE_ONLY} initialDefinitionId={initialPaginatedId}/>:<><main className="viewerStage" ref={stageRef}>
    <div className="viewerScaleFrame" style={{width:width*scale,height:effectiveHeight*scale}}>
    <div className={'viewerPage '+(pixelLayout?'pixelPublishedPage':'legacyPublishedPage')} style={{width,height:effectiveHeight,background:s.background||'#f5f7fb',transform:`scale(${scale})`}}>
     {s.backgroundImage&&<div className="viewerPageBg" style={{backgroundImage:`url(${s.backgroundImage})`,backgroundSize:s.backgroundImageFit||'cover',opacity:(s.backgroundImageOpacity??24)/100}}/>}
@@ -143,6 +160,6 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    </div>
    </div>
   </main>
-  <footer className="viewerFooter"><button onClick={()=>setPageIndex(i=>Math.max(0,i-1))} disabled={pageIndex===0}><ChevronLeft size={15}/>Previous</button><div className="viewerPages">{pages.map((p:any,i:number)=><button key={p.id} className={i===pageIndex?'active':''} onClick={()=>setPageIndex(i)}>{p.name}</button>)}</div><span>Page {pageIndex+1} of {pages.length}</span><button onClick={()=>setPageIndex(i=>Math.min(pages.length-1,i+1))} disabled={pageIndex===pages.length-1}>Next<ChevronRight size={15}/></button></footer>
+  <footer className="viewerFooter"><button onClick={()=>setPageIndex(i=>Math.max(0,i-1))} disabled={pageIndex===0}><ChevronLeft size={15}/>Previous</button><div className="viewerPages">{pages.map((p:any,i:number)=><button key={p.id} className={i===pageIndex?'active':''} onClick={()=>setPageIndex(i)}>{p.name}</button>)}</div><span>Page {pageIndex+1} of {pages.length}</span><button onClick={()=>setPageIndex(i=>Math.min(pages.length-1,i+1))} disabled={pageIndex===pages.length-1}>Next<ChevronRight size={15}/></button></footer></>}
  </div>
 }

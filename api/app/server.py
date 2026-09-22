@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import urllib.request
 import urllib.error
+from datetime import datetime, timezone
 from collections import defaultdict, deque
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response, Header, Request
@@ -27,17 +28,22 @@ from .gemini import generate
 from .local_engine import bootstrap_from_sqlite, ensure_analytics_ready, analytics_status, storage_stats, optimize_storage, delete_managed_table, create_calendar_table, calendar_column_catalog, table_columns, table_types, materialize_query
 from .connectors import demo_metadata,test_connection,import_file,import_file_path,import_cloud,import_database,workbook_sheets,SOURCE_CATALOG,safe_table_name,friendly_table_name,list_google_sheets,list_database_tables
 from .exports import report_pdf,report_pptx,send_report_email
+from .paginated_reports import PaginatedReportError, render_paginated_pdf
 from .package_service import export_package, import_package, inspect_package, FORMATS
+from .data_bridge import router as data_bridge_router
 from .reporting_service import (
     ServiceConflictError,
     ServiceValidationError,
     authenticate as service_authenticate,
     hydrate_snapshot_sources,
+    get_semantic_model as service_get_semantic_model,
+    list_workspace_semantic_models as service_list_workspace_semantic_models,
     list_versions as service_list_versions,
     list_workspace_reports as service_list_workspace_reports,
     publish_context as service_publish_context,
     publish_report as service_publish_report,
     restore_version as service_restore_version,
+    update_semantic_model as service_update_semantic_model,
 )
 from .version import PRODUCT_VERSION
 
@@ -52,6 +58,7 @@ except Exception as exc:
 # Home/project metadata must be able to load even if DuckDB is unavailable, locked,
 # or needs recovery. Data/Transform/Model endpoints initialize it lazily.
 store=Store(); app=FastAPI(title='VTAB Reporting Studio API',version=PRODUCT_VERSION)
+app.include_router(data_bridge_router)
 _extra_origins = [o.strip() for o in os.environ.get('VTAB_ALLOWED_ORIGINS','').split(',') if o.strip()]
 _allow_all_origins = '*' in _extra_origins
 app.add_middleware(
@@ -127,6 +134,8 @@ class PublishedSnapshotQueryReq(QueryReq):
     project:dict
 class AuthoringSnapshotQueryReq(QueryReq):
     project:dict
+class PaginatedPdfReq(BaseModel):
+    project:dict|None=None; definitionId:str; filters:list[dict]=[]; parameters:dict={}; roleId:str|None=None
 class TransformReq(BaseModel):source:str;steps:list[dict];limit:int=200
 class JoinProfileReq(BaseModel):source:str;steps:list[dict];otherTable:str;keys:list[dict]
 class MeasureReq(BaseModel):name:str;expression:str
@@ -162,6 +171,9 @@ class ServicePublishReq(BaseModel):
     changeDescription:str=''
     metadata:dict={}
     overwrite:bool=False
+class SemanticModelUpdateReq(BaseModel):
+    name:str|None=None
+    description:str|None=None
 
 
 def _is_date_column(column_name:str, db_type:str|None=None):
@@ -912,6 +924,8 @@ def _service_error(error: Exception):
         raise HTTPException(403, str(error))
     if isinstance(error, ServiceValidationError):
         raise HTTPException(400, str(error))
+    if isinstance(error, ValueError):
+        raise HTTPException(400, str(error))
     message = str(error)
     if 'session' in message.lower() or 'jwt' in message.lower() or 'token' in message.lower():
         raise HTTPException(401, message)
@@ -932,6 +946,168 @@ def reporting_service_workspace_reports(workspace_id: str, authorization: str | 
     """List reports in a selected workspace so Desktop can confirm replacement."""
     try:
         return service_list_workspace_reports(workspace_id, _service_access_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+@app.get('/api/v1/service/workspaces/{workspace_id}/semantic-models')
+def reporting_service_workspace_semantic_models(workspace_id: str, authorization: str | None = Header(default=None)):
+    """List semantic models as independent workspace assets."""
+    try:
+        return service_list_workspace_semantic_models(workspace_id, _service_access_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+@app.get('/api/v1/service/semantic-models/{semantic_model_id}')
+def reporting_service_semantic_model(semantic_model_id: str, authorization: str | None = Header(default=None)):
+    """Return model metadata, definition, versions and connected reports."""
+    try:
+        return service_get_semantic_model(semantic_model_id, _service_access_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+@app.patch('/api/v1/service/semantic-models/{semantic_model_id}')
+def reporting_service_update_semantic_model(
+    semantic_model_id: str,
+    payload: SemanticModelUpdateReq,
+    authorization: str | None = Header(default=None),
+):
+    """Update safe semantic-model metadata; definitions still change only through Publish."""
+    try:
+        return service_update_semantic_model(
+            semantic_model_id,
+            payload.model_dump(exclude_none=True),
+            _service_access_token(authorization),
+        )
+    except Exception as error:
+        _service_error(error)
+
+
+@app.get('/api/v1/service/semantic-models/{semantic_model_id}/runtime')
+def semantic_model_runtime(semantic_model_id: str, authorization: str | None = Header(default=None)):
+    from .supabase_store import get_semantic_model_runtime
+    try:
+        return get_semantic_model_runtime(semantic_model_id, _supabase_user_id_from_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+def _test_semantic_model_connection_payload(semantic_model_id: str, payload: dict, authorization: str | None) -> dict:
+    from .supabase_store import _admin_client, _semantic_model_manager
+    from .credential_vault import decrypt_credentials
+    sb = _admin_client()
+    model = _semantic_model_manager(sb, semantic_model_id, _supabase_user_id_from_token(authorization))
+    gateway_id = str(payload.get('gateway_id') or '').strip()
+    if gateway_id:
+        gateways = sb.table('vtab_gateways').select('name,status,execution_mode').eq('id', gateway_id).eq('workspace_id', model['workspace_id']).limit(1).execute().data or []
+        if not gateways:
+            return {'ok': False, 'message': 'The selected gateway cluster is not available in this workspace.'}
+        gateway = gateways[0]
+        if gateway.get('status') != 'online':
+            return {'ok': False, 'message': f'Gateway "{gateway.get("name") or gateway_id}" is offline.'}
+        if gateway.get('execution_mode') != 'service_network':
+            return {'ok': False, 'message': 'This on-premises gateway has no connected agent runtime. Install/connect the gateway agent before testing.'}
+    credentials = {key: value for key, value in (payload.get('credentials') or {}).items() if value not in ('', None)}
+    connection_id = str(payload.get('id') or '').strip()
+    if connection_id:
+        rows = sb.table('semantic_model_connections').select('credentials_enc').eq('id', connection_id).eq('semantic_model_id', semantic_model_id).limit(1).execute().data or []
+        if rows:
+            credentials = {**decrypt_credentials(rows[0].get('credentials_enc')), **credentials}
+    config = {**(payload.get('connection_config') or {}), **credentials}
+    return test_connection({'type': payload.get('source_type'), 'config': config})
+
+
+@app.post('/api/v1/service/semantic-models/{semantic_model_id}/connections/test')
+def semantic_model_test_connection(semantic_model_id: str, payload: dict, authorization: str | None = Header(default=None)):
+    try:
+        return _test_semantic_model_connection_payload(semantic_model_id, payload, authorization)
+    except Exception as error:
+        return {'ok': False, 'message': str(error)}
+
+
+@app.post('/api/v1/service/workspaces/{workspace_id}/gateways')
+def semantic_model_save_gateway(workspace_id: str, payload: dict, authorization: str | None = Header(default=None)):
+    from .supabase_store import save_workspace_gateway
+    try:
+        return save_workspace_gateway(workspace_id, payload, _supabase_user_id_from_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+@app.post('/api/v1/service/semantic-models/{semantic_model_id}/connections')
+def semantic_model_save_connection(semantic_model_id: str, payload: dict, authorization: str | None = Header(default=None)):
+    from .supabase_store import save_semantic_model_connection
+    try:
+        test_result = _test_semantic_model_connection_payload(semantic_model_id, payload, authorization)
+        if not test_result.get('ok'):
+            raise ValueError(test_result.get('message') or 'Connection test failed. Correct the settings before saving.')
+        payload = {**payload, 'tested_at': datetime.now(timezone.utc).isoformat()}
+        return save_semantic_model_connection(semantic_model_id, payload, _supabase_user_id_from_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+@app.delete('/api/v1/service/semantic-models/{semantic_model_id}/connections/{connection_id}')
+def semantic_model_remove_connection(semantic_model_id: str, connection_id: str, authorization: str | None = Header(default=None)):
+    from .supabase_store import delete_semantic_model_connection
+    try:
+        return delete_semantic_model_connection(semantic_model_id, connection_id, _supabase_user_id_from_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+@app.put('/api/v1/service/semantic-models/{semantic_model_id}/parameters')
+def semantic_model_save_parameters(semantic_model_id: str, payload: dict, authorization: str | None = Header(default=None)):
+    from .supabase_store import save_semantic_model_parameters
+    try:
+        return save_semantic_model_parameters(semantic_model_id, payload.get('parameters') or [], _supabase_user_id_from_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+@app.put('/api/v1/service/semantic-models/{semantic_model_id}/schedule')
+def semantic_model_save_schedule(semantic_model_id: str, payload: dict, authorization: str | None = Header(default=None)):
+    from .supabase_store import save_semantic_model_schedule
+    try:
+        return save_semantic_model_schedule(semantic_model_id, payload, _supabase_user_id_from_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+@app.post('/api/v1/service/semantic-models/{semantic_model_id}/refresh-now')
+def semantic_model_run_now(semantic_model_id: str, authorization: str | None = Header(default=None)):
+    from .supabase_store import semantic_model_refresh_now
+    try:
+        return semantic_model_refresh_now(semantic_model_id, _supabase_user_id_from_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+@app.get('/api/v1/service/semantic-models/{semantic_model_id}/refresh-history')
+def semantic_model_history(semantic_model_id: str, limit: int = 50, authorization: str | None = Header(default=None)):
+    from .supabase_store import semantic_model_refresh_history
+    try:
+        return semantic_model_refresh_history(semantic_model_id, _supabase_user_id_from_token(authorization), limit)
+    except Exception as error:
+        _service_error(error)
+
+
+@app.get('/api/v1/service/semantic-models/{semantic_model_id}/refresh-status/{job_id}')
+def semantic_model_run_status(semantic_model_id: str, job_id: str, authorization: str | None = Header(default=None)):
+    from .supabase_store import semantic_model_refresh_status
+    try:
+        return semantic_model_refresh_status(semantic_model_id, job_id, _supabase_user_id_from_token(authorization))
+    except Exception as error:
+        _service_error(error)
+
+
+@app.delete('/api/v1/service/semantic-models/{semantic_model_id}')
+def semantic_model_delete(semantic_model_id: str, authorization: str | None = Header(default=None)):
+    from .supabase_store import delete_semantic_model
+    try:
+        return delete_semantic_model(semantic_model_id, _supabase_user_id_from_token(authorization))
     except Exception as error:
         _service_error(error)
 
@@ -1219,6 +1395,29 @@ def export_published(report_id:str,fmt:str,authorization:str|None=Header(default
         data=report_pptx(project);return Response(data,media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation',headers={'Content-Disposition':f'attachment; filename="{safe}.pptx"'})
     raise HTTPException(400,'Supported export formats are PDF and PPTX.')
 
+
+@app.post('/api/v1/published/{report_id}/paginated/pdf')
+def export_published_paginated(report_id:str,payload:PaginatedPdfReq,authorization:str|None=Header(default=None)):
+    _workspace_user(authorization);item=store.get_published(report_id)
+    if not item:raise HTTPException(404,'Published report not found')
+    try:
+        data,filename,_count=render_paginated_pdf(item['project'],payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,role_id=payload.roleId)
+        return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{filename}"'})
+    except PaginatedReportError as error:raise HTTPException(400,str(error))
+
+
+@app.post('/api/v1/published/paginated/pdf-snapshot')
+def export_published_paginated_snapshot(payload:PaginatedPdfReq,authorization:str|None=Header(default=None)):
+    token=_service_access_token(authorization)
+    if not payload.project:raise HTTPException(400,'Published project snapshot is required.')
+    try:
+        hydrated=hydrate_snapshot_sources(payload.project,token)
+        data,filename,_count=render_paginated_pdf(hydrated,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,role_id=payload.roleId)
+        return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{filename}"'})
+    except PermissionError as error:raise HTTPException(403,str(error))
+    except (PaginatedReportError,ServiceValidationError) as error:raise HTTPException(400,str(error))
+    except Exception as error:raise HTTPException(502,str(error))
+
 @app.post('/api/v1/published/{report_id}/share-email')
 def share_published_email(report_id:str,payload:dict,authorization:str|None=Header(default=None)):
     _workspace_user(authorization);item=store.get_published(report_id)
@@ -1294,6 +1493,20 @@ async def package_import(file:UploadFile=File(...)):
 
 @app.get('/api/v1/connectors')
 def connectors():return SOURCE_CATALOG
+
+def _safe_source_config(config:dict|None)->dict:
+    secret_tokens={'password','passwd','pwd','secret','clientsecret','client_secret','accesstoken','access_token','refreshtoken','refresh_token','apikey','api_key','token'}
+    return {str(k):v for k,v in (config or {}).items() if str(k).replace('-','').replace('_','').lower() not in {x.replace('_','') for x in secret_tokens}}
+
+def _record_project_source(table:str,source_type:str,name:str,config:dict|None=None,query:str|None=None)->dict:
+    """Keep non-secret source lineage beside the imported managed snapshot."""
+    p=project();sources=p.setdefault('dataSources',[])
+    source_id='source-'+str(uuid.uuid5(uuid.NAMESPACE_URL,f'{source_type}:{table}'))
+    entry={'id':source_id,'name':name or table,'type':source_type,'physicalTable':table,'configuration':_safe_source_config(config)}
+    if query:entry['query']=query
+    sources[:]=[item for item in sources if item.get('physicalTable')!=table]
+    sources.append(entry);store.save_project(p);return entry
+
 @app.post('/api/v1/connections/test')
 def conn_test(payload:dict):
     try:return test_connection(payload)
@@ -1316,6 +1529,7 @@ async def upload_data(file:UploadFile=File(...),sheet:str|None=Form(default=None
                 if total>max_bytes:raise HTTPException(413,f'Upload exceeds VTAB_MAX_UPLOAD_MB ({max_bytes//1024//1024} MB).')
                 tmp.write(chunk)
         result=import_file_path(filename,tmp_path,sheet,total)
+        _record_project_source(result['table'],'managed_file',filename,{'fileName':filename,'sheet':sheet})
         store.log('file.import',{'filename':filename,'table':result['table'],'rows':result['rows'],'sourceBytes':total,'storage':result.get('storage'),'sourceType':result.get('sourceType','file')})
         clear_cache()
         return result
@@ -1411,6 +1625,7 @@ def append_imported_tables(req:AppendTablesReq):
         store.log('file.folder.append',{'tables':tables,'target':target,'rows':rows,'schemaMode':req.schemaMode,'removedSources':removed})
         clear_cache()
         meta=next((m for m in demo_metadata() if m['name']==target),None)
+        _record_project_source(target,'managed_file',req.name or 'Folder Append',{'sourceFiles':tables})
         return {'ok':True,'table':target,'rows':rows,'columns':append_cols,'sourceTables':tables,'removedSources':removed,'warnings':warnings,'metadata':meta}
     except Exception as e:
         raise HTTPException(400,str(e))
@@ -1425,7 +1640,7 @@ def cloud_sheets_list(req:SheetsListReq):
 @app.post('/api/v1/cloud/import')
 def cloud_import(req:CloudImportReq):
     try:
-        result=import_cloud(req.sourceType,req.url,req.name,req.accessToken,req.sheetRange);store.log('cloud.import',{'sourceType':req.sourceType,'table':result['table'],'rows':result['rows'],'dataSourceType':result.get('sourceType','cloud')});return result
+        result=import_cloud(req.sourceType,req.url,req.name,req.accessToken,req.sheetRange);_record_project_source(result['table'],req.sourceType,req.name or result['table'],{'url':req.url,'sheetRange':req.sheetRange});store.log('cloud.import',{'sourceType':req.sourceType,'table':result['table'],'rows':result['rows'],'dataSourceType':result.get('sourceType','cloud')});return result
     except Exception as e:raise HTTPException(400,str(e))
 @app.post('/api/v1/database/tables-list')
 def database_tables_list(req:DatabaseTablesListReq):
@@ -1437,13 +1652,14 @@ def database_tables_list(req:DatabaseTablesListReq):
 @app.post('/api/v1/database/import')
 def database_import(req:DatabaseImportReq):
     try:
-        result=import_database(req.sourceType,req.config,req.query,req.name);store.log('database.import',{'sourceType':req.sourceType,'table':result['table'],'rows':result['rows']});clear_cache();return result
+        result=import_database(req.sourceType,req.config,req.query,req.name);_record_project_source(result['table'],req.sourceType,req.name or result['table'],req.config,req.query);store.log('database.import',{'sourceType':req.sourceType,'table':result['table'],'rows':result['rows']});clear_cache();return result
     except Exception as e:raise HTTPException(400,str(e))
 @app.post('/api/v1/transform/add-source')
 def add_transform_source(req:AddTransformSourceReq):
     p=project();meta=next((x for x in demo_metadata() if x['name']==req.physicalTable),None)
     if not meta:raise HTTPException(404,'Table not found')
     queries=p.setdefault('transform',{}).setdefault('queries',[])
+    origin=next((item for item in p.get('dataSources',[]) if item.get('physicalTable')==req.physicalTable),{})
     base=friendly_table_name(req.queryName or req.physicalTable)
     # A physical source may have only one primary Transform query. Re-import/refresh
     # updates that query instead of creating another query that points at the first table.
@@ -1453,11 +1669,13 @@ def add_transform_source(req:AddTransformSourceReq):
             existing['name']=base
         source_step=next((st for st in existing.get('steps',[]) if st.get('type')=='source'),None)
         if source_step:source_step['label']='Source: '+req.physicalTable
+        if origin:
+            existing.update({'sourceId':origin.get('id'),'sourceType':origin.get('type'),'sourceName':origin.get('name'),'sourceConfig':origin.get('configuration') or {},'sourceQuery':origin.get('query') or ''})
         store.save_project(p)
         return {'ok':True,'queryId':existing['id'],'queryName':existing['name'],'existing':True,'project':p}
     name=base;idx=2
     while any(q.get('name')==name for q in queries):name=f'{base} {idx}';idx+=1
-    qid='q-'+str(uuid.uuid4());queries.append({'id':qid,'name':name,'source':req.physicalTable,'steps':[{'id':'src-'+qid,'type':'source','label':'Source: '+req.physicalTable,'enabled':True}]});store.save_project(p);store.log('transform.source.add',{'physicalTable':req.physicalTable,'query':name});return {'ok':True,'queryId':qid,'queryName':name,'existing':False,'project':p}
+    qid='q-'+str(uuid.uuid4());queries.append({'id':qid,'name':name,'source':req.physicalTable,'sourceId':origin.get('id'),'sourceType':origin.get('type'),'sourceName':origin.get('name'),'sourceConfig':origin.get('configuration') or {},'sourceQuery':origin.get('query') or '','steps':[{'id':'src-'+qid,'type':'source','label':'Source: '+req.physicalTable,'enabled':True}]});store.save_project(p);store.log('transform.source.add',{'physicalTable':req.physicalTable,'query':name});return {'ok':True,'queryId':qid,'queryName':name,'existing':False,'project':p}
 
 @app.post('/api/v1/model/add-table')
 def add_model_table(req:AddModelTableReq):
@@ -1557,9 +1775,14 @@ def _transform_type_hints(steps:list[dict]):
 @app.post('/api/v1/transform/apply')
 def apply_transform(req:ApplyTransformReq):
     try:
+        source_query=next((item for item in project().get('transform',{}).get('queries',[]) if item.get('source')==req.source),{})
         table,count,cols=materialize(req.source,req.steps,req.name)
         # Reuse model registration so the applied result is immediately reportable.
-        result=add_model_table(AddModelTableReq(physicalTable=table,semanticName=req.name))
+        result=add_model_table(AddModelTableReq(physicalTable=table,semanticName=req.name,sourceType=source_query.get('sourceType')))
+        lineage_project=project();lineage_table=lineage_project.setdefault('model',{}).setdefault('tables',{}).get(result['semanticName'],{})
+        if source_query:
+            lineage_table.update({'sourceId':source_query.get('sourceId'),'sourceName':source_query.get('sourceName'),'sourceConfig':source_query.get('sourceConfig') or {},'sourceQuery':source_query.get('sourceQuery') or ''})
+            lineage_project['model']['tables'][result['semanticName']]=lineage_table;store.save_project(lineage_project)
         hints=_transform_type_hints(req.steps)
         if hints:
             p=project();model=p.setdefault('model',{});model.setdefault('columnTypes',{});model.setdefault('columnFormats',{})

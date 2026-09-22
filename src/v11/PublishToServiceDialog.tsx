@@ -32,6 +32,11 @@ export type PublishResult = {
   workspaceId: string;
   versionId: string;
   version: string;
+  semanticModelId?: string;
+  semanticModelName?: string;
+  semanticModelVersionId?: string;
+  semanticModelVersion?: string;
+  semantic_model_name?: string;
   reportUrl: string;
   publishedAt: string;
 };
@@ -145,8 +150,10 @@ export default function PublishToServiceDialog({
             <dl>
               <div><dt>Workspace</dt><dd>{selected?.name}</dd></div>
               <div><dt>Report</dt><dd>{name}</dd></div>
+              <div><dt>Semantic model</dt><dd>{result.semanticModelName || result.semantic_model_name || `${name} Semantic Model`}</dd></div>
               <div><dt>Version</dt><dd>{result.version}</dd></div>
             </dl>
+            <p className="servicePublishDescription">The report and its connected semantic model were created or updated together by the service.</p>
             <button className="primary" onClick={() => onOpenReport(result)}><ExternalLink size={16}/>Open in Reporting Service</button>
           </div>
         ) : replaceTarget ? (
@@ -173,6 +180,7 @@ export default function PublishToServiceDialog({
               {selected?.description && <p className="servicePublishDescription">{selected.description}</p>}
               <label>Report name<input value={name} maxLength={160} onChange={event => setName(event.target.value)}/></label>
               <label>What changed? <span>Optional</span><textarea rows={3} value={changeDescription} maxLength={500} onChange={event => setChangeDescription(event.target.value)} placeholder="Describe this version"/></label>
+              <div className="servicePublishWarning"><CheckCircle2 size={16}/><span>Publish automatically creates or updates the report and its connected semantic model. No separate model setup is required.</span></div>
               {reportsBusy && <div className="servicePublishLoading"><LoaderCircle className="spin" size={16}/>Checking existing reports…</div>}
               {conflict && !reportsBusy && <div className="servicePublishWarning"><Replace size={16}/><span><b>{conflict.name}</b> already exists. Publish will ask before replacing it.</span></div>}
               {reportsError && <div className="servicePublishError"><span>{reportsError}</span><button onClick={() => void loadReports(workspaceId)}>Retry check</button></div>}

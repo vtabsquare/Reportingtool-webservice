@@ -121,4 +121,23 @@ export async function apiDownload(path:string,filename:string){
   setTimeout(()=>URL.revokeObjectURL(u),2000);
 }
 
+export async function apiDownloadPost(path:string,filename:string,payload:any){
+  const base=await apiBase();
+  const r=await fetchWithSessionRetry(base+path,{method:'POST',headers:mergeHeaders({'Content-Type':'application/json',...authHeaders()}),body:JSON.stringify(payload)});
+  if(!r.ok)throw new Error(`Export failed (${r.status}): ${await r.text()}`);
+  const disposition=r.headers.get('content-disposition')||'';
+  const encoded=/filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  const plain=/filename="?([^";]+)"?/i.exec(disposition)?.[1];
+  let resolvedFilename=filename;
+  try{resolvedFilename=decodeURIComponent(encoded||plain||filename)}catch{resolvedFilename=plain||filename}
+  const blob=await r.blob();
+  if(_isTauri){
+    const invoke=(window as any).__TAURI__?.core?.invoke||(window as any).__TAURI__?.invoke;
+    if(invoke){
+      try{const bytes=Array.from(new Uint8Array(await blob.arrayBuffer()));const saved=await invoke('save_file_dialog',{bytes,filename:resolvedFilename});if(!saved)return;return}catch(error){console.warn('save_file_dialog failed, falling back to browser download:',error)}
+    }
+  }
+  const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=resolvedFilename;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
+}
+
 export const API_BASE=FALLBACK_BASE;

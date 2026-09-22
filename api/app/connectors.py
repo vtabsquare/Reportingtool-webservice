@@ -418,7 +418,24 @@ def test_connection(payload):
         return {'ok':True,'message':f'{next((x["name"] for x in SOURCE_CATALOG if x["id"]==typ),typ)} connection successful.'}
     if typ in ('oracle','db2','snowflake','databricks','bigquery'):
         raise ValueError(f'{typ} requires a dedicated VTAB connector plugin; it is not a working connector in this build.')
-    if typ in ('sharepoint','onedrive','google_sheets','azure_blob','adls_gen2','s3','gcs','rest','odata','graphql','salesforce','dynamics365','servicenow','jira','github'):
+    if typ in ('rest','odata','graphql'):
+        url=cfg.get('url','') or cfg.get('endpoint','') or cfg.get('base_url','')
+        if not url:raise ValueError('An HTTPS endpoint is required.')
+        _validate_remote_url(url)
+        headers={str(k):str(v) for k,v in (cfg.get('headers') or {}).items()}
+        token=cfg.get('api_key') or cfg.get('token') or cfg.get('access_token')
+        if token and 'Authorization' not in headers:
+            headers['Authorization']=f'Bearer {token}'
+        request=urllib.request.Request(url,headers=headers,method='GET')
+        try:
+            with urllib.request.urlopen(request,timeout=max(1,min(int(cfg.get('timeout') or 30),120))) as response:
+                response.read(1)
+                return {'ok':True,'message':f'{typ.upper()} connection and authentication successful (HTTP {response.status}).'}
+        except urllib.error.HTTPError as error:
+            raise ValueError(f'Endpoint authentication/open failed with HTTP {error.code}: {error.reason}') from error
+        except Exception as error:
+            raise ValueError(f'Unable to open endpoint: {error}') from error
+    if typ in ('sharepoint','onedrive','google_sheets','azure_blob','adls_gen2','s3','gcs','salesforce','dynamics365','servicenow','jira','github'):
         url=cfg.get('url','') or cfg.get('endpoint','')
         if not url:raise ValueError('An HTTPS endpoint/shared/export URL is required.')
         _validate_remote_url(url)

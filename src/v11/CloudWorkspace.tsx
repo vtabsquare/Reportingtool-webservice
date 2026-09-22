@@ -5,8 +5,9 @@ import PublishedViewer from "./PublishedViewer";
 import ShareDialog from "./ShareDialog";
 import RefreshCenterDialog from "./RefreshCenterDialog";
 import ReportServiceSettings, { ReportContentList } from "./ReportServiceSettings";
+import SemanticModelService from "./SemanticModelService";
 
-type Report = { id: string; name: string; published_at: string; updated_at?: string; pages: number; role: string; sourceType?: string; project?: any };
+type Report = { id: string; itemKey?:string; itemType?:string; paginatedId?:string; name: string; published_at: string; updated_at?: string; pages: number; role: string; sourceType?: string; project?: any };
 type Workspace = { id: string; name: string; created_at: string; role: string; member_count: number; report_count: number };
 type WorkspaceDetail = Workspace & { members: any[]; reports: any[] };
 
@@ -44,7 +45,7 @@ const Avatar = ({ name, email }: { name?: string; email?: string }) => {
 };
 
 export default function CloudWorkspace({ session }: { session: any }) {
-  const [activeTab, setActiveTab] = useState<'reports'|'data'|'workspaces'>('reports');
+  const [activeTab, setActiveTab] = useState<'reports'|'data'|'workspaces'>('workspaces');
   const [reports, setReports] = useState<Report[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceDetail | null>(null);
@@ -78,14 +79,21 @@ export default function CloudWorkspace({ session }: { session: any }) {
       setLoading(true); setErr(""); setTargetDenied("");
       const r = await fetchReports();
       setReports(r);
-      const res = await api<any[]>('/cloud/workspaces');
-      if (res) setWorkspaces(res);
+      const res = await api<Workspace[]>('/cloud/workspaces');
+      if (res) {
+        const ordered=[...res].sort((a,b)=>(a.name.toLowerCase()==='my workspace'?0:1)-(b.name.toLowerCase()==='my workspace'?0:1)||a.name.localeCompare(b.name));
+        setWorkspaces(ordered);
+        if (!activeWorkspace && ordered[0]) void loadWorkspace(ordered[0].id);
+      }
       const target = workspaceTarget();
       if (target.reportId && !r.some((x:any) => x.id === target.reportId)) setTargetDenied("This report is not shared with the signed-in account.");
     } catch (e: any) { setErr(e.message || String(e)); } finally { setLoading(false); }
   };
 
-  useEffect(() => { loadData(); }, [session]);
+  // Token refreshes create a new Supabase session object whenever the browser tab
+  // regains focus. Reload only when the signed-in user actually changes; otherwise
+  // keep the current workspace, semantic-model dialog and unsaved form values.
+  useEffect(() => { loadData(); }, [session?.user?.id]);
 
   useEffect(() => {
     if (loading || viewing) return;
@@ -218,7 +226,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
           )}
         </div>
         <div style={{ flex: 1, overflow: "hidden" }}>
-          <PublishedViewer reportId={viewing.id} initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project }} embedded cloudMode />
+          <PublishedViewer reportId={viewing.id} initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project }} embedded cloudMode initialPaginatedId={viewing.paginatedId}/>
         </div>
         {sharing && <ShareDialog reportId={sharing.id} reportName={sharing.name} onClose={() => setSharing(null)} supabaseSession={session} />}
       </div>
@@ -227,10 +235,8 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
   const filteredReports = reports.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
   const refreshableReports = reports.filter(r => ['Owner','Co-Owner','Admin','Member','Contributor'].includes(r.role));
-  const pageTitle = activeTab === 'reports' ? 'My Reports' : activeTab === 'data' ? 'Data & Refresh' : activeWorkspace ? activeWorkspace.name : 'Team Workspaces';
-  const pageSubtitle = activeTab === 'reports' ? `${reports.length} report${reports.length !== 1 ? 's' : ''} shared with you` :
-    activeTab === 'data' ? 'Configure data sources, credentials, schedules and refresh health' :
-    activeWorkspace ? `${activeWorkspace.members.length} members · ${activeWorkspace.reports.length} reports` : `${workspaces.length} workspace${workspaces.length !== 1 ? 's' : ''}`;
+  const pageTitle = activeWorkspace ? activeWorkspace.name : 'Workspaces';
+  const pageSubtitle = activeWorkspace ? 'Reports and semantic models in this workspace' : `${workspaces.length} workspace${workspaces.length !== 1 ? 's' : ''}`;
 
   // ─── Main layout ────────────────────────────────────────────────────
   return (
@@ -249,23 +255,21 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: "0 12px", display: "flex", flexDirection: "column", gap: 2 }}>
-          {[
-            { key: 'reports', label: 'My Reports', icon: '📊' },
-            { key: 'data', label: 'Data & Refresh', icon: '↻' },
-            { key: 'workspaces', label: 'Workspaces', icon: '🏢' },
-          ].map(item => (
-            <button key={item.key} onClick={() => { setActiveTab(item.key as any); setActiveWorkspace(null); }}
+          <div style={{display:'flex',alignItems:'center',padding:'0 10px 8px',color:'#64748b',fontSize:11,fontWeight:800,letterSpacing:'.08em'}}><span style={{flex:1}}>WORKSPACES</span><button title="New workspace" onClick={createWorkspace} style={{border:0,background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:18}}>+</button></div>
+          {workspaces.map(workspace => (
+            <button key={workspace.id} onClick={() => { setActiveTab('workspaces'); void loadWorkspace(workspace.id); }}
               style={{
                 display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
                 borderRadius: 8, border: "none", cursor: "pointer", textAlign: "left",
-                background: activeTab === item.key ? "rgba(99,102,241,0.18)" : "transparent",
-                color: activeTab === item.key ? "#a5b4fc" : "#94a3b8",
-                fontWeight: activeTab === item.key ? 600 : 500, fontSize: 14,
+                background: activeWorkspace?.id === workspace.id ? "rgba(99,102,241,0.18)" : "transparent",
+                color: activeWorkspace?.id === workspace.id ? "#a5b4fc" : "#94a3b8",
+                fontWeight: activeWorkspace?.id === workspace.id ? 600 : 500, fontSize: 13,
                 transition: "background .15s, color .15s"
               }}>
-              <span>{item.icon}</span>{item.label}
+              <span>{workspace.name.toLowerCase()==='my workspace'?'♙':'▣'}</span><span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{workspace.name}</span>
             </button>
           ))}
+          {!workspaces.length&&!loading&&<span style={{padding:'10px 12px',fontSize:12,color:'#64748b'}}>No workspaces yet</span>}
         </nav>
 
         {/* User + Sign Out */}
@@ -322,9 +326,9 @@ export default function CloudWorkspace({ session }: { session: any }) {
             </button>
           )}
           {activeWorkspace && (
-            <button onClick={() => setActiveWorkspace(null)}
+            <button onClick={() => void loadWorkspace(activeWorkspace.id)}
               style={{ background: "none", border: "1.5px solid #e2e8f0", borderRadius: 8, padding: "8px 14px", cursor: "pointer", fontWeight: 600, fontSize: 13, color: "#374151" }}>
-              ← All Workspaces
+              ↻ Refresh workspace
             </button>
           )}
           <input type="file" ref={fileInput} hidden accept=".vtabapp,.vtabpkg,.vtabdata" onChange={handleUpload} />
@@ -416,8 +420,8 @@ export default function CloudWorkspace({ session }: { session: any }) {
             )
           )}
 
-          {/* DATA & REFRESH — Power BI-style semantic model management */}
-          {!loading && activeTab === 'data' && (
+          {/* Retained source for the previous report-owned data view; no longer rendered. */}
+          {false && activeTab === 'data' && (
             <div style={{ maxWidth: 1120 }}>
               <div style={{ background: "linear-gradient(135deg,#083344,#0e7490)", color: "#fff", borderRadius: 18, padding: "24px 28px", display: "grid", gridTemplateColumns: "1fr auto", gap: 24, alignItems: "center", boxShadow: "0 12px 30px rgba(8,51,68,.18)" }}>
                 <div><span style={{ fontSize: 11, fontWeight: 900, letterSpacing: ".12em", color: "#a5f3fc" }}>DATA OPERATIONS</span><h2 style={{ margin: "6px 0", fontSize: 24 }}>Keep every published model current</h2><p style={{ margin: 0, color: "#cffafe", fontSize: 13, lineHeight: 1.6 }}>Connect a cloud data source, map report tables, schedule refreshes, run them on demand, and inspect failures from one place.</p></div>
@@ -458,7 +462,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                     </div>
                     <b style={{ display: "block", fontSize: 16, color: "#0f172a", marginBottom: 4 }}>{w.name}</b>
                     <small style={{ color: "#94a3b8", fontSize: 12 }}>{w.member_count} member{w.member_count !== 1 ? 's' : ''} · {w.report_count} report{w.report_count !== 1 ? 's' : ''}</small>
-                    {w.role === 'Admin' && (
+                    {w.role === 'Admin' && w.name.trim().toLowerCase() !== 'my workspace' && (
                       <button onClick={e => { e.stopPropagation(); if (!confirm(`Delete workspace "${w.name}"?`)) return; fetch(`/api/v1/cloud/workspaces/${w.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${session?.access_token}` } }).then(async res => { if (res.ok) loadData(); else { const d = await res.json(); alert(d.detail || 'Delete failed'); } }); }}
                         style={{ position: "absolute", bottom: 20, right: 20, background: "#fef2f2", color: "#ef4444", border: "1px solid #fee2e2", padding: "4px 10px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Delete</button>
                     )}
@@ -475,36 +479,10 @@ export default function CloudWorkspace({ session }: { session: any }) {
                 <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
                   <button onClick={addMember} style={{ background: "#fff", border: "1.5px solid #e2e8f0", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>+ Add Member</button>
                   <button onClick={shareToWorkspace} style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)", color: "#fff", border: "none", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Share Report</button>
-                  <button onClick={deleteWorkspace} style={{ background: "#fef2f2", color: "#ef4444", border: "1px solid #fee2e2", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Delete Workspace</button>
+                  {activeWorkspace.name.trim().toLowerCase() !== 'my workspace' && <button onClick={deleteWorkspace} style={{ background: "#fef2f2", color: "#ef4444", border: "1px solid #fee2e2", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Delete Workspace</button>}
                 </div>
               )}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-                <div style={{ background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 16, padding: 24 }}>
-                  <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 15, color: "#374151", fontWeight: 700 }}>Members ({activeWorkspace.members.length})</h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {activeWorkspace.members.map(m => (
-                      <div key={m.user_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #f1f5f9" }}>
-                        <Avatar email={m.email} />
-                        <span style={{ flex: 1, fontSize: 14, color: "#374151" }}>{m.email}</span>
-                        <span style={{ fontSize: 11, fontWeight: 600, background: "#f1f5f9", padding: "2px 8px", borderRadius: 999, color: "#475569" }}>{m.role}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div style={{ background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 16, padding: 24 }}>
-                  <h3 style={{ marginTop: 0, marginBottom: 16, fontSize: 15, color: "#374151", fontWeight: 700 }}>Shared Reports ({activeWorkspace.reports.length})</h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {activeWorkspace.reports.length === 0 && <span style={{ color: "#94a3b8", fontSize: 13 }}>No reports shared yet.</span>}
-                    {activeWorkspace.reports.map(r => (
-                      <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #f1f5f9" }}>
-                        <span style={{ fontSize: 14, fontWeight: 500, color: "#374151" }}>📊 {r.name}</span>
-                        <button onClick={() => { const rpt = reports.find(x => x.id === r.id) || { ...r, role: 'Viewer' }; history.replaceState(null, '', `${location.pathname}?workspace=1&report=${encodeURIComponent(r.id)}`); setViewing(rpt as any); }}
-                          style={{ background: "none", border: "none", color: "#6366f1", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>View →</button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+              <SemanticModelService workspace={activeWorkspace} reports={activeWorkspace.reports} onOpenReport={r=>{const report=reports.find(item=>(r.itemKey&&item.itemKey===r.itemKey)||(item.id===r.id&&item.paginatedId===r.paginatedId))||{...r,role:activeWorkspace.role,pages:0,published_at:r.published_at||r.updated_at||new Date().toISOString()};history.replaceState(null,'',`${location.pathname}?workspace=1&report=${encodeURIComponent(r.id)}`);setViewing(report as Report)}} onReportSettings={r=>setSettingsReport({...(reports.find(item=>item.id===r.id&&!item.paginatedId)||r),role:activeWorkspace.role,pages:0,published_at:r.published_at||r.updated_at||new Date().toISOString()} as Report)} onShareReport={r=>setSharing({...(reports.find(item=>item.id===r.id&&!item.paginatedId)||r),role:activeWorkspace.role,pages:0,published_at:r.published_at||r.updated_at||new Date().toISOString()} as Report)} onDeleteReport={async r=>{if(!confirm(`Delete report "${r.name}"? This cannot be undone.`))return;try{await api(`/cloud/reports/${r.id}`,{method:'DELETE'});await loadWorkspace(activeWorkspace.id);await loadData()}catch(e:any){alert(e.message||String(e))}}} onRefresh={model=>{const linked=model.reports?.[0]||{id:model.report_id||'',name:model.name};if(linked.id)setScheduling({id:linked.id,name:linked.name,published_at:model.updated_at||new Date().toISOString(),updated_at:model.updated_at,pages:0,role:activeWorkspace.role})}}/>
             </div>
           )}
         </div>
