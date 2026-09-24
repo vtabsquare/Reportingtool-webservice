@@ -98,6 +98,18 @@ def grant_access(report_id: str, email: str, role: str, granter_user_id: str, ac
         raise ValueError("role must be 'Viewer' or 'Co-Owner'")
     sb = _client(access_token)
 
+    # My Workspace is deliberately private.  Keep this server-side guard even
+    # though the UI hides sharing, so direct API/RPC calls cannot bypass it.
+    admin = _admin_client()
+    report = admin.table("published_reports").select("workspace_id").eq("id", report_id).limit(1).execute()
+    if not report.data:
+        raise ValueError("Report not found.")
+    workspace_id = report.data[0].get("workspace_id")
+    if workspace_id:
+        workspace = admin.table("workspaces").select("name,is_personal").eq("id", workspace_id).limit(1).execute()
+        if workspace.data and _is_personal_workspace(workspace.data[0]):
+            raise PermissionError("Reports in My Workspace are private. Publish or move the report to a team workspace before sharing.")
+
     # Call the secure Postgres RPC to lookup the user by email and grant access.
     # This bypasses the need for the Python backend to have full auth.admin privileges.
     res = sb.rpc("share_report_by_email", {
@@ -121,18 +133,31 @@ def list_accessible_reports(user_id: str) -> list:
         .select("report_id, role") \
         .eq("user_id", user_id) \
         .execute()
-    if not grants.data:
+    memberships = sb.table("workspace_members").select("workspace_id,role").eq("user_id", user_id).execute()
+    workspace_role_map = {row["workspace_id"]: row["role"] for row in (memberships.data or [])}
+    workspace_reports = []
+    if workspace_role_map:
+        workspace_reports = sb.table("published_reports").select("id,workspace_id").in_("workspace_id", list(workspace_role_map)).execute().data or []
+
+    report_ids = list({*[g["report_id"] for g in (grants.data or [])], *[r["id"] for r in workspace_reports]})
+    if not report_ids:
         return []
-    report_ids = [g["report_id"] for g in grants.data]
-    role_map = {g["report_id"]: g["role"] for g in grants.data}
+    role_map = {g["report_id"]: g["role"] for g in (grants.data or [])}
+    for row in workspace_reports:
+        role_map[row["id"]] = workspace_role_map.get(row.get("workspace_id"), role_map.get(row["id"], "Viewer"))
 
     reports = sb.table("published_reports") \
-        .select("id, name, published_at, updated_at, project_json") \
+        .select("id, name, published_at, updated_at, project_json, workspace_id") \
         .in_("id", report_ids) \
         .order("published_at", desc=True) \
         .execute()
 
     out = []
+    workspace_ids = list({r.get("workspace_id") for r in (reports.data or []) if r.get("workspace_id")})
+    workspace_map = {}
+    if workspace_ids:
+        workspace_rows = sb.table("workspaces").select("id,name,is_personal").in_("id", workspace_ids).execute()
+        workspace_map = {row["id"]: row for row in (workspace_rows.data or [])}
     for r in (reports.data or []):
         raw_project = r.get("project_json", {})
         if isinstance(raw_project, dict):
@@ -143,6 +168,12 @@ def list_accessible_reports(user_id: str) -> list:
             except (TypeError, ValueError, json.JSONDecodeError):
                 p = {}
         pages = p.get("report", {}).get("pages", [])
+        workspace = workspace_map.get(r.get("workspace_id"), {})
+        common = {
+            "workspace_id": r.get("workspace_id"),
+            "workspace_name": workspace.get("name"),
+            "workspace_is_personal": _is_personal_workspace(workspace),
+        }
         out.append({
             "id": r["id"],
             "itemKey": r["id"],
@@ -153,6 +184,7 @@ def list_accessible_reports(user_id: str) -> list:
             "pages": len(pages),
             "sourceType": p.get("sourceType") or p.get("dataSourceType"),
             "itemType": "Report",
+            **common,
         })
         if p.get("paginatedPublishMode") == "separate":
             for definition in p.get("paginatedReports") or []:
@@ -169,6 +201,7 @@ def list_accessible_reports(user_id: str) -> list:
                     "pages": 0,
                     "sourceType": p.get("sourceType") or p.get("dataSourceType"),
                     "itemType": "Paginated report",
+                    **common,
                 })
     return out
 
@@ -241,9 +274,15 @@ def upload_package(file_bytes: bytes, filename: str, user_id: str, access_token:
 def create_workspace(name: str, user_id: str) -> dict:
     """Create a new workspace and add the creator as Admin."""
     sb = _admin_client()
+    clean_name = name.strip()
+    if not clean_name:
+        raise ValueError('Workspace name is required.')
+    if clean_name.casefold() == 'my workspace':
+        raise ValueError('My Workspace is reserved for your private workspace. Choose another name for a team workspace.')
     res = sb.table('workspaces').insert({
-        'name': name.strip(),
+        'name': clean_name,
         'created_by': user_id,
+        'is_personal': False,
     }).execute()
     ws = res.data[0] if res.data else {}
     ws_id = ws.get('id')
@@ -260,10 +299,10 @@ def create_workspace(name: str, user_id: str) -> dict:
 def delete_workspace(workspace_id: str, user_id: str) -> dict:
     """Delete a workspace if the user is an Admin or Creator."""
     sb = _admin_client()
-    ws = sb.table('workspaces').select('created_by,name').eq('id', workspace_id).execute()
+    ws = sb.table('workspaces').select('created_by,name,is_personal').eq('id', workspace_id).execute()
     if not ws.data:
         raise ValueError('Workspace not found.')
-    if str(ws.data[0].get('name') or '').strip().casefold() == 'my workspace':
+    if _is_personal_workspace(ws.data[0]):
         raise PermissionError('My Workspace is the permanent default workspace and cannot be deleted.')
     is_creator = bool(ws.data and ws.data[0].get('created_by') == user_id)
 
@@ -293,7 +332,7 @@ def list_workspaces(user_id: str) -> list:
     if not ws_map:
         return []
         
-    workspaces = sb.table('workspaces').select('id, name, created_at, created_by').in_('id', list(ws_map.keys())).execute()
+    workspaces = sb.table('workspaces').select('id, name, created_at, created_by, is_personal').in_('id', list(ws_map.keys())).execute()
     if not workspaces.data:
         return []
 
@@ -316,16 +355,17 @@ def list_workspaces(user_id: str) -> list:
             'id': wid, 'name': w['name'], 'created_at': w['created_at'],
             'role': role,
             'member_count': mc.get(wid, 0),
-            'report_count': rc.get(wid, 0)
+            'report_count': rc.get(wid, 0),
+            'is_personal': _is_personal_workspace(w),
         })
-    return sorted(res, key=lambda item: (str(item.get('name') or '').casefold() != 'my workspace', str(item.get('name') or '').casefold()))
+    return sorted(res, key=lambda item: (not item.get('is_personal', False), str(item.get('name') or '').casefold()))
 
 def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
     """Get workspace details including members and reports."""
     sb = _admin_client()
 
     ws = sb.table('workspaces') \
-        .select('id, name, created_at, created_by') \
+        .select('id, name, created_at, created_by, is_personal') \
         .eq('id', workspace_id) \
         .execute()
     if not ws.data:
@@ -425,7 +465,8 @@ def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
     return {
         **ws.data[0],
         'role': role,
-        'is_default': str(ws.data[0].get('name') or '').strip().casefold() == 'my workspace',
+        'is_default': _is_personal_workspace(ws.data[0]),
+        'is_personal': _is_personal_workspace(ws.data[0]),
         'members': member_list,
         'reports': report_list,
     }
@@ -435,6 +476,11 @@ def add_workspace_member(workspace_id: str, email: str, role: str, granter_id: s
     if role not in WORKSPACE_PERMISSIONS:
         raise ValueError("role must be Admin, Member, Contributor, or Viewer")
     sb = _admin_client()
+    workspace = sb.table('workspaces').select('name,is_personal').eq('id', workspace_id).limit(1).execute()
+    if not workspace.data:
+        raise ValueError('Workspace not found.')
+    if _is_personal_workspace(workspace.data[0]):
+        raise PermissionError('My Workspace is private and cannot have additional members. Create a team workspace to collaborate.')
 
     # Check granter is Admin
     granter = sb.table('workspace_members') \
@@ -482,13 +528,10 @@ def add_workspace_member(workspace_id: str, email: str, role: str, granter_id: s
     }).execute()
 
     # Also grant access to all reports already in this workspace
-    ws_reports = sb.table('workspace_reports') \
-        .select('report_id') \
-        .eq('workspace_id', workspace_id) \
-        .execute()
+    ws_reports = sb.table('published_reports').select('id').eq('workspace_id', workspace_id).execute()
     for wr in (ws_reports.data or []):
         sb.table('report_access_grants').upsert({
-            'report_id': wr['report_id'],
+            'report_id': wr['id'],
             'user_id': target_uid,
             'role': 'Viewer' if role == 'Viewer' else 'Co-Owner',
         }).execute()
@@ -498,6 +541,24 @@ def add_workspace_member(workspace_id: str, email: str, role: str, granter_id: s
 def share_report_to_workspace(report_id: str, workspace_id: str, granter_id: str) -> dict:
     """Share a report into a workspace, granting access to all current members."""
     sb = _admin_client()
+    workspace = sb.table('workspaces').select('name,is_personal').eq('id', workspace_id).limit(1).execute()
+    if not workspace.data:
+        raise ValueError('Workspace not found.')
+    if _is_personal_workspace(workspace.data[0]):
+        raise PermissionError('My Workspace is private and cannot receive shared reports.')
+
+    source = sb.table('published_reports').select('owner_id,workspace_id').eq('id', report_id).limit(1).execute()
+    if not source.data:
+        raise ValueError('Report not found.')
+    source_workspace_id = source.data[0].get('workspace_id')
+    source_role = None
+    if source_workspace_id:
+        source_membership = sb.table('workspace_members').select('role').eq('workspace_id', source_workspace_id).eq('user_id', granter_id).limit(1).execute()
+        source_role = source_membership.data[0].get('role') if source_membership.data else None
+    grant = sb.table('report_access_grants').select('role').eq('report_id', report_id).eq('user_id', granter_id).limit(1).execute()
+    grant_role = grant.data[0].get('role') if grant.data else None
+    if source.data[0].get('owner_id') != granter_id and source_role not in ('Admin', 'Member') and grant_role not in ('Owner', 'Co-Owner'):
+        raise PermissionError('You do not have permission to share this report.')
 
     # Check granter is Admin
     granter = sb.table('workspace_members') \
@@ -534,6 +595,13 @@ def share_report_to_workspace(report_id: str, workspace_id: str, granter_id: str
 def _uid():
     import uuid
     return str(uuid.uuid4())
+
+
+def _is_personal_workspace(workspace: dict | None) -> bool:
+    """Compatibility-safe personal workspace check for pre-migration records."""
+    if not workspace:
+        return False
+    return bool(workspace.get('is_personal')) or str(workspace.get('name') or '').strip().casefold() == 'my workspace'
 
 
 # ── User Search (autocomplete) ──────────────────────────────────────────────────

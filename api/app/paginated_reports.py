@@ -97,7 +97,7 @@ def _safe_filename(template: str, *, definition: dict[str, Any], parameters: dic
     return name[:180] or "Paginated_Report.pdf"
 
 
-def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_context: list[dict[str, Any]] | None = None, parameters: dict[str, Any] | None = None, role_id: str | None = None) -> tuple[bytes, str, int]:
+def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_context: list[dict[str, Any]] | None = None, parameters: dict[str, Any] | None = None, role_id: str | None = None, rls_rules: list[dict[str, Any]] | None = None) -> tuple[bytes, str, int]:
     try:
         from reportlab.lib import colors
         from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -127,8 +127,8 @@ def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_
     measures_registry = (project.get("model") or {}).get("measures") or {}
     dimensions = [column["field"] for column in columns if column.get("field") not in measures_registry]
     measures = [column["field"] for column in columns if column.get("field") in measures_registry]
-    rules: list[dict[str, Any]] = []
-    if role_id:
+    rules: list[dict[str, Any]] = list(rls_rules or [])
+    if role_id and rls_rules is None:
         role = next((item for item in (project.get("security") or {}).get("roles", []) if item.get("id") == role_id), None)
         rules = role.get("rules", []) if role else []
     query = {"dimensions": dimensions, "measures": measures, "filters": filters, "sort": (definition.get("table") or {}).get("sort") or [], "limit": 100000, "roleId": role_id}

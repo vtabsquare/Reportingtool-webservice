@@ -9,6 +9,7 @@ type UserSuggestion = { id: string; email: string; display_name: string };
 type Props = {
   reportId: string;
   reportName: string;
+  workspaceIsPersonal?: boolean;
   onClose: () => void;
   supabaseSession: any;
 };
@@ -20,7 +21,7 @@ const Avatar = ({ name, email, size = 32 }: { name?: string; email?: string; siz
   return <div style={{ width: size, height: size, borderRadius: '50%', background: bg, color: '#fff', fontWeight: 700, fontSize: size * 0.4, display: 'grid', placeItems: 'center', flexShrink: 0 }}>{label}</div>;
 };
 
-export default function ShareDialog({ reportId, reportName, onClose, supabaseSession }: Props) {
+export default function ShareDialog({ reportId, reportName, workspaceIsPersonal = false, onClose, supabaseSession }: Props) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("Viewer");
   const [grants, setGrants] = useState<Grant[]>([]);
@@ -73,12 +74,18 @@ export default function ShareDialog({ reportId, reportName, onClose, supabaseSes
       const res = await fetch("/api/v1/cloud/workspaces", { headers: authHeader });
       if (res.ok) {
         const data = await res.json();
-        setWorkspaces(data.filter((w: any) => w.role === "Admin"));
+        setWorkspaces(data.filter((w: any) => w.role === "Admin" && !w.is_personal && w.name?.trim().toLowerCase() !== "my workspace"));
       }
     } catch (e) {}
   };
 
-  useEffect(() => { loadShares(); loadWorkspaces(); }, [reportId]);
+  useEffect(() => {
+    if (workspaceIsPersonal) {
+      setErr("My Workspace is private. Publish this report to a team workspace before sharing it.");
+      return;
+    }
+    loadShares(); loadWorkspaces();
+  }, [reportId, workspaceIsPersonal]);
 
   const handleEmailChange = (val: string) => {
     setEmail(val);
@@ -111,6 +118,7 @@ export default function ShareDialog({ reportId, reportName, onClose, supabaseSes
   };
 
   const shareEmail = async () => {
+    if (workspaceIsPersonal) return setErr("My Workspace is private. Publish this report to a team workspace before sharing it.");
     const targetEmail = email.trim().toLowerCase();
     if (!targetEmail) return;
     setBusy(true); setErr(""); setSuccess("");
@@ -141,6 +149,7 @@ export default function ShareDialog({ reportId, reportName, onClose, supabaseSes
   };
 
   const shareToWorkspace = async () => {
+    if (workspaceIsPersonal) return setErr("My Workspace is private. Publish this report to a team workspace before sharing it.");
     if (!selectedWs) return;
     setWsBusy(true); setErr(""); setSuccess("");
     try {

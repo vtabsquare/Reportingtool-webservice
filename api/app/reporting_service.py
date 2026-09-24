@@ -520,12 +520,16 @@ def publish_report(payload: dict[str, Any], access_token: str, service_base_url:
     snapshot["name"] = report_name
     definition_hash = report_definition_hash(snapshot)
 
+    semantic_model = dict(snapshot.get("model") or {})
+    # RLS is a semantic-model capability. Publish role definitions with the
+    # model while keeping Services membership assignments outside the report.
+    semantic_model["security"] = snapshot.get("security") or {"roles": []}
     response = _anon_client(access_token).rpc("publish_vtab_report", {
         "p_workspace_id": workspace_id,
         "p_report_id": report_id or None,
         "p_report_name": report_name,
         "p_project_json": snapshot,
-        "p_semantic_model": snapshot.get("model") or {},
+        "p_semantic_model": semantic_model,
         "p_metadata": {**(payload.get("metadata") or {}), "reportDefinitionHash": definition_hash},
         "p_desktop_version": desktop_version,
         "p_schema_version": schema_version,

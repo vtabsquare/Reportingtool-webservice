@@ -968,6 +968,48 @@ def reporting_service_semantic_model(semantic_model_id: str, authorization: str 
         _service_error(error)
 
 
+@app.get('/api/v1/service/semantic-models/{semantic_model_id}/rls')
+def semantic_model_rls(semantic_model_id: str, authorization: str | None = Header(default=None)):
+    from .rls_runtime import get_configuration
+    try:return get_configuration(semantic_model_id, _service_access_token(authorization))
+    except Exception as error:_service_error(error)
+
+
+@app.post('/api/v1/service/semantic-models/{semantic_model_id}/rls/members')
+def semantic_model_rls_add_member(semantic_model_id: str, payload: dict, authorization: str | None = Header(default=None)):
+    from .rls_runtime import add_member
+    try:return add_member(semantic_model_id, str(payload.get('roleId') or ''), str(payload.get('principalType') or 'user'), str(payload.get('principal') or ''), _service_access_token(authorization))
+    except Exception as error:_service_error(error)
+
+
+@app.delete('/api/v1/service/semantic-models/{semantic_model_id}/rls/members/{membership_id}')
+def semantic_model_rls_remove_member(semantic_model_id: str, membership_id: str, authorization: str | None = Header(default=None)):
+    from .rls_runtime import remove_member
+    try:return remove_member(semantic_model_id, membership_id, _service_access_token(authorization))
+    except Exception as error:_service_error(error)
+
+
+@app.post('/api/v1/service/semantic-models/{semantic_model_id}/rls/test-user')
+def semantic_model_rls_test_user(semantic_model_id: str, payload: dict, authorization: str | None = Header(default=None)):
+    from .rls_runtime import test_user
+    try:return test_user(semantic_model_id, str(payload.get('email') or ''), _service_access_token(authorization))
+    except Exception as error:_service_error(error)
+
+
+@app.post('/api/v1/service/semantic-models/{semantic_model_id}/rls/groups')
+def semantic_model_rls_create_group(semantic_model_id: str, payload: dict, authorization: str | None = Header(default=None)):
+    from .rls_runtime import create_group
+    try:return create_group(semantic_model_id,str(payload.get('name') or ''),_service_access_token(authorization))
+    except Exception as error:_service_error(error)
+
+
+@app.post('/api/v1/service/semantic-models/{semantic_model_id}/rls/groups/{group_id}/members')
+def semantic_model_rls_add_group_user(semantic_model_id: str, group_id: str, payload: dict, authorization: str | None = Header(default=None)):
+    from .rls_runtime import add_group_user
+    try:return add_group_user(semantic_model_id,group_id,str(payload.get('email') or ''),_service_access_token(authorization))
+    except Exception as error:_service_error(error)
+
+
 @app.patch('/api/v1/service/semantic-models/{semantic_model_id}')
 def reporting_service_update_semantic_model(
     semantic_model_id: str,
@@ -1398,21 +1440,26 @@ def export_published(report_id:str,fmt:str,authorization:str|None=Header(default
 
 @app.post('/api/v1/published/{report_id}/paginated/pdf')
 def export_published_paginated(report_id:str,payload:PaginatedPdfReq,authorization:str|None=Header(default=None)):
-    _workspace_user(authorization);item=store.get_published(report_id)
+    from .rls_runtime import resolve_published_rls
+    item=store.get_published(report_id)
     if not item:raise HTTPException(404,'Published report not found')
     try:
-        data,filename,_count=render_paginated_pdf(item['project'],payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,role_id=payload.roleId)
+        resolved=resolve_published_rls(report_id,item['project'],_service_access_token(authorization))
+        data,filename,_count=render_paginated_pdf(item['project'],payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'])
         return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{filename}"'})
     except PaginatedReportError as error:raise HTTPException(400,str(error))
 
 
 @app.post('/api/v1/published/paginated/pdf-snapshot')
 def export_published_paginated_snapshot(payload:PaginatedPdfReq,authorization:str|None=Header(default=None)):
+    from .rls_runtime import resolve_published_rls
     token=_service_access_token(authorization)
     if not payload.project:raise HTTPException(400,'Published project snapshot is required.')
     try:
         hydrated=hydrate_snapshot_sources(payload.project,token)
-        data,filename,_count=render_paginated_pdf(hydrated,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,role_id=payload.roleId)
+        report_id=str((hydrated.get('report') or {}).get('id') or hydrated.get('id') or '')
+        resolved=resolve_published_rls(report_id,hydrated,token)
+        data,filename,_count=render_paginated_pdf(hydrated,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'])
         return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{filename}"'})
     except PermissionError as error:raise HTTPException(403,str(error))
     except (PaginatedReportError,ServiceValidationError) as error:raise HTTPException(400,str(error))
@@ -1927,28 +1974,27 @@ def query_snapshot(req:AuthoringSnapshotQueryReq):
     except Exception as e:raise HTTPException(400,str(e))
 @app.post('/api/v1/published/{report_id}/query')
 def published_query(report_id:str,req:QueryReq,authorization:str|None=Header(default=None)):
-    _workspace_user(authorization);item=store.get_published(report_id)
+    from .rls_runtime import resolve_published_rls
+    item=store.get_published(report_id)
     if not item:raise HTTPException(404,'Published report not found')
-    p=item['project'];rules=[]
-    if req.roleId:
-        role=next((r for r in p.get('security',{}).get('roles',[]) if r.get('id')==req.roleId),None);rules=role.get('rules',[]) if role else []
+    p=item['project']
     try:
-        rows,sql=execute(p['model'],req.model_dump(),rules);store.log('published.query.execute',{'reportId':report_id,'dimensions':req.dimensions,'measures':req.measures,'rows':len(rows)});return {'rows':rows,'sql':sql}
+        resolved=resolve_published_rls(report_id,p,_service_access_token(authorization));rows,sql=execute(p['model'],req.model_dump(),resolved['rules']);store.log('published.query.execute',{'reportId':report_id,'dimensions':req.dimensions,'measures':req.measures,'rows':len(rows),'security':resolved['context']});return {'rows':rows,'sql':sql,'security':resolved['context']}
     except Exception as e:raise HTTPException(400,str(e))
 
 @app.post('/api/v1/published/query-snapshot')
 def published_snapshot_query(req:PublishedSnapshotQueryReq,authorization:str|None=Header(default=None)):
+    from .rls_runtime import resolve_published_rls
     token=_service_access_token(authorization)
     try:p=hydrate_snapshot_sources(req.project or {},token)
     except PermissionError as e:raise HTTPException(403,str(e))
     except ServiceValidationError as e:raise HTTPException(400,str(e))
     except Exception as e:raise HTTPException(502,str(e))
-    rules=[]
-    if req.roleId:
-        role=next((r for r in p.get('security',{}).get('roles',[]) if r.get('id')==req.roleId),None);rules=role.get('rules',[]) if role else []
     try:
+        report_id=str((p.get('report') or {}).get('id') or p.get('id') or '')
+        resolved=resolve_published_rls(report_id,p,token)
         payload=req.model_dump();payload.pop('project',None)
-        rows,sql=execute(p['model'],payload,rules);store.log('published.snapshot.query.execute',{'dimensions':req.dimensions,'measures':req.measures,'rows':len(rows)});return {'rows':rows,'sql':sql}
+        rows,sql=execute(p['model'],payload,resolved['rules']);store.log('published.snapshot.query.execute',{'reportId':report_id,'dimensions':req.dimensions,'measures':req.measures,'rows':len(rows),'security':resolved['context']});return {'rows':rows,'sql':sql,'security':resolved['context']}
     except Exception as e:
         print(f"FAILED QUERY PAYLOAD: {req.model_dump()}")
         print(f"EXCEPTION: {e}")

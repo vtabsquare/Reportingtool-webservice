@@ -7,12 +7,14 @@ import RefreshCenterDialog from "./RefreshCenterDialog";
 import ReportServiceSettings, { ReportContentList } from "./ReportServiceSettings";
 import SemanticModelService from "./SemanticModelService";
 
-type Report = { id: string; itemKey?:string; itemType?:string; paginatedId?:string; name: string; published_at: string; updated_at?: string; pages: number; role: string; sourceType?: string; project?: any };
-type Workspace = { id: string; name: string; created_at: string; role: string; member_count: number; report_count: number };
+type Report = { id: string; itemKey?:string; itemType?:string; paginatedId?:string; name: string; published_at: string; updated_at?: string; pages: number; role: string; sourceType?: string; project?: any; workspace_id?:string; workspace_name?:string; workspace_is_personal?:boolean };
+type Workspace = { id: string; name: string; created_at: string; role: string; member_count: number; report_count: number; is_personal?: boolean };
 type WorkspaceDetail = Workspace & { members: any[]; reports: any[] };
 
 const workspaceTarget=()=>{const p=new URLSearchParams(location.search);return{reportId:p.get('report')||p.get('viewer')||'',share:p.get('share')==='1'}};
 const parseProjectJson=(value:any):any=>{if(value&&typeof value==='object')return value;if(typeof value!=='string'||!value.trim())return{};try{return JSON.parse(value)}catch{return{}}};
+const isPersonalWorkspace=(workspace?:{name?:string;is_personal?:boolean}|null)=>!!workspace&&(workspace.is_personal===true||workspace.name?.trim().toLowerCase()==='my workspace');
+const isPersonalReport=(report?:Report|null)=>!!report&&(report.workspace_is_personal===true||report.workspace_name?.trim().toLowerCase()==='my workspace');
 
 const relativeTime = (d: string) => {
   const diff = Date.now() - new Date(d).getTime();
@@ -102,7 +104,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
     const report = reports.find(r => r.id === target.reportId);
     if (report) {
       setTargetDenied(""); setViewing(report);
-      const canShare = ['Owner','Co-Owner','Admin'].includes(report.role);
+      const canShare = ['Owner','Co-Owner','Admin'].includes(report.role) && !isPersonalReport(report);
       if (target.share && canShare) setSharing(report);
       return;
     }
@@ -218,7 +220,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
           </button>
           <b style={{ flex: 1, color: '#f1f5f9' }}>{viewing.name}</b>
           <span style={roleBadgeStyle(viewing.role)}>{viewing.role}</span>
-          {(viewing.role === "Co-Owner" || viewing.role === "Owner") && (
+          {(viewing.role === "Co-Owner" || viewing.role === "Owner") && !isPersonalReport(viewing) && (
             <button onClick={() => setSharing(viewing)}
               style={{ background: "#6366f1", border: "none", borderRadius: 8, color: "#fff", padding: "7px 16px", cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
               Share
@@ -228,7 +230,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
         <div style={{ flex: 1, overflow: "hidden" }}>
           <PublishedViewer reportId={viewing.id} initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project }} embedded cloudMode initialPaginatedId={viewing.paginatedId}/>
         </div>
-        {sharing && <ShareDialog reportId={sharing.id} reportName={sharing.name} onClose={() => setSharing(null)} supabaseSession={session} />}
+        {sharing && <ShareDialog reportId={sharing.id} reportName={sharing.name} workspaceIsPersonal={isPersonalReport(sharing)} onClose={() => setSharing(null)} supabaseSession={session} />}
       </div>
     );
   }
@@ -475,7 +477,8 @@ export default function CloudWorkspace({ session }: { session: any }) {
           {/* WORKSPACE DETAIL */}
           {!loading && activeTab === 'workspaces' && activeWorkspace && (
             <div>
-              {activeWorkspace.role === 'Admin' && (
+              {isPersonalWorkspace(activeWorkspace) && <div style={{marginBottom:20,padding:'14px 16px',border:'1px solid #c7d2fe',borderRadius:10,background:'#eef2ff',color:'#3730a3',fontSize:13,lineHeight:1.55}}><b>Private workspace</b><br/>Only you can access reports published here. To collaborate, create a team workspace and publish the report there.</div>}
+              {activeWorkspace.role === 'Admin' && !isPersonalWorkspace(activeWorkspace) && (
                 <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
                   <button onClick={addMember} style={{ background: "#fff", border: "1.5px solid #e2e8f0", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>+ Add Member</button>
                   <button onClick={shareToWorkspace} style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)", color: "#fff", border: "none", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Share Report</button>
@@ -491,7 +494,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
       {/* Dialogs */}
       {scheduling && <RefreshCenterDialog reportId={scheduling.id} reportName={scheduling.name} sourceType={(scheduling.project?.sourceType || scheduling.project?.dataSourceType) as any} onClose={() => setScheduling(null)} supabaseSession={session} />}
       {settingsReport && <ReportServiceSettings report={settingsReport} onClose={()=>setSettingsReport(null)} onShare={()=>{setSharing(settingsReport);setSettingsReport(null)}} onRefresh={()=>{setScheduling(settingsReport);setSettingsReport(null)}} onDelete={async()=>{const r=settingsReport;if(!confirm(`Delete report "${r.name}"? This cannot be undone.`))return;try{await api(`/cloud/reports/${r.id}`,{method:'DELETE'});setSettingsReport(null);loadData()}catch(e:any){alert(e.message||String(e))}}}/>} 
-      {sharing && !viewing && <ShareDialog reportId={sharing.id} reportName={sharing.name} onClose={() => setSharing(null)} supabaseSession={session} />}
+      {sharing && !viewing && <ShareDialog reportId={sharing.id} reportName={sharing.name} workspaceIsPersonal={isPersonalReport(sharing)||isPersonalWorkspace(activeWorkspace)} onClose={() => setSharing(null)} supabaseSession={session} />}
 
       {/* Add Member Modal */}
       {addMemberOpen && (

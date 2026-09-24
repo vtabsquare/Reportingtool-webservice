@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 
-type Report = { id:string; itemKey?:string; itemType?:string; paginatedId?:string; name:string; published_at:string; updated_at?:string; pages:number; role:string; sourceType?:string };
+type Report = { id:string; itemKey?:string; itemType?:string; paginatedId?:string; name:string; published_at:string; updated_at?:string; pages:number; role:string; sourceType?:string; workspace_is_personal?:boolean; workspace_name?:string };
 type Props = { report:Report; onClose:()=>void; onShare:()=>void; onRefresh:()=>void; onDelete:()=>void };
 const canEdit=(role:string)=>["Owner","Co-Owner","Admin","Member","Contributor"].includes(role);
+const canShare=(report:Report)=>canEdit(report.role)&&!report.workspace_is_personal&&report.workspace_name?.trim().toLowerCase()!=="my workspace";
 
 export function ReportContentList({reports,onView,onSettings,onShare,onRefresh,onDelete}:{reports:Report[];onView:(r:Report)=>void;onSettings:(r:Report)=>void;onShare:(r:Report)=>void;onRefresh:(r:Report)=>void;onDelete:(r:Report)=>void}){
   const [menu,setMenu]=useState<string|null>(null);
@@ -16,7 +17,7 @@ export function ReportContentList({reports,onView,onSettings,onShare,onRefresh,o
       <div style={{position:"relative",justifySelf:"end"}} onClick={e=>e.stopPropagation()}><button aria-label={`More options for ${report.name}`} title="More options" onClick={e=>{e.stopPropagation();const key=report.itemKey||report.id;setMenu(menu===key?null:key)}} style={{width:34,height:30,border:"1px solid transparent",borderRadius:5,background:menu===(report.itemKey||report.id)?"#eef2ff":"transparent",fontSize:22,lineHeight:1,cursor:"pointer",color:"#374151"}}>⋯</button>
       {menu===(report.itemKey||report.id)&&<div style={{position:"absolute",right:0,top:34,zIndex:40,width:220,background:"#fff",border:"1px solid #d1d5db",borderRadius:7,boxShadow:"0 8px 24px rgba(0,0,0,.18)",padding:5}}>
         <Menu label="Open report" icon="▥" onClick={()=>onView(report)}/>
-        {canEdit(report.role)&&<><Menu label="Share and manage access" icon="♧" onClick={()=>onShare(report)}/><div style={{height:1,background:"#e5e7eb",margin:"5px 0"}}/><Menu label="Report settings" icon="⚙" onClick={()=>onSettings(report)}/><Menu danger label="Delete" icon="⌫" onClick={()=>onDelete(report)}/></>}
+        {canEdit(report.role)&&<>{canShare(report)&&<Menu label="Share and manage access" icon="♧" onClick={()=>onShare(report)}/>}<div style={{height:1,background:"#e5e7eb",margin:"5px 0"}}/><Menu label="Report settings" icon="⚙" onClick={()=>onSettings(report)}/><Menu danger label="Delete" icon="⌫" onClick={()=>onDelete(report)}/></>}
       </div>}</div>
     </div>)}
   </div>
@@ -34,7 +35,7 @@ export default function ReportServiceSettings({report,onClose,onShare,onRefresh,
       <div style={{display:"flex",minHeight:0,flex:1}}><nav style={{width:245,borderRight:"1px solid #e5e7eb",padding:"12px 8px",overflow:"auto"}}>{sections.map(item=><button key={item[0]} onClick={()=>setSection(item[0])} style={{width:"100%",border:0,borderLeft:section===item[0]?"3px solid #7c3aed":"3px solid transparent",background:section===item[0]?"#f5f3ff":"transparent",padding:"10px 12px",display:"flex",gap:10,textAlign:"left",cursor:"pointer",fontSize:13,color:section===item[0]?"#5b21b6":"#374151",fontWeight:section===item[0]?700:500}}><span>{item[2]}</span>{item[1]}</button>)}</nav>
         <main style={{padding:26,overflow:"auto",flex:1,color:"#202124"}}>
           {section==="general"&&<Section title="General" text="Report identity and presentation metadata. Data connections, credentials and refresh belong to the connected semantic model."><Read label="Name" value={report.name}/><Read label="Item type" value="Report"/><Read label="Report ID" value={report.id}/><Read label="Your access" value={report.role}/></Section>}
-          {section==="access"&&<Section title="Sharing and access" text="Control who can view, build from, or manage this report."><Action title="Manage access" detail="Share with people and assign report permissions." button="Manage access" disabled={!editable} onClick={onShare}/></Section>}
+          {section==="access"&&<Section title="Sharing and access" text={canShare(report)?"Control who can view, build from, or manage this report.":"Reports in My Workspace are private. Publish this report to a team workspace before sharing."}>{canShare(report)&&<Action title="Manage access" detail="Share with people and assign report permissions." button="Manage access" disabled={!editable} onClick={onShare}/>}</Section>}
           {editable&&section==="general"&&<div style={{marginTop:30,borderTop:"1px solid #e5e7eb",paddingTop:20}}><h3 style={{fontSize:14,color:"#b91c1c"}}>Delete this report</h3><p style={{fontSize:13,color:"#6b7280"}}>This permanently removes the published report and its refresh configuration.</p><button onClick={onDelete} style={{border:"1px solid #dc2626",background:"#fff",color:"#b91c1c",borderRadius:5,padding:"8px 13px",fontWeight:700,cursor:"pointer"}}>Delete report</button></div>}
         </main></div>
     </aside>

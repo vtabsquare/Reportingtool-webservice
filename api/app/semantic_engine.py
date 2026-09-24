@@ -303,18 +303,30 @@ def compile_query(model,req,rls=()):
             else:wh.append(field_sql+' IN ('+','.join('?' for _ in vals)+')');params.extend(vals)
         elif op in ops:wh.append(field_sql+' '+ops[op]+' ?');params.append(val)
         else:raise ValueError('Unsupported filter operator: '+str(op))
-    for r in rls:
-        if r.get('table') in unreachable:
-            raise ValueError('RLS table is not connected to the visual query: '+str(r.get('table')))
-        field_sql=fld(model,r['table']+'.'+r['column']); op=r.get('operator','equals'); val=r.get('value')
-        ops={'equals':'=','not_equals':'<>','gt':'>','gte':'>=','lt':'<','lte':'<='}
-        if op=='contains':wh.append(field_sql+' LIKE ?');params.append('%'+str(val)+'%')
-        elif op=='in':
-            vals=val if isinstance(val,(list,tuple)) else [x.strip() for x in str(val).split(',') if x.strip()]
-            if not vals:wh.append('1=0')
-            else:wh.append(field_sql+' IN ('+','.join('?' for _ in vals)+')');params.extend(vals)
-        elif op in ops:wh.append(field_sql+' '+ops[op]+' ?');params.append(val)
-        else:raise ValueError('Unsupported RLS operator: '+str(op))
+    # Rules inside a role are ANDed; separately assigned roles are unioned (OR),
+    # matching Power BI's additive multi-role semantics.  The role id is trusted
+    # metadata added by the server-side security resolver, never by the browser.
+    role_groups={}
+    for r in rls:role_groups.setdefault(str(r.get('_roleId') or '__single__'),[]).append(r)
+    role_sql=[];role_params=[]
+    for _,rules in role_groups.items():
+        parts=[];part_params=[]
+        for r in rules:
+            op=r.get('operator','equals')
+            if op=='deny_all':parts.append('1=0');continue
+            if r.get('table') in unreachable:
+                raise ValueError('RLS table is not connected to the visual query: '+str(r.get('table')))
+            field_sql=fld(model,r['table']+'.'+r['column']);val=r.get('value')
+            ops={'equals':'=','not_equals':'<>','gt':'>','gte':'>=','lt':'<','lte':'<='}
+            if op=='contains':parts.append(field_sql+' LIKE ?');part_params.append('%'+str(val)+'%')
+            elif op=='in':
+                vals=val if isinstance(val,(list,tuple)) else [x.strip() for x in str(val).split(',') if x.strip()]
+                if not vals:parts.append('1=0')
+                else:parts.append(field_sql+' IN ('+','.join('?' for _ in vals)+')');part_params.extend(vals)
+            elif op in ops:parts.append(field_sql+' '+ops[op]+' ?');part_params.append(val)
+            else:raise ValueError('Unsupported RLS operator: '+str(op))
+        role_sql.append('('+' AND '.join(parts or ['1=0'])+')');role_params.extend(part_params)
+    if role_sql:wh.append('('+' OR '.join(role_sql)+')');params.extend(role_params)
     if wh:sql+=' WHERE '+' AND '.join(wh)
     if groups:sql+=' GROUP BY '+', '.join(groups)
     sort=req.get('sort',[]) or []

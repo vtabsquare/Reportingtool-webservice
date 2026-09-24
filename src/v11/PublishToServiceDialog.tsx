@@ -9,6 +9,7 @@ export type Workspace = {
   organizationId?: string;
   role: 'Admin' | 'Member' | 'Contributor' | 'Viewer';
   canPublish: boolean;
+  isPersonal?: boolean;
 };
 
 type PublishContext = {
@@ -177,6 +178,7 @@ export default function PublishToServiceDialog({
             {context && !publishable.length && <div className="servicePublishWarning">Your account has Viewer access only. Ask a workspace Admin for Contributor, Member, or Admin access.</div>}
             {!!publishable.length && <>
               <label>Workspace<select value={workspaceId} onChange={event => setWorkspaceId(event.target.value)}>{publishable.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name} · {workspace.role}</option>)}</select></label>
+              {selected?.isPersonal ? <div className="servicePublishWarning"><b>Private destination.</b> Reports in My Workspace are visible only to you and cannot be shared. Choose or create a team workspace for collaboration.</div> : <div className="servicePublishDescription"><b>Team workspace.</b> Workspace members can access published content according to their role. Viewer access remains restricted by RLS.</div>}
               {selected?.description && <p className="servicePublishDescription">{selected.description}</p>}
               <label>Report name<input value={name} maxLength={160} onChange={event => setName(event.target.value)}/></label>
               <label>What changed? <span>Optional</span><textarea rows={3} value={changeDescription} maxLength={500} onChange={event => setChangeDescription(event.target.value)} placeholder="Describe this version"/></label>
