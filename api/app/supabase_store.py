@@ -279,9 +279,49 @@ def create_workspace(name: str, user_id: str) -> dict:
         raise ValueError('Workspace name is required.')
     if clean_name.casefold() == 'my workspace':
         raise ValueError('My Workspace is reserved for your private workspace. Choose another name for a team workspace.')
+
+    # Every team workspace must belong to the creator's organization.  Semantic
+    # models require this foreign key during publish, so never create a partial
+    # workspace and hope to infer it later.
+    membership = sb.table('organization_members') \
+        .select('organization_id') \
+        .eq('user_id', user_id) \
+        .order('created_at') \
+        .limit(1) \
+        .execute()
+    organization_id = membership.data[0].get('organization_id') if membership.data else None
+    if not organization_id:
+        owned = sb.table('organizations') \
+            .select('id') \
+            .eq('created_by', user_id) \
+            .order('created_at') \
+            .limit(1) \
+            .execute()
+        organization_id = owned.data[0].get('id') if owned.data else None
+    if not organization_id:
+        profile = sb.table('vtab_users').select('email').eq('id', user_id).limit(1).execute()
+        email = profile.data[0].get('email') if profile.data else ''
+        base_name = (str(email).split('@', 1)[0] or 'VTAB').strip()
+        organization = sb.table('organizations').insert({
+            'name': f"{base_name}'s Organization",
+            'slug': f"org-{str(user_id).replace('-', '')}",
+            'created_by': user_id,
+        }).execute()
+        organization_id = organization.data[0].get('id') if organization.data else None
+        if organization_id:
+            sb.table('organization_members').upsert({
+                'organization_id': organization_id,
+                'user_id': user_id,
+                'role': 'Owner',
+            }).execute()
+    if not organization_id:
+        raise RuntimeError('Could not resolve an organization for this workspace.')
+
     res = sb.table('workspaces').insert({
         'name': clean_name,
         'created_by': user_id,
+        'owner_id': user_id,
+        'organization_id': organization_id,
         'is_personal': False,
     }).execute()
     ws = res.data[0] if res.data else {}
@@ -294,7 +334,7 @@ def create_workspace(name: str, user_id: str) -> dict:
         'user_id': user_id,
         'role': 'Admin',
     }).execute()
-    return {'id': ws_id, 'name': ws.get('name'), 'created_at': ws.get('created_at'), 'role': 'Admin'}
+    return {'id': ws_id, 'name': ws.get('name'), 'created_at': ws.get('created_at'), 'role': 'Admin', 'organization_id': organization_id, 'is_personal': False}
 
 def delete_workspace(workspace_id: str, user_id: str) -> dict:
     """Delete a workspace if the user is an Admin or Creator."""
