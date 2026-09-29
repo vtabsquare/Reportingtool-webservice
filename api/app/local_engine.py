@@ -11,6 +11,8 @@ COLUMNAR = DATA / 'columnar'
 TEMP = DATA / 'temp'
 CATALOG = DATA / 'storage_catalog.json'
 _LOCK = threading.RLock()
+_HTTPFS_INSTALL_LOCK = threading.Lock()
+_HTTPFS_INSTALL_ATTEMPTED = False
 
 _ANALYTICS_READY = False
 _ANALYTICS_ERROR: str | None = None
@@ -101,15 +103,28 @@ def _save_catalog(catalog:dict):
     CATALOG.write_text(json.dumps(catalog,indent=2),encoding='utf-8')
 
 def connect(read_only:bool=False):
+    global _HTTPFS_INSTALL_ATTEMPTED
     DATA.mkdir(parents=True,exist_ok=True)
     COLUMNAR.mkdir(parents=True,exist_ok=True)
     TEMP.mkdir(parents=True,exist_ok=True)
     duckdb=_duckdb()
     con=duckdb.connect(str(ANALYTICS),read_only=read_only)
     try:
-        con.execute("INSTALL httpfs; LOAD httpfs;")
+        # LOAD is connection-local and cheap. INSTALL can touch disk/network,
+        # so never repeat it for every visual query.
+        con.execute("LOAD httpfs")
     except Exception:
-        pass # Ignore in locked/read-only mode if already installed
+        with _HTTPFS_INSTALL_LOCK:
+            if not _HTTPFS_INSTALL_ATTEMPTED:
+                _HTTPFS_INSTALL_ATTEMPTED = True
+                try:
+                    con.execute("INSTALL httpfs")
+                except Exception:
+                    pass
+        try:
+            con.execute("LOAD httpfs")
+        except Exception:
+            pass # Local hydrated Parquet queries do not require httpfs.
     threads=max(1,min(os.cpu_count() or 4,16))
     memory=os.getenv('VTAB_MEMORY_LIMIT','4GB')
     con.execute(f"SET threads={threads}")

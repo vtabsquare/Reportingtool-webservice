@@ -12,6 +12,9 @@ import json
 import math
 import os
 import tempfile
+import threading
+import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +28,28 @@ _SECRET_KEYS = {
     "accesstoken", "access_token", "refreshtoken", "refresh_token", "apikey",
     "api_key", "credentials", "credential",
 }
+
+_SECURITY_CACHE_TTL = max(1, int(os.environ.get("VTAB_SECURITY_CACHE_TTL_SECONDS", "300")))
+_AUTH_CACHE_MAX = max(32, int(os.environ.get("VTAB_AUTH_CACHE_MAX", "1024")))
+_AUTH_CACHE: OrderedDict[str, tuple[float, dict[str, Any]]] = OrderedDict()
+_AUTH_CACHE_LOCK = threading.Lock()
+_HYDRATED_CACHE_MAX = max(8, int(os.environ.get("VTAB_HYDRATED_CACHE_MAX", "64")))
+_HYDRATED_CACHE: OrderedDict[tuple[Any, ...], tuple[float, dict[str, Any]]] = OrderedDict()
+_HYDRATED_CACHE_LOCK = threading.Lock()
+_HYDRATION_LOCKS: dict[tuple[Any, ...], threading.Lock] = {}
+
+
+def _token_cache_key(access_token: str) -> str:
+    return hashlib.sha256(access_token.encode("utf-8")).hexdigest()
+
+
+def clear_service_runtime_caches() -> None:
+    """Clear bounded process caches used by the high-frequency viewer path."""
+    with _AUTH_CACHE_LOCK:
+        _AUTH_CACHE.clear()
+    with _HYDRATED_CACHE_LOCK:
+        _HYDRATED_CACHE.clear()
+        _HYDRATION_LOCKS.clear()
 
 
 class ServiceValidationError(ValueError):
@@ -52,6 +77,15 @@ def authenticate(access_token: str) -> dict[str, Any]:
     """Validate a Supabase access token with the auth service (not by decoding it)."""
     if not access_token:
         raise PermissionError("Sign in to the Reporting Service first.")
+    cache_key = _token_cache_key(access_token)
+    now = time.monotonic()
+    with _AUTH_CACHE_LOCK:
+        cached = _AUTH_CACHE.get(cache_key)
+        if cached and now - cached[0] < _SECURITY_CACHE_TTL:
+            _AUTH_CACHE.move_to_end(cache_key)
+            return dict(cached[1])
+        if cached:
+            _AUTH_CACHE.pop(cache_key, None)
     try:
         response = _anon_client().auth.get_user(access_token)
     except Exception as error:
@@ -60,7 +94,13 @@ def authenticate(access_token: str) -> dict[str, Any]:
     user_id = str(getattr(user, "id", "") or "")
     if not user_id:
         raise PermissionError("Your Reporting Service session is invalid or expired. Sign in again.")
-    return {"id": user_id, "email": getattr(user, "email", None)}
+    verified = {"id": user_id, "email": getattr(user, "email", None)}
+    with _AUTH_CACHE_LOCK:
+        _AUTH_CACHE[cache_key] = (now, verified)
+        _AUTH_CACHE.move_to_end(cache_key)
+        while len(_AUTH_CACHE) > _AUTH_CACHE_MAX:
+            _AUTH_CACHE.popitem(last=False)
+    return dict(verified)
 
 
 def _key_token(value: Any) -> str:
@@ -257,7 +297,48 @@ def report_definition_hash(project: dict[str, Any]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def hydrate_snapshot_sources(project: dict[str, Any], access_token: str, expires_in: int = 900) -> dict[str, Any]:
+def hydrate_snapshot_sources(project: dict[str, Any], access_token: str, expires_in: int = 900, skip_auth_check: bool = False) -> dict[str, Any]:
+    """Return a reusable hydrated snapshot for concurrent visual queries.
+
+    Authentication is cached separately, while checked snapshots remain scoped
+    to the verified user. The returned project is treated as immutable by the
+    query and rendering layers; avoiding a deep copy per visual is important for
+    large published definitions.
+    """
+    user = authenticate(access_token)
+    report_id = str(((project or {}).get("report") or {}).get("id") or "").strip()
+    tables = (((project or {}).get("model") or {}).get("tables") or {})
+    storage_paths = tuple(sorted(
+        str(table.get("sourceStoragePath") or "").strip()
+        for table in tables.values() if isinstance(table, dict)
+    ))
+    access_scope = "trusted-route" if skip_auth_check else str(user.get("id") or "")
+    cache_key = (report_id, id(project), storage_paths, access_scope)
+    now = time.monotonic()
+    with _HYDRATED_CACHE_LOCK:
+        cached = _HYDRATED_CACHE.get(cache_key)
+        if cached and now - cached[0] < _SECURITY_CACHE_TTL:
+            _HYDRATED_CACHE.move_to_end(cache_key)
+            return cached[1]
+        lock = _HYDRATION_LOCKS.setdefault(cache_key, threading.Lock())
+    with lock:
+        now = time.monotonic()
+        with _HYDRATED_CACHE_LOCK:
+            cached = _HYDRATED_CACHE.get(cache_key)
+            if cached and now - cached[0] < _SECURITY_CACHE_TTL:
+                _HYDRATED_CACHE.move_to_end(cache_key)
+                return cached[1]
+        hydrated = _hydrate_snapshot_sources_uncached(project, access_token, expires_in, skip_auth_check)
+        with _HYDRATED_CACHE_LOCK:
+            _HYDRATED_CACHE[cache_key] = (now, hydrated)
+            _HYDRATED_CACHE.move_to_end(cache_key)
+            while len(_HYDRATED_CACHE) > _HYDRATED_CACHE_MAX:
+                stale_key, _ = _HYDRATED_CACHE.popitem(last=False)
+                _HYDRATION_LOCKS.pop(stale_key, None)
+        return hydrated
+
+
+def _hydrate_snapshot_sources_uncached(project: dict[str, Any], access_token: str, expires_in: int = 900, skip_auth_check: bool = False) -> dict[str, Any]:
     """Download authorized private snapshots to a content-addressed local cache.
 
     DuckDB's optional HTTP extension is not guaranteed to be present in a packaged
@@ -265,15 +346,15 @@ def hydrate_snapshot_sources(project: dict[str, Any], access_token: str, expires
     client keeps RLS enforcement while making every query use a normal local
     Parquet path.
     """
-    authenticate(access_token)
     snapshot = copy.deepcopy(project)
     report_id = str((snapshot.get("report") or {}).get("id") or "").strip()
     if not report_id:
         raise ServiceValidationError("Published report id is missing from the snapshot.")
     client = _anon_client(access_token)
-    visible = client.table("published_reports").select("id").eq("id", report_id).limit(1).execute()
-    if not getattr(visible, "data", None):
-        raise PermissionError("You do not have access to this published report.")
+    if not skip_auth_check:
+        visible = client.table("published_reports").select("id").eq("id", report_id).limit(1).execute()
+        if not getattr(visible, "data", None):
+            raise PermissionError("You do not have access to this published report.")
     tables = (snapshot.get("model") or {}).get("tables") or {}
     
     url = os.environ.get("VITE_SUPABASE_URL", "").rstrip("/")
@@ -390,7 +471,7 @@ def list_workspace_semantic_models(workspace_id: str, access_token: str) -> list
     client = _anon_client(access_token)
     response = (
         client.table("semantic_models")
-        .select("id,workspace_id,report_id,name,description,status,schema_version,created_at,updated_at,current_version_id,definition,metadata")
+        .select("id,workspace_id,report_id,name,description,status,schema_version,created_at,updated_at,current_version_id,metadata")
         .eq("workspace_id", workspace_id)
         .order("updated_at", desc=True)
         .execute()
@@ -408,13 +489,13 @@ def list_workspace_semantic_models(workspace_id: str, access_token: str) -> list
         if model_id:
             reports_by_model.setdefault(model_id, []).append(report)
     for model in models:
-        definition = model.get("definition") if isinstance(model.get("definition"), dict) else {}
-        tables = (definition or {}).get("tables") or {}
-        model["tableCount"] = len(tables) if isinstance(tables, dict) else 0
-        model["measureCount"] = len((definition or {}).get("measures") or {})
-        model["relationshipCount"] = len((definition or {}).get("relationships") or [])
+        metadata = model.pop("metadata", None)
+        if not isinstance(metadata, dict):
+            metadata = {}
+        model["tableCount"] = int(metadata.get("tableCount") or 0)
+        model["measureCount"] = int(metadata.get("measureCount") or 0)
+        model["relationshipCount"] = int(metadata.get("relationshipCount") or 0)
         model["reports"] = reports_by_model.get(str(model.get("id")), [])
-        model.pop("definition", None)
     return models
 
 
@@ -524,13 +605,25 @@ def publish_report(payload: dict[str, Any], access_token: str, service_base_url:
     # RLS is a semantic-model capability. Publish role definitions with the
     # model while keeping Services membership assignments outside the report.
     semantic_model["security"] = snapshot.get("security") or {"roles": []}
+    model_tables = semantic_model.get("tables") if isinstance(semantic_model.get("tables"), dict) else {}
+    model_measures = semantic_model.get("measures") if isinstance(semantic_model.get("measures"), dict) else {}
+    model_relationships = semantic_model.get("relationships") if isinstance(semantic_model.get("relationships"), list) else []
+    summary_metadata = {
+        **(payload.get("metadata") or {}),
+        "reportDefinitionHash": definition_hash,
+        "pageCount": len(report.get("pages") or []),
+        "tableCount": len(model_tables),
+        "measureCount": len(model_measures),
+        "relationshipCount": len(model_relationships),
+        "sourceType": snapshot.get("sourceType") or snapshot.get("dataSourceType"),
+    }
     response = _anon_client(access_token).rpc("publish_vtab_report", {
         "p_workspace_id": workspace_id,
         "p_report_id": report_id or None,
         "p_report_name": report_name,
         "p_project_json": snapshot,
         "p_semantic_model": semantic_model,
-        "p_metadata": {**(payload.get("metadata") or {}), "reportDefinitionHash": definition_hash},
+        "p_metadata": summary_metadata,
         "p_desktop_version": desktop_version,
         "p_schema_version": schema_version,
         "p_change_description": str(payload.get("changeDescription") or "").strip(),

@@ -360,6 +360,7 @@ def cache_stats():
 def clear_cache():
     with _CACHE_LOCK:_CACHE.clear()
 
+_CREATED_VIEWS = {}
 def execute(model,req,rls=()):
     global _CACHE_HITS,_CACHE_MISSES
     # Semantic queries are the first operation for some desktop sessions. Make
@@ -381,9 +382,11 @@ def execute(model,req,rls=()):
                 if source_url:
                     physical_name = t_def.get('physical', t_name)
                     view_name = physical_name.replace('"', '""')
-                    c.execute(f"CREATE OR REPLACE VIEW \"{view_name}\" AS SELECT * FROM read_parquet({_sql_string(source_url)})")
-            cur=c.execute(sql,p);cols=[d[0] for d in cur.description]
-            rows=[dict(zip(cols,r)) for r in cur.fetchall()]
+                    if _CREATED_VIEWS.get(view_name) != source_url:
+                        c.execute(f"CREATE OR REPLACE VIEW \"{view_name}\" AS SELECT * FROM read_parquet({_sql_string(source_url)})")
+                        _CREATED_VIEWS[view_name] = source_url
+        cur=c.execute(sql,p);cols=[d[0] for d in cur.description]
+        rows=[dict(zip(cols,r)) for r in cur.fetchall()]
     finally:c.close()
     with _CACHE_LOCK:
         _CACHE[key]=(now,rows,sql);_CACHE.move_to_end(key)
