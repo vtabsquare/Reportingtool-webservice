@@ -2,6 +2,7 @@ services:
   - type: web
     name: vtab-backend-api
     runtime: docker
+    plan: starter
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/v1/health
     envVars:
@@ -17,6 +18,10 @@ services:
         value: 1
       - key: VTAB_REFRESH_POLL_SECONDS
         value: 30
+      - key: VTAB_QUERY_BATCH_WORKERS
+        value: 4
+      - key: VTAB_SNAPSHOT_CACHE_DIR
+        value: /var/lib/vtab/snapshots
       - key: VTAB_WEB_URL
         sync: false
       - key: BREVO_API_KEY
@@ -27,3 +32,7 @@ services:
         sync: false
       - key: PORT
         value: 8820
+    disk:
+      name: vtab-snapshot-cache
+      mountPath: /var/lib/vtab
+      sizeGB: 5

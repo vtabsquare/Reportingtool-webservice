@@ -7,7 +7,7 @@ import RefreshCenterDialog from "./RefreshCenterDialog";
 import ReportServiceSettings, { ReportContentList } from "./ReportServiceSettings";
 import SemanticModelService from "./SemanticModelService";
 
-type Report = { id: string; itemKey?:string; itemType?:string; paginatedId?:string; name: string; published_at: string; updated_at?: string; pages: number; role: string; sourceType?: string; project?: any; workspace_id?:string; workspace_name?:string; workspace_is_personal?:boolean };
+type Report = { id: string; itemKey?:string; itemType?:string; paginatedId?:string; name: string; published_at: string; updated_at?: string; pages?: number|null; role: string; sourceType?: string; project?: any; workspace_id?:string; workspace_name?:string; workspace_is_personal?:boolean };
 type Workspace = { id: string; name: string; created_at: string; role: string; member_count: number; report_count: number; is_personal?: boolean };
 type WorkspaceDetail = Workspace & { members: any[]; reports: any[] };
 
@@ -15,6 +15,7 @@ const workspaceTarget=()=>{const p=new URLSearchParams(location.search);return{r
 const parseProjectJson=(value:any):any=>{if(value&&typeof value==='object')return value;if(typeof value!=='string'||!value.trim())return{};try{return JSON.parse(value)}catch{return{}}};
 const isPersonalWorkspace=(workspace?:{name?:string;is_personal?:boolean}|null)=>!!workspace&&(workspace.is_personal===true||workspace.name?.trim().toLowerCase()==='my workspace');
 const isPersonalReport=(report?:Report|null)=>!!report&&(report.workspace_is_personal===true||report.workspace_name?.trim().toLowerCase()==='my workspace');
+const reportKind=(report:Report)=>report.itemType==='Paginated report'?'Paginated report':report.pages?`${report.pages} page${report.pages===1?'':'s'}`:'Interactive report';
 
 const relativeTime = (d: string) => {
   const diff = Date.now() - new Date(d).getTime();
@@ -382,7 +383,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                           <span style={roleBadgeStyle(r.role)}>{r.role}</span>
                         </div>
                         <div style={{ color: "#94a3b8", fontSize: 12, marginBottom: 14 }}>
-                          {r.pages} page{r.pages !== 1 ? 's' : ''} · Updated {relativeTime(r.published_at)}
+                          {reportKind(r)} · Updated {relativeTime(r.published_at)}
                         </div>
                         <div style={{ display: "flex", gap: 8 }} onClick={e => e.stopPropagation()}>
                           <button onClick={() => { history.replaceState(null, '', `${location.pathname}?workspace=1&report=${encodeURIComponent(r.id)}`); setViewing(r); }}
@@ -436,7 +437,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
               <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16, overflow: "hidden" }}>
                 <div style={{ padding: "15px 18px", borderBottom: "1px solid #e2e8f0", display: "grid", gridTemplateColumns: "1fr 150px 210px", gap: 12, color: "#64748b", fontSize: 11, fontWeight: 900, letterSpacing: ".06em" }}><span>SEMANTIC MODEL</span><span>ACCESS</span><span>ACTIONS</span></div>
-                {refreshableReports.map(r=><div key={r.id} style={{ padding: "16px 18px", borderBottom: "1px solid #f1f5f9", display: "grid", gridTemplateColumns: "1fr 150px 210px", gap: 12, alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 12 }}><span style={{ width: 38, height: 38, borderRadius: 10, background: "linear-gradient(135deg,#ede9fe,#dbeafe)", display: "grid", placeItems: "center" }}>📊</span><div><b style={{ display: "block", color: "#0f172a", fontSize: 14 }}>{r.name}</b><small style={{ color: "#64748b" }}>{r.pages} page{r.pages!==1?'s':''} · Updated {relativeTime(r.updated_at||r.published_at)}</small></div></div><span><span style={roleBadgeStyle(r.role)}>{r.role}</span></span><div style={{ display: "flex", gap: 8 }}><button onClick={()=>setScheduling(r)} style={{ background: "#0e7490", color: "#fff", border: "none", borderRadius: 9, padding: "9px 12px", fontWeight: 800, cursor: "pointer", fontSize: 12 }}>Configure & schedule</button><button onClick={()=>{history.replaceState(null,'',`${location.pathname}?workspace=1&report=${encodeURIComponent(r.id)}`);setViewing(r)}} style={{ background: "#f8fafc", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 9, padding: "9px 11px", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>View</button></div></div>)}
+                {refreshableReports.map(r=><div key={r.id} style={{ padding: "16px 18px", borderBottom: "1px solid #f1f5f9", display: "grid", gridTemplateColumns: "1fr 150px 210px", gap: 12, alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 12 }}><span style={{ width: 38, height: 38, borderRadius: 10, background: "linear-gradient(135deg,#ede9fe,#dbeafe)", display: "grid", placeItems: "center" }}>📊</span><div><b style={{ display: "block", color: "#0f172a", fontSize: 14 }}>{r.name}</b><small style={{ color: "#64748b" }}>{reportKind(r)} · Updated {relativeTime(r.updated_at||r.published_at)}</small></div></div><span><span style={roleBadgeStyle(r.role)}>{r.role}</span></span><div style={{ display: "flex", gap: 8 }}><button onClick={()=>setScheduling(r)} style={{ background: "#0e7490", color: "#fff", border: "none", borderRadius: 9, padding: "9px 12px", fontWeight: 800, cursor: "pointer", fontSize: 12 }}>Configure & schedule</button><button onClick={()=>{history.replaceState(null,'',`${location.pathname}?workspace=1&report=${encodeURIComponent(r.id)}`);setViewing(r)}} style={{ background: "#f8fafc", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 9, padding: "9px 11px", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>View</button></div></div>)}
                 {!refreshableReports.length&&<div style={{ padding: 40, textAlign: "center", color: "#64748b" }}><b>No manageable semantic models</b><p style={{ fontSize: 13 }}>Publish a report as owner or ask for edit access.</p></div>}
               </div>
               <div style={{ marginTop: 14, padding: 14, borderRadius: 12, background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", fontSize: 12 }}><b>Local/private sources:</b> cloud-accessible databases work now. Sources reachable only from a desktop or office network require VTAB Gateway.</div>

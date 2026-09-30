@@ -4849,3 +4849,89 @@ main,.mainPanel,.workspace,.reportWorkspace,.modelWorkspace,.measuresWorkspace{p
 .view-report .buttonVisualOnly{width:100%!important;height:100%!important;min-height:0!important;margin:0!important;box-sizing:border-box!important}
 .view-report .actionButtonVisual .visualTitle,.view-report .actionButtonVisual>small{display:none!important}
 .view-report .actionButtonVisual>.reportActionButton{width:100%!important;height:100%!important;min-height:0!important;margin:0!important}
+
+/* Published Services viewer: keep the command bar usable on smaller screens,
+   and render authored buttons/slicers exactly as they appear in Desktop. */
+.publishedViewer .viewerTopbar{grid-template-columns:minmax(150px,220px) minmax(120px,1fr) minmax(0,auto)!important}
+.publishedViewer .viewerActions{min-width:0;flex-wrap:nowrap!important;overflow-x:auto;scrollbar-width:thin;padding:3px 0}
+.publishedViewer .viewerActions button{flex:none}
+.publishedViewer .viewerScaleFrame{max-width:100%}
+.pixelPublishedPage .viewerVisual-button{
+  background:transparent!important;
+  border:0!important;
+  border-radius:0!important;
+  box-shadow:none!important;
+  overflow:visible!important;
+}
+.pixelPublishedPage .viewerVisual-button:hover{transform:none!important;box-shadow:none!important}
+.pixelPublishedPage .viewerVisual-button>.viewerVisualTitle{display:none!important}
+.pixelPublishedPage .viewerVisual-button>.viewerVisualBody{padding:0!important;background:transparent!important;overflow:visible!important}
+.pixelPublishedPage .viewerActionButtonWrap,
+.pixelPublishedPage .viewerActionButton{width:100%!important;height:100%!important;min-height:0!important;margin:0!important;box-sizing:border-box!important}
+/* The geometry-v2 rule above has intentionally high specificity. Match it
+   here so a button never inherits the generic white visual-card surface. */
+.pixelPublishedPage .viewerGrid.pixelLayout>div[style*="position: absolute"]>.viewerVisual.viewerVisual-button{
+  background:transparent!important;
+  border:0!important;
+  border-radius:0!important;
+  box-shadow:none!important;
+}
+.pixelPublishedPage .viewerGrid.pixelLayout>div[style*="position: absolute"]>.viewerVisual.viewerVisual-button>.viewerVisualTitle{display:none!important}
+.pixelPublishedPage .viewerGrid.pixelLayout>div[style*="position: absolute"]>.viewerVisual.viewerVisual-button>.viewerVisualBody{
+  width:100%!important;
+  height:100%!important;
+  padding:0!important;
+  background:transparent!important;
+  overflow:visible!important;
+}
+.pixelPublishedPage .viewerGrid.pixelLayout>div[style*="position: absolute"]>.viewerVisual.viewerVisual-button .viewerActionButtonWrap,
+.pixelPublishedPage .viewerGrid.pixelLayout>div[style*="position: absolute"]>.viewerVisual.viewerVisual-button .viewerActionButton{
+  width:100%!important;
+  height:100%!important;
+  min-height:0!important;
+  margin:0!important;
+}
+.pixelPublishedPage .viewerVisual-slicer>.viewerVisualTitle{
+  min-height:18px!important;
+  height:18px!important;
+  padding:1px 5px!important;
+  border:0!important;
+  font-size:8px!important;
+  line-height:16px!important;
+}
+.pixelPublishedPage .viewerVisual-slicer>.viewerVisualBody{padding:0!important;background:transparent!important;overflow:visible!important}
+.pixelPublishedPage .viewerSlicerDropdown{
+  display:block!important;
+  width:calc(100% - 8px)!important;
+  height:calc(100% - 4px)!important;
+  min-height:20px!important;
+  margin:2px 4px!important;
+  padding:1px 24px 1px 7px!important;
+  border-radius:4px!important;
+  font-size:10px!important;
+}
+@media(max-width:1500px){
+  .publishedViewer .viewerActions>span{display:none!important}
+  .publishedViewer .viewerTopbar{grid-template-columns:170px minmax(100px,1fr) minmax(0,auto)!important}
+}
+@media(max-width:1100px){
+  .publishedViewer .viewerBrand small,.publishedViewer .viewerReportName small{display:none}
+  .publishedViewer .viewerActions button{font-size:0!important;gap:0!important;padding:7px!important}
+  .publishedViewer .viewerActions button svg{width:15px;height:15px}
+  .publishedViewer .viewerViewModes button{font-size:0!important}
+}
+
+/* Services 5.2.5: honest loading states for remote/cold-start deployments. */
+@keyframes vtabSpin{to{transform:rotate(360deg)}}
+.viewerSpinner{display:inline-block;width:20px;height:20px;border:3px solid #dbeafe;border-top-color:#2563eb;border-radius:50%;animation:vtabSpin .8s linear infinite;flex:none}
+.spin{animation:vtabSpin .9s linear infinite}
+.viewerVisualBody{position:relative}.viewerVisualLoading{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;min-height:70px;color:#475569;background:linear-gradient(110deg,rgba(248,250,252,.92) 30%,rgba(239,246,255,.96) 45%,rgba(248,250,252,.92) 60%);background-size:240% 100%;font-size:12px;z-index:2}
+.publishedViewer .viewerStage{position:relative}
+.viewerPageLoadNotice{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:50;display:flex;align-items:center;gap:10px;width:max-content;max-width:calc(100% - 28px);margin:0;padding:10px 14px;border:1px solid #bfdbfe;border-radius:10px;background:rgba(255,255,255,.96);box-shadow:0 10px 28px rgba(15,23,42,.14);color:#334155;pointer-events:none}
+.viewerPageLoadNotice>span:last-child{font-size:12px;color:#64748b}.viewerPageLoadNotice.error{border-color:#fecaca;color:#991b1b}.viewerPageLoadNotice.error button{margin-left:4px}
+.viewerPageLoadNotice.error{pointer-events:auto}
+.workspaceLoading{display:flex;min-height:280px;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#475569}.workspaceLoading>b{color:#0f172a}.workspaceLoading>span{font-size:13px}
+.workspaceSkeleton{display:grid;grid-template-columns:repeat(3,minmax(150px,240px));gap:14px;margin-top:18px}.workspaceSkeleton i{display:block;height:120px;border-radius:14px;background:linear-gradient(110deg,#eef2f7 28%,#f8fafc 42%,#eef2f7 58%);background-size:220% 100%;animation:vtabSkeleton 1.3s linear infinite}
+@keyframes vtabSkeleton{to{background-position-x:-220%}}
+.workspaceLoadError button{margin-top:8px}
+@media(max-width:760px){.workspaceSkeleton{grid-template-columns:1fr}.workspaceSkeleton i:nth-child(n+2){display:none}.viewerPageLoadNotice>span:last-child{display:none}}

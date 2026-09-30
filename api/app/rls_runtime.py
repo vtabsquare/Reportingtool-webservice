@@ -6,6 +6,9 @@ memberships are resolved here before query compilation.
 """
 from __future__ import annotations
 
+import hashlib
+import threading
+import time
 from typing import Any
 
 from .reporting_service import authenticate, get_semantic_model, _workspace_access
@@ -42,14 +45,52 @@ def _deny_rule(project: dict[str, Any]) -> list[dict[str, Any]]:
     return [{"table": "", "column": "", "operator": "deny_all", "value": None, "_roleId": "__deny__"}]
 
 
-def resolve_published_rls(report_id: str, project: dict[str, Any], access_token: str) -> dict[str, Any]:
-    """Return trusted application/RLS context and compiled role rules.
+_RLS_CACHE_TTL = 300.0
+_RLS_CACHE_MAX = 2048
+_rls_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_rls_cache_lock = threading.Lock()
+_rls_key_locks: dict[str, threading.Lock] = {}
 
-    Editors mirror Power BI and bypass RLS during normal viewing. A Viewer with
-    published RLS roles but no assignment is denied all rows (fail closed).
-    """
-    user = authenticate(access_token)
-    user_id = str(user.get("id") or "")
+
+def clear_rls_cache() -> None:
+    with _rls_cache_lock:
+        _rls_cache.clear()
+        _rls_key_locks.clear()
+
+
+def _rls_cache_key(report_id: str, access_token: str) -> str:
+    token_digest = hashlib.sha256(access_token.encode("utf-8")).hexdigest()
+    return f"{report_id}:{token_digest}"
+
+def resolve_published_rls(report_id: str, project: dict[str, Any], access_token: str) -> dict[str, Any]:
+    cache_key = _rls_cache_key(report_id, access_token)
+    now = time.monotonic()
+    with _rls_cache_lock:
+        cached = _rls_cache.get(cache_key)
+        if cached and now - cached[0] < _RLS_CACHE_TTL:
+            return cached[1]
+        key_lock = _rls_key_locks.setdefault(cache_key, threading.Lock())
+
+    # Collapse a dashboard's concurrent first-load checks into one Supabase
+    # security resolution. Other reports/users retain independent locks.
+    with key_lock:
+        now = time.monotonic()
+        with _rls_cache_lock:
+            cached = _rls_cache.get(cache_key)
+            if cached and now - cached[0] < _RLS_CACHE_TTL:
+                return cached[1]
+        user = authenticate(access_token)
+        user_id = str(user.get("id") or "")
+        resolved = _resolve_published_rls_impl(report_id, project, access_token, user, user_id)
+        with _rls_cache_lock:
+            _rls_cache[cache_key] = (now, resolved)
+            if len(_rls_cache) > _RLS_CACHE_MAX:
+                oldest = min(_rls_cache, key=lambda key: _rls_cache[key][0])
+                _rls_cache.pop(oldest, None)
+                _rls_key_locks.pop(oldest, None)
+        return resolved
+
+def _resolve_published_rls_impl(report_id: str, project: dict[str, Any], access_token: str, user: dict, user_id: str) -> dict[str, Any]:
     sb = _admin_client()
     report_rows = sb.table("published_reports").select("id,workspace_id,semantic_model_id").eq("id", report_id).limit(1).execute().data or []
     if not report_rows:
@@ -133,6 +174,7 @@ def add_member(semantic_model_id: str, role_id: str, principal_type: str, princi
     payload = {"semantic_model_id": semantic_model_id, "role_id": role_id, "principal_type": principal_type, "principal_id": principal_id, "principal_email": label if principal_type == "user" else None, "assigned_by": authenticate(access_token)["id"]}
     sb.table("semantic_model_rls_members").upsert(payload, on_conflict="semantic_model_id,role_id,principal_type,principal_id").execute()
     sb.table("audit_logs").insert({"workspace_id": model["workspace_id"], "actor_id": payload["assigned_by"], "action": "rls.member.assign", "object_type": "semantic_model", "object_id": semantic_model_id, "details": {"roleId": role_id, "principalType": principal_type, "principal": label}}).execute()
+    clear_rls_cache()
     return get_configuration(semantic_model_id, access_token)
 
 
@@ -140,6 +182,7 @@ def remove_member(semantic_model_id: str, membership_id: str, access_token: str)
     model = get_semantic_model(semantic_model_id, access_token)
     _workspace_access(str(model["workspace_id"]), access_token, require_manage=True)
     _admin_client().table("semantic_model_rls_members").delete().eq("id", membership_id).eq("semantic_model_id", semantic_model_id).execute()
+    clear_rls_cache()
     return get_configuration(semantic_model_id, access_token)
 
 
@@ -165,6 +208,7 @@ def create_group(semantic_model_id: str, name: str, access_token: str) -> dict[s
     name=name.strip()
     if not name:raise ValueError("Security group name is required.")
     _admin_client().table("security_groups").insert({"workspace_id":model["workspace_id"],"name":name,"created_by":authenticate(access_token)["id"]}).execute()
+    clear_rls_cache()
     return get_configuration(semantic_model_id,access_token)
 
 
@@ -175,4 +219,5 @@ def add_group_user(semantic_model_id: str, group_id: str, email: str, access_tok
     users=sb.table("vtab_users").select("id,email").ilike("email",email.strip().lower()).limit(1).execute().data or []
     if not users:raise ValueError("Registered VTAB user not found.")
     sb.table("security_group_members").upsert({"group_id":group_id,"user_id":users[0]["id"],"added_by":authenticate(access_token)["id"]},on_conflict="group_id,user_id").execute()
+    clear_rls_cache()
     return get_configuration(semantic_model_id,access_token)

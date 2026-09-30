@@ -3,7 +3,9 @@ services:
   - type: web
     name: vtab-reporting-api
     runtime: docker
-    plan: free
+    # Starter (or higher) prevents the production API from sleeping between
+    # requests. The free plan is suitable for trials but has cold starts.
+    plan: starter
     rootDir: api
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/v1/health
@@ -22,12 +24,20 @@ services:
         value: 1
       - key: VTAB_REFRESH_POLL_SECONDS
         value: 30
+      - key: VTAB_QUERY_BATCH_WORKERS
+        value: 4
+      - key: VTAB_SNAPSHOT_CACHE_DIR
+        value: /var/lib/vtab/snapshots
       - key: VTAB_WEB_URL
         sync: false
       - key: VTAB_ALLOWED_ORIGINS
         sync: false
       - key: PORT
         value: 8820
+    disk:
+      name: vtab-snapshot-cache
+      mountPath: /var/lib/vtab
+      sizeGB: 5
 
   # Frontend static site
   - type: web
@@ -46,3 +56,10 @@ services:
         sync: false
       - key: VITE_WEB_URL
         sync: false
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /index.html
+        name: Cache-Control
+        value: no-cache
