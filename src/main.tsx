@@ -66,8 +66,9 @@ function StartupError({error}:{error:any}){
   </div>
 }
 
-import('./studio').then(({default:Studio})=>{
-  root.render(<React.StrictMode><Studio/></React.StrictMode>);
+const entry=import.meta.env.VITE_APP_MODE==='WORKSPACE_ONLY'?import('./services'):import('./studio');
+entry.then(({default:Application})=>{
+  root.render(<React.StrictMode><Application/></React.StrictMode>);
 }).catch(error=>{
   console.error('VTAB startup error',error);
   root.render(<StartupError error={error}/>);

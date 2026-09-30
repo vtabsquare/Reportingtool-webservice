@@ -2,6 +2,7 @@ from __future__ import annotations
 import re
 import uuid
 import tempfile
+import threading
 import time
 import os
 import json
@@ -10,11 +11,13 @@ import hashlib
 import hmac
 import urllib.request
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from collections import defaultdict, deque
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Response, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from .storage import Store, META, DEMO
@@ -35,6 +38,7 @@ from .reporting_service import (
     ServiceConflictError,
     ServiceValidationError,
     authenticate as service_authenticate,
+    clear_service_runtime_caches,
     hydrate_snapshot_sources,
     get_semantic_model as service_get_semantic_model,
     list_workspace_semantic_models as service_list_workspace_semantic_models,
@@ -59,6 +63,10 @@ except Exception as exc:
 # or needs recovery. Data/Transform/Model endpoints initialize it lazily.
 store=Store(); app=FastAPI(title='VTAB Reporting Studio API',version=PRODUCT_VERSION)
 app.include_router(data_bridge_router)
+# Compress larger API responses (report definitions, visual rows and export
+# metadata) before they cross the public network. Static assets should also be
+# compressed by the reverse proxy; see deploy/nginx-reportservices.conf.
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 _extra_origins = [o.strip() for o in os.environ.get('VTAB_ALLOWED_ORIGINS','').split(',') if o.strip()]
 _allow_all_origins = '*' in _extra_origins
 app.add_middleware(
@@ -129,7 +137,10 @@ async def secure_authoring_api(request, call_next):
     return await call_next(request)
 
 class QueryReq(BaseModel):
-    dimensions:list[str]=[]; measures:list[str]=[]; filters:list[dict]=[]; sort:list[dict]=[]; limit:int=200; roleId:str|None=None
+    visualId:str|None=None; dimensions:list[str]=[]; measures:list[str]=[]; filters:list[dict]=[]; sort:list[dict]=[]; limit:int=200; roleId:str|None=None
+class PublishedBatchQueryReq(BaseModel):
+    visualIds:list[str]=[]
+    filters:list[dict]=[]
 class PublishedSnapshotQueryReq(QueryReq):
     project:dict
 class AuthoringSnapshotQueryReq(QueryReq):
@@ -1163,7 +1174,15 @@ def reporting_service_publish(payload: ServicePublishReq, request: Request, auth
             forwarded_proto = request.headers.get('x-forwarded-proto') or request.url.scheme
             forwarded_host = request.headers.get('x-forwarded-host') or request.headers.get('host') or ''
             configured_url = f'{forwarded_proto}://{forwarded_host}'.rstrip('/') if forwarded_host else ''
-        return service_publish_report(payload.model_dump(), _service_access_token(authorization), configured_url)
+        result = service_publish_report(payload.model_dump(), _service_access_token(authorization), configured_url)
+        report_id = str(result.get('reportId') or payload.reportId or '')
+        with _cloud_project_cache_lock:
+            _cloud_project_cache.pop(report_id, None)
+        clear_service_runtime_caches()
+        from .rls_runtime import clear_rls_cache
+        clear_rls_cache()
+        clear_cache()
+        return result
     except Exception as error:
         _service_error(error)
 
@@ -1179,7 +1198,14 @@ def reporting_service_versions(report_id: str, authorization: str | None = Heade
 @app.post('/api/v1/service/reports/{report_id}/versions/{version_id}/restore')
 def reporting_service_restore_version(report_id: str, version_id: str, authorization: str | None = Header(default=None)):
     try:
-        return service_restore_version(report_id, version_id, _service_access_token(authorization))
+        result = service_restore_version(report_id, version_id, _service_access_token(authorization))
+        with _cloud_project_cache_lock:
+            _cloud_project_cache.pop(report_id, None)
+        clear_service_runtime_caches()
+        from .rls_runtime import clear_rls_cache
+        clear_rls_cache()
+        clear_cache()
+        return result
     except Exception as error:
         _service_error(error)
 
@@ -1438,14 +1464,46 @@ def export_published(report_id:str,fmt:str,authorization:str|None=Header(default
     raise HTTPException(400,'Supported export formats are PDF and PPTX.')
 
 
+@app.post('/api/v1/published/{report_id}/export-rendered/{fmt}')
+def export_published_rendered(report_id:str,fmt:str,payload:dict,authorization:str|None=Header(default=None)):
+    """Export the browser-rendered dashboard so every report page and chart is retained."""
+    _workspace_user(authorization);item=store.get_published(report_id)
+    project=(item or {}).get('project') or (payload.get('project') if isinstance(payload,dict) else None)
+    if not isinstance(project,dict) or not project:raise HTTPException(404,'Published report not found')
+    pages=payload.get('pages') if isinstance(payload,dict) else None
+    if not isinstance(pages,list) or not pages:raise HTTPException(400,'At least one rendered report page is required.')
+    if len(pages)>50:raise HTTPException(400,'A maximum of 50 report pages can be exported at once.')
+    total_size=0
+    for page in pages:
+        if not isinstance(page,dict):raise HTTPException(400,'Invalid rendered report page.')
+        image=page.get('image')
+        if not isinstance(image,str) or not image.startswith('data:image/png;base64,'):
+            raise HTTPException(400,'Rendered report pages must use PNG images.')
+        total_size+=len(image)
+    if total_size>100*1024*1024:raise HTTPException(413,'The rendered report export is larger than 100 MB.')
+    report_name=(item or {}).get('name') or (project.get('report') or {}).get('name') or project.get('name') or 'VTAB Report'
+    safe=''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in report_name) or 'VTAB_Report'
+    try:
+        if fmt.lower()=='pdf':
+            data=report_pdf(project,pages);return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{safe}.pdf"'})
+        if fmt.lower() in ('ppt','pptx'):
+            data=report_pptx(project,pages);return Response(data,media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation',headers={'Content-Disposition':f'attachment; filename="{safe}.pptx"'})
+    except ValueError as error:raise HTTPException(400,str(error))
+    except RuntimeError as error:raise HTTPException(503,str(error))
+    raise HTTPException(400,'Supported export formats are PDF and PPTX.')
+
+
 @app.post('/api/v1/published/{report_id}/paginated/pdf')
 def export_published_paginated(report_id:str,payload:PaginatedPdfReq,authorization:str|None=Header(default=None)):
     from .rls_runtime import resolve_published_rls
     item=store.get_published(report_id)
-    if not item:raise HTTPException(404,'Published report not found')
+    p = item['project'] if item else _get_cloud_project(report_id)
+    if not p:raise HTTPException(404,'Published report not found')
     try:
-        resolved=resolve_published_rls(report_id,item['project'],_service_access_token(authorization))
-        data,filename,_count=render_paginated_pdf(item['project'],payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'])
+        token=_service_access_token(authorization)
+        resolved=resolve_published_rls(report_id,p,token)
+        p = hydrate_snapshot_sources(p, token, skip_auth_check=True)
+        data,filename,_count=render_paginated_pdf(p,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'])
         return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{filename}"'})
     except PaginatedReportError as error:raise HTTPException(400,str(error))
 
@@ -1456,9 +1514,9 @@ def export_published_paginated_snapshot(payload:PaginatedPdfReq,authorization:st
     token=_service_access_token(authorization)
     if not payload.project:raise HTTPException(400,'Published project snapshot is required.')
     try:
-        hydrated=hydrate_snapshot_sources(payload.project,token)
-        report_id=str((hydrated.get('report') or {}).get('id') or hydrated.get('id') or '')
-        resolved=resolve_published_rls(report_id,hydrated,token)
+        report_id=str((payload.project.get('report') or {}).get('id') or payload.project.get('id') or '')
+        resolved=resolve_published_rls(report_id,payload.project,token)
+        hydrated=hydrate_snapshot_sources(payload.project,token,skip_auth_check=True)
         data,filename,_count=render_paginated_pdf(hydrated,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'])
         return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{filename}"'})
     except PermissionError as error:raise HTTPException(403,str(error))
@@ -1468,18 +1526,21 @@ def export_published_paginated_snapshot(payload:PaginatedPdfReq,authorization:st
 @app.post('/api/v1/published/{report_id}/share-email')
 def share_published_email(report_id:str,payload:dict,authorization:str|None=Header(default=None)):
     _workspace_user(authorization);item=store.get_published(report_id)
-    if not item:raise HTTPException(404,'Published report not found')
+    p = item['project'] if item else _get_cloud_project(report_id)
+    if not p:raise HTTPException(404,'Published report not found')
+    p = hydrate_snapshot_sources(p, _service_access_token(authorization), skip_auth_check=True)
+    report_name = item['name'] if item else p.get('report', {}).get('name', 'VTAB Report')
     recipients=payload.get('to') or []
     if isinstance(recipients,str):recipients=[x.strip() for x in recipients.split(',') if x.strip()]
     if not recipients:raise HTTPException(400,'At least one recipient email is required.')
     cfg=store.get_setting('workspace_email',{}) or {};base=(cfg.get('workspaceBaseUrl') or '').rstrip('/')
     report_url=(base+f'/?viewer={report_id}') if base else payload.get('reportUrl')
     attachment=None;attachment_name=None;attachment_type=None;fmt=(payload.get('attach') or '').lower()
-    if fmt=='pdf':attachment=report_pdf(item['project']);attachment_name=(item['name']+'.pdf');attachment_type='pdf'
-    elif fmt in ('ppt','pptx'):attachment=report_pptx(item['project']);attachment_name=(item['name']+'.pptx');attachment_type='pptx'
+    if fmt=='pdf':attachment=report_pdf(p);attachment_name=(report_name+'.pdf');attachment_type='pdf'
+    elif fmt in ('ppt','pptx'):attachment=report_pptx(p);attachment_name=(report_name+'.pptx');attachment_type='pptx'
     smtp={'host':cfg.get('smtpHost'),'port':cfg.get('smtpPort'),'username':cfg.get('smtpUsername'),'password':cfg.get('smtpPassword'),'fromEmail':cfg.get('smtpFrom'),'ssl':cfg.get('smtpSsl',False),'startTls':cfg.get('smtpStartTls',True)}
     try:
-        result=send_report_email(smtp_cfg=smtp,to=recipients,subject=payload.get('subject') or ('VTAB Report: '+item['name']),body=payload.get('message') or 'A VTAB Workspace report has been shared with you.',report_url=report_url,attachment_name=attachment_name,attachment=attachment,attachment_type=attachment_type)
+        result=send_report_email(smtp_cfg=smtp,to=recipients,subject=payload.get('subject') or ('VTAB Report: '+report_name),body=payload.get('message') or 'A VTAB Workspace report has been shared with you.',report_url=report_url,attachment_name=attachment_name,attachment=attachment,attachment_type=attachment_type)
         store.log('report.share.email',{'id':report_id,'to':recipients,'attach':fmt});return result
     except Exception as e:raise HTTPException(400,str(e))
 
@@ -1972,27 +2033,134 @@ def query_snapshot(req:AuthoringSnapshotQueryReq):
         payload=req.model_dump();payload.pop('project',None)
         rows,sql=execute(p['model'],payload,rules);store.log('query.snapshot.execute',{'reportId':p.get('report',{}).get('id'),'dimensions':req.dimensions,'measures':req.measures,'rows':len(rows)});return {'rows':rows,'sql':sql}
     except Exception as e:raise HTTPException(400,str(e))
-@app.post('/api/v1/published/{report_id}/query')
-def published_query(report_id:str,req:QueryReq,authorization:str|None=Header(default=None)):
+
+_cloud_project_cache = {}
+_cloud_project_cache_lock = threading.Lock()
+_cloud_project_load_locks: dict[str, threading.Lock] = {}
+def _get_cloud_project(report_id: str):
+    import time, json
+    now = time.time()
+    with _cloud_project_cache_lock:
+        item = _cloud_project_cache.get(report_id)
+        if item and now - item['time'] < 300:
+            return item['project']
+        load_lock = _cloud_project_load_locks.setdefault(report_id, threading.Lock())
+    # A report page starts all visuals together. Collapse those concurrent
+    # first loads so the full definition crosses the network only once.
+    with load_lock:
+        now = time.time()
+        with _cloud_project_cache_lock:
+            item = _cloud_project_cache.get(report_id)
+            if item and now - item['time'] < 300:
+                return item['project']
+        from .supabase_store import _admin_client
+        sb = _admin_client()
+        try:
+            res = sb.table("published_reports").select("project_json").eq("id", report_id).limit(1).execute()
+            if not res.data:
+                return None
+            p_json = res.data[0].get('project_json')
+            p = json.loads(p_json) if isinstance(p_json, str) else p_json
+            with _cloud_project_cache_lock:
+                _cloud_project_cache[report_id] = {'time': now, 'project': p}
+            return p
+        except Exception:
+            return None
+
+
+def _published_visual_payload(project: dict, request: QueryReq) -> dict:
+    """Build a query from the stored visual definition, not browser bindings."""
+    payload = request.model_dump()
+    visual_id = str(request.visualId or '').strip()
+    if not visual_id:
+        payload.pop('visualId', None)
+        return payload
+    visual = next((visual for page in ((project.get('report') or {}).get('pages') or []) for visual in (page.get('visuals') or []) if str(visual.get('id') or '') == visual_id), None)
+    if not visual:
+        raise ValueError('Published visual was not found in this report definition.')
+    bindings = visual.get('bindings') or {}
+    dimensions = [*(bindings.get('axis') or []), *(bindings.get('legend') or [])]
+    measures = [] if visual.get('type') == 'slicer' else [*(bindings.get('values') or []), *(bindings.get('target') or []), *(bindings.get('tooltips') or [])]
+    return {
+        'dimensions': dimensions,
+        'measures': measures,
+        'filters': [*(visual.get('filters') or []), *(request.filters or [])],
+        'sort': visual.get('sort') or [],
+        'limit': 500,
+        'roleId': None,
+    }
+
+def _published_query_context(report_id:str,authorization:str|None):
+    """Resolve report, viewer security and snapshots once per page request."""
     from .rls_runtime import resolve_published_rls
     item=store.get_published(report_id)
-    if not item:raise HTTPException(404,'Published report not found')
-    p=item['project']
+    p = item['project'] if item else _get_cloud_project(report_id)
+    if not p:raise HTTPException(404,'Published report not found')
     try:
-        resolved=resolve_published_rls(report_id,p,_service_access_token(authorization));rows,sql=execute(p['model'],req.model_dump(),resolved['rules']);store.log('published.query.execute',{'reportId':report_id,'dimensions':req.dimensions,'measures':req.measures,'rows':len(rows),'security':resolved['context']});return {'rows':rows,'sql':sql,'security':resolved['context']}
+        token=_service_access_token(authorization)
+        resolved=resolve_published_rls(report_id,p,token)
+        p = hydrate_snapshot_sources(p, token, skip_auth_check=True)
+        return p,resolved
+    except PermissionError as e:raise HTTPException(403,str(e))
+    except ServiceValidationError as e:raise HTTPException(400,str(e))
+    except HTTPException:raise
+    except Exception as e:raise HTTPException(502,str(e))
+
+@app.post('/api/v1/published/{report_id}/query')
+def published_query(report_id:str,req:QueryReq,authorization:str|None=Header(default=None)):
+    p,resolved=_published_query_context(report_id,authorization)
+    try:
+        payload=_published_visual_payload(p,req)
+        rows,sql=execute(p['model'],payload,resolved['rules']);store.log('published.query.execute',{'reportId':report_id,'visualId':req.visualId,'dimensions':payload['dimensions'],'measures':payload['measures'],'rows':len(rows),'security':resolved['context']});return {'rows':rows,'sql':sql,'security':resolved['context']}
     except Exception as e:raise HTTPException(400,str(e))
+
+@app.post('/api/v1/published/{report_id}/query-batch')
+def published_query_batch(report_id:str,req:PublishedBatchQueryReq,authorization:str|None=Header(default=None)):
+    """Load every data visual on one report page with a single HTTP request.
+
+    Authentication, RLS resolution, project loading and snapshot hydration are
+    deliberately performed once. Individual query failures are returned beside
+    successful visuals so one broken visual does not blank the entire page.
+    """
+    visual_ids=list(dict.fromkeys(str(value or '').strip() for value in req.visualIds if str(value or '').strip()))
+    if len(visual_ids)>64:raise HTTPException(400,'A report page can request at most 64 data visuals at once.')
+    if not visual_ids:return {'results':{},'durationMs':0,'security':{}}
+    started=time.perf_counter()
+    p,resolved=_published_query_context(report_id,authorization)
+
+    def run_visual(visual_id:str):
+        payload=_published_visual_payload(p,QueryReq(visualId=visual_id,filters=req.filters))
+        rows,sql=execute(p['model'],payload,resolved['rules'])
+        return visual_id,{'rows':rows,'sql':sql}
+
+    configured=max(1,min(8,int(os.environ.get('VTAB_QUERY_BATCH_WORKERS','4') or 4)))
+    workers=min(configured,len(visual_ids))
+    results={}
+    with ThreadPoolExecutor(max_workers=workers,thread_name_prefix='published-query') as pool:
+        futures={pool.submit(run_visual,visual_id):visual_id for visual_id in visual_ids}
+        for future in as_completed(futures):
+            visual_id=futures[future]
+            try:
+                result_id,result=future.result();results[result_id]=result
+            except Exception as error:
+                results[visual_id]={'rows':[],'error':str(error)}
+    duration_ms=round((time.perf_counter()-started)*1000,1)
+    store.log('published.query.batch',{'reportId':report_id,'visuals':len(visual_ids),'durationMs':duration_ms,'errors':sum(1 for value in results.values() if value.get('error')),'security':resolved['context']})
+    return {'results':results,'durationMs':duration_ms,'security':resolved['context']}
 
 @app.post('/api/v1/published/query-snapshot')
 def published_snapshot_query(req:PublishedSnapshotQueryReq,authorization:str|None=Header(default=None)):
     from .rls_runtime import resolve_published_rls
     token=_service_access_token(authorization)
-    try:p=hydrate_snapshot_sources(req.project or {},token)
+    raw_project=req.project or {}
+    report_id=str((raw_project.get('report') or {}).get('id') or raw_project.get('id') or '')
+    try:
+        resolved=resolve_published_rls(report_id,raw_project,token)
+        p=hydrate_snapshot_sources(raw_project,token, skip_auth_check=True)
     except PermissionError as e:raise HTTPException(403,str(e))
     except ServiceValidationError as e:raise HTTPException(400,str(e))
     except Exception as e:raise HTTPException(502,str(e))
     try:
-        report_id=str((p.get('report') or {}).get('id') or p.get('id') or '')
-        resolved=resolve_published_rls(report_id,p,token)
         payload=req.model_dump();payload.pop('project',None)
         rows,sql=execute(p['model'],payload,resolved['rules']);store.log('published.snapshot.query.execute',{'reportId':report_id,'dimensions':req.dimensions,'measures':req.measures,'rows':len(rows),'security':resolved['context']});return {'rows':rows,'sql':sql,'security':resolved['context']}
     except Exception as e:
