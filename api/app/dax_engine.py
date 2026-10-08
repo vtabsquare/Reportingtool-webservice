@@ -32,12 +32,29 @@ def strip_assignment(expression:str):
 
 def normalize(s):return re.sub(r'[^a-z0-9]','',s.lower())
 
+def _ci_table(model,name):
+    """Case-insensitive table name lookup; returns the canonical name or None.
+    Power BI / DAX is case-insensitive for identifiers. Measures authored in
+    Desktop may use different capitalisation than the semantic-model table key."""
+    tables=model.get('tables',{})
+    if name in tables:return name
+    nl=name.lower()
+    return next((t for t in tables if t.lower()==nl),None)
+
+def _ci_column(cols,name):
+    """Case-insensitive column name lookup; returns the canonical name or None."""
+    if name in cols:return name
+    nl=name.lower()
+    return next((c for c in cols if c.lower()==nl),None)
+
 def resolve_field(model,table,column,alias=None):
     table=table.strip();column=column.strip()
-    if table not in model.get('tables',{}):raise DaxError(f"Unknown table '{table}'")
-    cols=model['tables'][table].get('columns',{})
-    if column not in cols:raise DaxError(f"Unknown column '{table}[{column}]'")
-    return f'{qi(alias or table)}.{qi(cols[column])}'
+    actual_table=_ci_table(model,table)
+    if actual_table is None:raise DaxError(f"Unknown table '{table}'")
+    cols=model['tables'][actual_table].get('columns',{})
+    actual_col=_ci_column(cols,column)
+    if actual_col is None:raise DaxError(f"Unknown column '{actual_table}[{column}]'")
+    return f'{qi(alias or actual_table)}.{qi(cols[actual_col])}'
 
 def semantic_field(table,column):return f'{table.strip()}.{column.strip()}'
 
@@ -47,12 +64,14 @@ def parse_field(expr):
 
 def _context_predicate(model,table,filters,alias):
     parts=[]
+    actual_table=_ci_table(model,table) or table
+    cols=model.get('tables',{}).get(actual_table,{}).get('columns',{})
     for f in filters or []:
         sf=f.get('field','')
         if '.' not in sf:continue
         t,c=sf.split('.',1);c=c.split('::',1)[0]
-        if t!=table or c not in model['tables'][table].get('columns',{}):continue
-        col=resolve_field(model,t,c,alias);op=f.get('operator','equals');val=f.get('value')
+        if t.lower()!=actual_table.lower() or _ci_column(cols,c) is None:continue
+        col=resolve_field(model,actual_table,c,alias);op=f.get('operator','equals');val=f.get('value')
         if op=='equals':parts.append(f'{col}={sql_literal(val)}')
         elif op=='not_equals':parts.append(f'{col}<>{sql_literal(val)}')
         elif op=='gt':parts.append(f'{col}>{sql_literal(val)}')
@@ -65,11 +84,13 @@ def _context_predicate(model,table,filters,alias):
     return ' AND '.join(parts)
 
 def _selected_aggregate(model,func,table,column,filters):
-    alias='__ctx';physical=model['tables'][table]['physical'];col=resolve_field(model,table,column,alias)
-    pred=_context_predicate(model,table,filters,alias)
+    actual_table=_ci_table(model,table) or table
+    alias='__ctx';physical=model['tables'][actual_table]['physical'];col=resolve_field(model,actual_table,column,alias)
+    pred=_context_predicate(model,actual_table,filters,alias)
     sql=f'(SELECT {func}({col}) FROM {qi(physical)} {qi(alias)}'
     if pred:sql+=' WHERE '+pred
     return sql+')'
+
 
 def _selected_bounds(model,table,column,filters):
     return (
@@ -103,9 +124,10 @@ def _compile_var_value(expr,model,vars_sql,filters,measure_resolver=None):
     expr=expr.strip()
     # Resolve variable references that appear directly as value
     if expr in vars_sql:return vars_sql[expr]
-    # MAX/MIN with context filter (date range subqueries)
-    m=re.fullmatch(r'(?is)(MAX|MIN)\s*\(\s*([A-Za-z_][\w ]*)\s*\[\s*([^\]]+)\]\s*\)',expr)
-    if m:return _selected_aggregate(model,m.group(1).upper(),m.group(2).strip(),m.group(3).strip(),filters)
+    # MAX/MIN with context filter (date range subqueries).
+    # Pattern now also accepts quoted table names like MAX('RS Puram'[Date]).
+    m=re.fullmatch(r"(?is)(MAX|MIN)\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*\[\s*([^\]]+)\]\s*\)",expr)
+    if m:return _selected_aggregate(model,m.group(1).upper(),m.group(2).strip("' "),m.group(3).strip(),filters)
     # EDATE
     m=re.fullmatch(r'(?is)EDATE\s*\(\s*([A-Za-z_]\w*)\s*,\s*(-?\d+)\s*\)\s*(?:\+\s*(\d+))?',expr)
     if m:
@@ -133,8 +155,13 @@ def _compile_var_value(expr,model,vars_sql,filters,measure_resolver=None):
         
     try:
         return _compile_simple(expr,model,var_aware_resolver,filters)
-    except DaxError:
-        raise DaxError(f'Unsupported VAR expression: {expr}')
+    except DaxError as e:
+        # Preserve the original specific error (e.g. "Unknown table") so it is
+        # visible in the published-report error card rather than the generic wrapper.
+        msg=str(e)
+        if msg.startswith('Unsupported') or msg.startswith('Unknown') or msg.startswith('Circular'):
+            raise
+        raise DaxError(f'Unsupported VAR expression [{expr}]: {msg}') from e
 
 def _compile_row_expr(expr,model,table):
     out=expr.strip()
@@ -235,10 +262,11 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
         return f'COALESCE(({a})/NULLIF(({b}),0),{alt})'
     m=re.fullmatch(r'(?is)COALESCE\s*\((.*)\)',expr)
     if m:return 'COALESCE('+','.join(_compile_simple(x,model,measure_resolver,filters) for x in split_top(m.group(1)))+')'
-    m=re.fullmatch(r'(?is)SELECTEDVALUE\s*\(\s*([A-Za-z_][\w ]*)\s*\[\s*([^\]]+)\]\s*(?:,\s*(.*))?\)',expr)
+    m=re.fullmatch(r"(?is)SELECTEDVALUE\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*\[\s*([^\]]+)\]\s*(?:,\s*(.*))?\)",expr)
     if m:
-        t,c,alt=m.groups();physical=model['tables'][t.strip()]['physical'];alias='__sel'
-        field=resolve_field(model,t,c,alias);pred=_context_predicate(model,t.strip(),filters or [],alias)
+        t,c,alt=m.groups();actual_t=_ci_table(model,t.strip("' ")) or t.strip("' ")
+        physical=model['tables'][actual_t]['physical'];alias='__sel'
+        field=resolve_field(model,actual_t,c,alias);pred=_context_predicate(model,actual_t,filters or [],alias)
         alt_sql=_compile_simple(alt,model,measure_resolver,filters) if alt else 'NULL'
         sql=f'(SELECT CASE WHEN COUNT(DISTINCT {field})=1 THEN MAX({field}) ELSE {alt_sql} END FROM {qi(physical)} {qi(alias)}'
         if pred:sql+=' WHERE '+pred
@@ -286,6 +314,14 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
         right = expr[start:].strip()
         if right: tokens.append(_compile_simple(right, model, measure_resolver, filters))
         return ' '.join(tokens)
+
+    # Standalone 'Table'[Column] or Table[Column] bare column reference.
+    # DAX allows these in FILTER/CALCULATE conditions and VAR expressions.
+    # e.g. 'RS Puram'[Date] used as a date field reference.
+    tf=parse_field(expr)
+    if tf:
+        try:return resolve_field(model,tf[0],tf[1])
+        except DaxError:pass
 
     raise DaxError(f'Unsupported expression: {expr}')
 
@@ -352,8 +388,13 @@ def _comparison(expr,model,measure_resolver=None,filters=None):
 
 def _compile_calculate_filter(expr,model,vars_sql,filters):
     e=expr.strip()
-    m=re.fullmatch(r'(?is)(REMOVEFILTERS|ALL)\s*\(\s*([A-Za-z_][\w ]*)\s*\[\s*([^\]]+)\]\s*\)',e)
-    if m:return None,{semantic_field(m.group(2),m.group(3))}
+    # Table-only REMOVEFILTERS/ALL: e.g. REMOVEFILTERS('Calendar') or ALL(Calendar).
+    # This removes all filters on the entire table; we return no SQL predicate.
+    m=re.fullmatch(r"(?is)(REMOVEFILTERS|ALL)\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*\)",e)
+    if m:return None,set()
+    # Column-level REMOVEFILTERS/ALL: REMOVEFILTERS(Table[Column]).
+    m=re.fullmatch(r"(?is)(REMOVEFILTERS|ALL)\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*\[\s*([^\]]+)\s*\]\s*\)",e)
+    if m:return None,{semantic_field(m.group(2).strip("' "),m.group(3).strip())}
     m=re.fullmatch(r'(?is)KEEPFILTERS\s*\((.*)\)',e)
     if m:return _condition(m.group(1),model,None,filters),set()
     m=re.fullmatch(r'(?is)DATESBETWEEN\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*,\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)\s*\)',e)
@@ -371,13 +412,14 @@ def _compile_calculate_filter(expr,model,vars_sql,filters):
         return f'CAST({field} AS DATE) BETWEEN {start} AND CAST({vars_sql[endvar]} AS DATE)',{semantic_field(t,c)}
     m=re.fullmatch(r'(?is)SAMEPERIODLASTYEAR\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)',e)
     if m:
-        t,c=m.groups();mn,mx=_selected_bounds(model,t.strip(),c.strip(),filters)
-        field=resolve_field(model,t,c)
-        return f"CAST({field} AS DATE) BETWEEN (CAST({mn} AS DATE)-INTERVAL '1 year') AND (CAST({mx} AS DATE)-INTERVAL '1 year')",{semantic_field(t,c)}
+        t,c=m.groups();t=t.strip("'");mn,mx=_selected_bounds(model,t,c.strip(),filters)
+        field=resolve_field(model,t,c.strip())
+        return f"CAST({field} AS DATE) BETWEEN (CAST({mn} AS DATE)-INTERVAL '1 year') AND (CAST({mx} AS DATE)-INTERVAL '1 year')",{semantic_field(t,c.strip())}
     m=re.fullmatch(r"(?is)FILTER\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*,\s*(.*)\)",e)
     if m:
-        table=m.group(1).strip();condition=m.group(2).strip()
-        if table not in model.get('tables',{}):raise DaxError(f"Unknown table '{table}'")
+        table=m.group(1).strip("' ");condition=m.group(2).strip()
+        actual_table=_ci_table(model,table)
+        if actual_table is None:raise DaxError(f"Unknown table '{table}'")
         return _condition(condition,model,None,filters),set()
     # Direct Table[Column] comparison / logical condition.
     return _condition(e,model,None,filters),set()

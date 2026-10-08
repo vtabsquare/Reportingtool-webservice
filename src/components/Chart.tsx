@@ -760,8 +760,8 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
       tooltip:{...tooltipBase,trigger:'axis'},legend:{...legend,data:[valueField,second].filter(Boolean)},grid:{containLabel:true,left:lgLeft,right:lgRight,top:30,bottom:xMargin},dataZoom:categoryZoom(names),
       xAxis:{show:showXAxis,type:'category',data:names,axisLabel:{color:axisColor,fontSize:axisSize}},
       yAxis:[{show:showYAxis,type:'value',axisLabel:{color:axisColor,formatter:(x:number)=>fmt(x,valueField)}},{show:showYAxis&&visual.format.comboSecondaryAxisVisible!==false,type:'value',axisLabel:{color:axisColor,formatter:(x:number)=>formatForField(x,second,formats)}}],
-      series:[{name:valueField,type:'bar',data:values.map(v=>({value:v,itemStyle:{color:valueColor(v)}})),label:{show:!!visual.format.dataLabels,color:labelColor,position:'top',formatter:(p:any)=>fmt(p.value)},barMaxWidth:visual.format.barWidth||34,itemStyle:{opacity:chartOpacity,borderRadius:[visual.format.barRadius||5,visual.format.barRadius||5,0,0]},markLine:referenceMarkLine(false)},
-       {name:second||valueField,type:'line',yAxisIndex:1,data:secondData,smooth,lineStyle:{color:visual.format.comboSecondaryColor||'#f59e0b',width:lineWidth},itemStyle:{color:visual.format.comboSecondaryColor||'#f59e0b'},symbol:visual.format.showDataPoints===false?'none':marker,symbolSize:visual.format.dataPointSize||7,label:{show:!!visual.format.dataLabels,color:labelColor,formatter:(p:any)=>formatForField(p.value,second,formats)}}]
+      series:[{name:valueField,type:'bar',data:values.map(v=>({value:v,itemStyle:{color:valueColor(v)}})),label:{show:!!visual.format.dataLabels,color:'#fff',position:'insideTop',distance:6,fontSize:Math.max(10,labelSize),fontWeight:700,formatter:(p:any)=>fmt(p.value)},labelLayout:{hideOverlap:true},barMaxWidth:visual.format.barWidth||34,itemStyle:{opacity:chartOpacity,borderRadius:[visual.format.barRadius||5,visual.format.barRadius||5,0,0]},markLine:referenceMarkLine(false)},
+       {name:second||valueField,type:'line',yAxisIndex:1,data:secondData,smooth,lineStyle:{color:visual.format.comboSecondaryColor||'#f59e0b',width:lineWidth},itemStyle:{color:visual.format.comboSecondaryColor||'#f59e0b'},symbol:visual.format.showDataPoints===false?'none':marker,symbolSize:visual.format.dataPointSize||7,label:{show:!!visual.format.dataLabels,color:labelColor,position:'top',distance:8,fontSize:Math.max(10,labelSize),fontWeight:700,formatter:(p:any)=>formatForField(p.value,second,formats)},labelLayout:{hideOverlap:true}}]
     }}/>;
   }
 
@@ -1044,7 +1044,7 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
         emphasis:{focus:'series',itemStyle:{shadowBlur:10,shadowColor:`${palette[si%palette.length]}55`}},
         lineStyle:{color:palette[si%palette.length],width:lineWidth},areaStyle:visual.type==='area'?{opacity:.12}:undefined,markLine:si===0?referenceMarkLine(horizontal):undefined,
         symbol:marker,symbolSize:visual.format.dataPointSize||7,barMaxWidth:visual.format.barWidth||42,
-        label:{show:stacked&&categories.length<=10?true:visual.format.dataLabels,color:stacked?'#ffffff':labelColor,fontWeight:700,fontSize:Math.max(10,labelSize),position:stacked?'inside':horizontal?'right':'top',formatter:(p:any)=>fmt(p.value)}
+        label:{show:stacked&&categories.length<=10?true:visual.format.dataLabels,color:stacked?'#ffffff':labelColor,fontWeight:700,fontSize:Math.max(10,labelSize),position:stacked?'inside':horizontal?'right':'top',distance:4,formatter:(p:any)=>fmt(p.value)},labelLayout:{hideOverlap:true}
       }))
     }}/>;
   }
@@ -1180,10 +1180,13 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
       label: {
         show: visual.format.dataLabels,
         color: labelColor,
-        fontSize: labelSize,
+        fontSize: Math.max(10, labelSize),
+        fontWeight: 700,
+        distance: 4,
         position: horizontal ? 'right' : visual.format.labelPosition === 'inside' ? 'inside' : 'top',
         formatter: (p: any) => fmt(p.value, vf)
       },
+      labelLayout: { hideOverlap: true },
       stack: (visual.type === 'stackedbar'||visual.type==='stackedcolumn') ? 'total' : undefined
     };
   });

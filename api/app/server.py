@@ -2079,14 +2079,39 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
     if not visual:
         raise ValueError('Published visual was not found in this report definition.')
     bindings = visual.get('bindings') or {}
-    dimensions = [*(bindings.get('axis') or []), *(bindings.get('legend') or [])]
-    measures = [] if visual.get('type') == 'slicer' else [*(bindings.get('values') or []), *(bindings.get('target') or []), *(bindings.get('tooltips') or [])]
+    dimensions = list(dict.fromkeys([*(bindings.get('axis') or []), *(bindings.get('legend') or [])]))
+    measures = [] if visual.get('type') == 'slicer' else list(dict.fromkeys([
+        *(bindings.get('values') or []),
+        *(bindings.get('target') or []),
+        *(bindings.get('tooltips') or []),
+        *(bindings.get('min') or []),
+        *(bindings.get('max') or []),
+        *(bindings.get('x') or []),
+        *(bindings.get('size') or [])
+    ]))
+
+    configured_filters = [*(visual.get('filters') or []), *(request.filters or [])]
+    top_filter = next((f for f in configured_filters if isinstance(f, dict) and f.get('operator') == 'top_n'), None)
+    filters = [f for f in configured_filters if not (isinstance(f, dict) and f.get('operator') == 'top_n')]
+    
+    if top_filter:
+        ranking_field = top_filter.get('rankingField') or (bindings.get('values') or [None])[0]
+        if ranking_field and ranking_field not in measures and ranking_field not in dimensions:
+            measures.append(ranking_field)
+            
+        sort_config = [{'field': ranking_field, 'direction': 'desc'}] + [s for s in (visual.get('sort') or []) if s.get('field') != ranking_field]
+        limit = max(1, min(5000, int(top_filter.get('value') or 10)))
+    else:
+        sort_config = visual.get('sort') or []
+        default_limit = 500 if visual.get('type') in ('table', 'matrix') else (2000 if visual.get('type') == 'histogram' else 500)
+        limit = default_limit
+
     return {
         'dimensions': dimensions,
         'measures': measures,
-        'filters': [*(visual.get('filters') or []), *(request.filters or [])],
-        'sort': visual.get('sort') or [],
-        'limit': 500,
+        'filters': filters,
+        'sort': sort_config,
+        'limit': limit,
         'roleId': None,
     }
 

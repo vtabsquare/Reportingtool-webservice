@@ -73,7 +73,7 @@ def _expression(text: Any, *, definition: dict[str, Any], parameters: dict[str, 
     return re.sub(r"\{\{\s*([^}]+?)\s*\}\}", replace, value)
 
 
-def _page_size(definition: dict[str, Any]):
+def _page_size(definition: dict[str, Any], columns: list[dict[str, Any]] | None = None):
     from reportlab.lib.pagesizes import A3, A4, LEGAL, LETTER, landscape, portrait
     from reportlab.lib.units import mm
 
@@ -86,7 +86,98 @@ def _page_size(definition: dict[str, Any]):
         if width <= 0 or height <= 0:
             raise PaginatedReportError("The custom page size is invalid.")
         size = (width, height)
-    return landscape(size) if page.get("orientation") == "landscape" else portrait(size)
+    col_count = len(columns) if columns is not None else len((definition.get("table") or {}).get("columns") or [])
+    orientation = str(page.get("orientation") or "").lower()
+    if orientation == "landscape" or (orientation != "portrait" and col_count >= 8) or (col_count >= 8 and not page.get("orientation")):
+        return landscape(size)
+    elif col_count >= 8:
+        return landscape(size)
+    return landscape(size) if orientation == "landscape" else portrait(size)
+
+
+def _compute_column_widths(
+    columns: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    max_table_width: float,
+    scale_factor: float = 1.0,
+) -> list[float]:
+    if not columns:
+        return []
+
+    from reportlab.lib.units import mm
+
+    explicit_widths = [column.get("widthMm") for column in columns]
+    has_custom = (
+        all(w is not None and float(w) > 0 for w in explicit_widths)
+        and len(set(float(w) for w in explicit_widths)) > 1
+    )
+    if has_custom:
+        authored = [float(w) * mm for w in explicit_widths]
+        total = sum(authored) or max_table_width
+        return [w * (max_table_width / total) for w in authored]
+
+    sample_rows = rows[:100] if rows else []
+    col_weights: list[float] = []
+    min_widths: list[float] = []
+
+    for column in columns:
+        field = str(column.get("field") or "")
+        label = str(column.get("label") or field)
+        words = label.split()
+        max_header_word = max((len(w) for w in words), default=len(label))
+        header_len = len(label)
+
+        val_lens = [len(str(r.get(field, ""))) for r in sample_rows if r.get(field) is not None]
+        avg_val_len = (sum(val_lens) / len(val_lens)) if val_lens else header_len
+        max_val_len = max(val_lens, default=header_len)
+
+        lower_label = label.lower()
+        lower_field = field.lower()
+
+        is_id = any(k in lower_label or k in lower_field for k in ("si no", "sino", "s.no", "sl no", "sl.no", "id", "#", "serial", "code")) and max_val_len <= 8
+        is_age = ("age" in lower_label or "age" in lower_field) and max_val_len <= 4
+        is_gender = any(k in lower_label for k in ("gender", "sex")) and max_val_len <= 8
+        is_date = any(k in lower_label for k in ("date", "dob", "time")) and 8 <= max_val_len <= 19
+        is_amount = any(k in lower_label for k in ("amount", "price", "cost", "total", "fee", "bill", "rate", "salary")) and max_val_len <= 15
+        is_status = any(k in lower_label for k in ("status", "state", "flag")) and max_val_len <= 15
+        is_name = any(k in lower_label for k in ("name", "patient", "doctor", "physician", "user", "customer", "client", "person")) and max_val_len <= 30
+
+        if is_id or is_age:
+            col_min = max(24.0 * scale_factor, 20.0)
+            weight = 0.8
+        elif is_gender:
+            col_min = max(30.0 * scale_factor, 25.0)
+            weight = 1.0
+        elif is_date:
+            col_min = max(44.0 * scale_factor, 36.0)
+            weight = 1.7
+        elif is_name:
+            col_min = max(44.0 * scale_factor, 36.0)
+            weight = 2.4
+        elif is_amount or is_status:
+            col_min = max(36.0 * scale_factor, 30.0)
+            weight = 1.8
+        else:
+            col_min = max(30.0 * scale_factor, max_header_word * 5.6 * scale_factor, 24.0)
+            eff_len = max(header_len * 0.8, min(avg_val_len * 0.9 + max_val_len * 0.3, 80.0))
+            if eff_len > 40:
+                weight = 3.6 + (eff_len - 40) * 0.10
+            elif eff_len > 20:
+                weight = 2.6 + (eff_len - 20) * 0.05
+            else:
+                weight = 1.8 + eff_len * 0.04
+
+        min_widths.append(col_min)
+        col_weights.append(weight)
+
+    total_min = sum(min_widths)
+    if total_min >= max_table_width:
+        ratio = max_table_width / total_min
+        return [w * ratio for w in min_widths]
+
+    remaining = max_table_width - total_min
+    total_weight = sum(col_weights) or 1.0
+    return [min_w + (remaining * (w / total_weight)) for min_w, w in zip(min_widths, col_weights)]
 
 
 def _safe_filename(template: str, *, definition: dict[str, Any], parameters: dict[str, Any], filters: list[dict[str, Any]]) -> str:
@@ -139,7 +230,7 @@ def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_
 
     page = definition.get("page") or {}
     margins = page.get("margins") or {}
-    page_size = _page_size(definition)
+    page_size = _page_size(definition, columns=columns)
     left = float(margins.get("left") or 12) * mm
     right = float(margins.get("right") or 12) * mm
     top = float(margins.get("top") or 12) * mm
@@ -254,39 +345,88 @@ def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_
         bottomMargin=bottom + footer_height,
         title=definition.get("name") or "Paginated Report",
     )
+    col_count = len(columns)
+    if col_count <= 6:
+        scale_factor = 1.0
+    elif col_count <= 10:
+        scale_factor = 0.90
+    elif col_count <= 14:
+        scale_factor = 0.82
+    elif col_count <= 18:
+        scale_factor = 0.74
+    else:
+        scale_factor = max(0.65, 13.0 / col_count)
+
+    cell_padding = max(1.5, min(4.0, 4.0 * scale_factor))
+    header_pad = max(2.5, cell_padding + 1.0)
+
     header_styles = []
     body_styles = []
     for index, column in enumerate(columns):
-        header_size = float(column.get("headerFontSize") or table_definition.get("headerFontSize") or table_definition.get("fontSize") or 9)
-        body_size = float(column.get("valueFontSize") or table_definition.get("fontSize") or 9)
-        header_styles.append(ParagraphStyle(f"PaginatedHeader{index}", fontName=pdf_font({"headerBold": column.get("headerBold", table_definition.get("headerBold", True)), "headerItalic": column.get("headerItalic", table_definition.get("headerItalic", False))}, "header"), fontSize=header_size, leading=header_size * 1.25, textColor=colors.HexColor(column.get("headerColor") or table_definition.get("headerColor") or "#111827"), alignment=alignments.get(column.get("headerAlign") or column.get("align") or "left", TA_LEFT)))
-        body_styles.append(ParagraphStyle(f"PaginatedBody{index}", fontName=pdf_font({"valueBold": column.get("valueBold", table_definition.get("bodyBold", False)), "valueItalic": column.get("valueItalic", table_definition.get("bodyItalic", False))}, "value"), fontSize=body_size, leading=body_size * 1.25, textColor=colors.HexColor(column.get("valueColor") or table_definition.get("bodyColor") or "#1f2937"), alignment=alignments.get(column.get("valueAlign") or column.get("align") or "left", TA_LEFT)))
-    data = [[Paragraph(escape(str(column.get("label") or column.get("field") or "")), header_styles[index]) for index, column in enumerate(columns)]]
+        raw_header_size = float(column.get("headerFontSize") or table_definition.get("headerFontSize") or table_definition.get("fontSize") or 9)
+        raw_body_size = float(column.get("valueFontSize") or table_definition.get("fontSize") or 9)
+        header_size = max(5.5, raw_header_size * scale_factor)
+        body_size = max(5.5, raw_body_size * scale_factor)
+        header_styles.append(
+            ParagraphStyle(
+                f"PaginatedHeader{index}",
+                fontName=pdf_font({"headerBold": column.get("headerBold", table_definition.get("headerBold", True)), "headerItalic": column.get("headerItalic", table_definition.get("headerItalic", False))}, "header"),
+                fontSize=header_size,
+                leading=header_size * 1.18,
+                textColor=colors.HexColor(column.get("headerColor") or table_definition.get("headerColor") or "#111827"),
+                alignment=alignments.get(column.get("headerAlign") or column.get("align") or "left", TA_LEFT),
+                wordWrap="CJK",
+            )
+        )
+        body_styles.append(
+            ParagraphStyle(
+                f"PaginatedBody{index}",
+                fontName=pdf_font({"valueBold": column.get("valueBold", table_definition.get("bodyBold", False)), "valueItalic": column.get("valueItalic", table_definition.get("bodyItalic", False))}, "value"),
+                fontSize=body_size,
+                leading=body_size * 1.18,
+                textColor=colors.HexColor(column.get("valueColor") or table_definition.get("bodyColor") or "#1f2937"),
+                alignment=alignments.get(column.get("valueAlign") or column.get("align") or "left", TA_LEFT),
+                wordWrap="CJK",
+            )
+        )
+
+    def _make_cell(value: Any, style: ParagraphStyle) -> Paragraph:
+        val_str = str(value) if value is not None else ""
+        escaped = escape(val_str).strip()
+        return Paragraph(escaped if escaped else "&nbsp;", style)
+
+    data = [[_make_cell(column.get("label") or column.get("field") or "", header_styles[index]) for index, column in enumerate(columns)]]
     for row in rows:
-        data.append([Paragraph(escape(str(row.get(column.get("field"), "") if row.get(column.get("field"), "") is not None else "")), body_styles[index]) for index, column in enumerate(columns)])
-    widths = [float(column.get("widthMm") or 30) * mm for column in columns]
-    max_width = page_size[0] - left - right - table_x
-    total_width = sum(widths) or max_width
-    if total_width > max_width:
-        ratio = max_width / total_width;widths = [value * ratio for value in widths]
+        data.append([_make_cell(row.get(column.get("field")), body_styles[index]) for index, column in enumerate(columns)])
+
+    max_width = max(100.0, page_size[0] - left - right - table_x)
+    widths = _compute_column_widths(columns, rows, max_width, scale_factor=scale_factor)
+
     style = TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(table_definition.get("headerBackground") or "#e8eef7")),
-        ("GRID", (0, 0), (-1, -1), .5, colors.HexColor(table_definition.get("borderColor") or "#cbd5e1")),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4),("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 1), (-1, -1), 3),("BOTTOMPADDING", (0, 1), (-1, -1), 3),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor(table_definition.get("borderColor") or "#cbd5e1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), cell_padding),
+        ("RIGHTPADDING", (0, 0), (-1, -1), cell_padding),
+        ("TOPPADDING", (0, 0), (-1, 0), header_pad),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), header_pad),
+        ("TOPPADDING", (0, 1), (-1, -1), cell_padding),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), cell_padding),
     ])
-    if table_definition.get("alternateRows", True):style.add("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor(table_definition.get("alternateBackground") or "#f8fafc")])
+    if table_definition.get("alternateRows", True):
+        style.add("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor(table_definition.get("alternateBackground") or "#f8fafc")])
     for index, column in enumerate(columns):
-        if column.get("headerBackground"):style.add("BACKGROUND", (index, 0), (index, 0), colors.HexColor(column["headerBackground"]))
-        if column.get("valueBackground"):style.add("BACKGROUND", (index, 1), (index, -1), colors.HexColor(column["valueBackground"]))
+        if column.get("headerBackground"):
+            style.add("BACKGROUND", (index, 0), (index, 0), colors.HexColor(column["headerBackground"]))
+        if column.get("valueBackground"):
+            style.add("BACKGROUND", (index, 1), (index, -1), colors.HexColor(column["valueBackground"]))
     story: list[Any] = []
     pagination = definition.get("pagination") or {}
     mode = pagination.get("mode") or "automatic"
     repeat_rows = 1 if table_definition.get("repeatHeader", True) else 0
 
     def append_table(block: list[list[Any]]):
-        story.append(Table(block, colWidths=widths, repeatRows=repeat_rows, style=style, splitByRow=1, rowHeights=[float(table_definition.get("headerHeightMm") or 9) * mm] + [float(table_definition.get("rowHeightMm") or 8) * mm] * (len(block) - 1)))
+        story.append(Table(block, colWidths=widths, repeatRows=repeat_rows, style=style, splitByRow=1, rowHeights=None))
 
     if not rows:
         empty_style = body_styles[0] if body_styles else ParagraphStyle("PaginatedEmpty", fontName="Helvetica", fontSize=9)

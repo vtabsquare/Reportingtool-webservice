@@ -8,7 +8,13 @@ def q(x):return '"'+str(x).replace('"','""')+'"'
 def fld(model,dotted):
     t,c=dotted.split('.',1);part=None
     if '::' in c:c,part=c.rsplit('::',1)
-    physical=model["tables"][t]["columns"][c];base=f'{q(t)}.{q(physical)}'
+    # Case-insensitive lookup so dimension bindings with different capitalisation
+    # than the semantic-model table/column key still resolve correctly.
+    tables=model["tables"]
+    actual_t=next((k for k in tables if k.lower()==t.lower()),t)
+    tcols=tables[actual_t]["columns"]
+    actual_c=next((k for k in tcols if k.lower()==c.lower()),c)
+    physical=tcols[actual_c];base=f'{q(actual_t)}.{q(physical)}'
     if not part:return base
     d=f'TRY_CAST({base} AS DATE)';p=part.lower()
     if p=='year':return f'year({d})'
@@ -82,7 +88,7 @@ def measure(name,model,stack=None,context_filters=None,with_meta=False):
     def resolve_measure(ref):
         return measure(ref,model,stack+[name],context_filters,False)
 
-    if re.search(r'[A-Za-z_][\w ]*\[[^\]]+\]',exp) or re.search(r'(?i)\b(VAR|RETURN|CALCULATE|EDATE|DATESBETWEEN)\b',exp):
+    if re.search(r'[A-Za-z_][\w ]*\[[^\]]+\]',exp) or re.search(r"'[^']+'\s*\[",exp) or re.search(r'(?i)\b(VAR|RETURN|CALCULATE|EDATE|DATESBETWEEN)\b',exp):
         c=compile_dax(exp,model,context_filters or [],resolve_measure)
         return (c.sql,c.override_fields) if with_meta else c.sql
 
@@ -124,8 +130,11 @@ def inline(exp,model,stack,context_filters=None):
                 # but inserting the actual exact m_name is better so it matches exactly.
                 out = re.sub(pattern, f'[{m_name}]', out, flags=re.IGNORECASE)
 
-    for ref in re.findall(r'\[([^]]+)\]',out):
-        out=out.replace(f'[{ref}]',f'({measure(ref,model,stack,context_filters,False)})')
+    # Only match bracket references NOT preceded by a word character or quote
+    # (which would indicate a Table[Column] reference, not a standalone measure).
+    for ref in re.findall(r"(?<![A-Za-z0-9_'\"])\[([^]]+)\]",out):
+        replacement=f'({measure(ref,model,stack,context_filters,False)})'
+        out=re.sub(r"(?<![A-Za-z0-9_'\"])\["+re.escape(ref)+r"\]",replacement,out)
     return out
 
 def required(model,dims,measures,rls,filters=()):
