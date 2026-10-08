@@ -4,9 +4,19 @@ import { supabase } from "../supabase";
 
 type Props = { onSignedIn: (session: any) => void };
 
+/**
+ * Auth modes:
+ *  login           → standard email + password sign-in
+ *  register        → step 1: enter name + email → sends OTP via backend/Brevo
+ *  register-verify → step 2: enter 6-digit OTP sent to email
+ *  register-setpass→ step 3: set password → account created → auto sign-in
+ *  forgot          → enter email → sends password-reset OTP
+ *  reset           → enter OTP + new password
+ */
+type Mode = "login" | "register" | "register-verify" | "register-setpass" | "forgot" | "reset";
+
 export default function SupabaseAuthGate({ onSignedIn }: Props) {
-  // --- ALL EXISTING STATE AND LOGIC ---
-  const [mode, setMode] = useState<"login" | "register" | "forgot" | "reset">("login");
+  const [mode, setMode] = useState<Mode>("login");
   const [form, setForm] = useState({ email: "", password: "", name: "", otp: "", newPassword: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -29,7 +39,43 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
     if (!supabase) { setErr("Cloud not configured. Contact your administrator."); return; }
     setBusy(true); setErr(""); setInfo("");
     try {
-      if (mode === "forgot") {
+      // ── REGISTRATION STEP 1 ── Enter name + email, request OTP via backend
+      if (mode === "register") {
+        const email = form.email.trim().toLowerCase();
+        const name = form.name.trim();
+        if (!email) throw new Error("Enter your email address.");
+        await api("/auth/register/request", { method: "POST", body: JSON.stringify({ email, name }) });
+        setForm(p => ({ ...p, email, name, otp: "" }));
+        setInfo("A 6-digit verification code was sent to your email.");
+        setMode("register-verify");
+
+      // ── REGISTRATION STEP 2 ── Enter OTP
+      } else if (mode === "register-verify") {
+        const otp = form.otp.trim();
+        if (!otp || otp.length !== 6) throw new Error("Enter the 6-digit code from your email.");
+        // Just move to the password step; we verify OTP on the server at confirm time
+        setInfo("Code accepted. Now set your password.");
+        setMode("register-setpass");
+
+      // ── REGISTRATION STEP 3 ── Set password → create account → sign in
+      } else if (mode === "register-setpass") {
+        const email = form.email.trim().toLowerCase();
+        const otp = form.otp.trim();
+        const password = form.newPassword;
+        const name = form.name.trim();
+        if (!password) throw new Error("Enter a password.");
+        if (password.length < 6) throw new Error("Password must be at least 6 characters.");
+        // Confirm registration on backend: verify OTP + create Supabase user
+        await api("/auth/register/confirm", { method: "POST", body: JSON.stringify({ email, otp, password, name }) });
+        // Auto sign-in with the new credentials
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        if (data.session) localStorage.setItem("vtab_supabase_token", data.session.access_token);
+        setInfo("Account created! Welcome.");
+        onSignedIn(data.session);
+
+      // ── FORGOT PASSWORD ──
+      } else if (mode === "forgot") {
         const email = form.email.trim().toLowerCase();
         if (!email) throw new Error("Enter your registered email address.");
         try {
@@ -46,6 +92,8 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
         setForm(p => ({ ...p, email }));
         setInfo("A 6-digit reset code was sent to your email.");
         setMode("reset");
+
+      // ── PASSWORD RESET CONFIRM ──
       } else if (mode === "reset") {
         const email = form.email.trim().toLowerCase();
         const token = form.otp.trim();
@@ -56,7 +104,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
           await api("/auth/password-reset/confirm", { method: "POST", body: JSON.stringify({ email, otp: token, newPassword: form.newPassword }) });
           const { data, error } = await supabase.auth.signInWithPassword({ email, password: form.newPassword });
           if (error) throw error;
-          if (data.session) localStorage.setItem('vtab_supabase_token', data.session.access_token);
+          if (data.session) localStorage.setItem("vtab_supabase_token", data.session.access_token);
           setInfo("Password reset successfully.");
           onSignedIn(data.session);
         } else {
@@ -64,38 +112,77 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
           if (error) throw error;
           const { error: updateError } = await supabase.auth.updateUser({ password: form.newPassword });
           if (updateError) throw updateError;
-          if (data.session) localStorage.setItem('vtab_supabase_token', data.session.access_token);
+          if (data.session) localStorage.setItem("vtab_supabase_token", data.session.access_token);
           setInfo("Password reset successfully.");
           onSignedIn(data.session);
         }
-      } else if (mode === "register") {
-        const { data, error } = await supabase.auth.signUp({
-          email: form.email, password: form.password,
-          options: { data: { display_name: form.name } }
-        });
-        if (error) throw error;
-        if (data.session) { localStorage.setItem('vtab_supabase_token', data.session.access_token); onSignedIn(data.session); }
-        else setErr("Check your email for a confirmation link.");
+
+      // ── LOGIN ──
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email: form.email, password: form.password });
         if (error) throw error;
-        if (data.session) localStorage.setItem('vtab_supabase_token', data.session.access_token);
+        if (data.session) localStorage.setItem("vtab_supabase_token", data.session.access_token);
         onSignedIn(data.session);
       }
     } catch (e: any) {
       const message = e.message || String(e);
       const recoveryEmailFailed = message.includes("Error sending recovery email") || message.includes("HTTP 500") || message.includes("HTTP 504") || message.includes("unexpected_failure");
-      setErr(recoveryEmailFailed ? "Supabase could not send the OTP email. Fix Supabase SMTP/Brevo settings: verified sender email, correct Brevo SMTP login/key, port 587, and Reset Password template using {{ .Token }}." : message);
+      setErr(recoveryEmailFailed
+        ? "Could not send the OTP email. Check your Brevo API key (BREVO_API_KEY) and verified sender (VTAB_SMTP_FROM) in the server environment."
+        : message);
     } finally { setBusy(false); }
   };
 
   const f = (k: string) => (e: any) => setForm(p => ({ ...p, [k]: e.target.value }));
-  const buttonText = busy
-    ? (mode === "register" ? "Creating account…" : mode === "forgot" ? "Sending OTP…" : mode === "reset" ? "Resetting password…" : "Signing in…")
-    : (mode === "register" ? "Create Account" : mode === "forgot" ? "Send 6-digit OTP" : mode === "reset" ? "Reset Password" : "Sign In");
-  const disabled = busy || !form.email || (mode === "login" && !form.password) || (mode === "register" && !form.password) || (mode === "reset" && (!form.otp || !form.newPassword));
 
-  const switchMode = (m: typeof mode) => { setErr(""); setInfo(""); setMode(m); };
+  // ── Labels ──
+  const title: Record<Mode, string> = {
+    login: "Welcome back",
+    register: "Create account",
+    "register-verify": "Check your email",
+    "register-setpass": "Set your password",
+    forgot: "Reset password",
+    reset: "Enter new password",
+  };
+  const subtitle: Record<Mode, string> = {
+    login: "Sign in to your workspace",
+    register: "Enter your name and email to get started",
+    "register-verify": `We sent a 6-digit code to ${form.email}`,
+    "register-setpass": "Choose a secure password for your new account",
+    forgot: "We'll send a 6-digit code to your email",
+    reset: "Enter the OTP from your email",
+  };
+  const buttonLabel: Record<Mode, string> = {
+    login: "Sign In",
+    register: "Send Verification Code",
+    "register-verify": "Verify Code",
+    "register-setpass": "Create Account",
+    forgot: "Send 6-digit OTP",
+    reset: "Reset Password",
+  };
+  const busyLabel: Record<Mode, string> = {
+    login: "Signing in…",
+    register: "Sending code…",
+    "register-verify": "Verifying…",
+    "register-setpass": "Creating account…",
+    forgot: "Sending OTP…",
+    reset: "Resetting password…",
+  };
+
+  const isDisabled =
+    busy ||
+    !form.email ||
+    (mode === "login" && !form.password) ||
+    (mode === "register-verify" && !form.otp) ||
+    (mode === "register-setpass" && !form.newPassword) ||
+    (mode === "reset" && (!form.otp || !form.newPassword));
+
+  const switchMode = (m: Mode) => { setErr(""); setInfo(""); setMode(m); };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10,
+    padding: "11px 14px", fontSize: 14, outline: "none", boxSizing: "border-box", transition: "border .15s",
+  };
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "Inter, -apple-system, sans-serif" }}>
@@ -103,22 +190,19 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
       <div style={{
         flex: "0 0 45%", background: "linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)",
         display: "flex", flexDirection: "column", justifyContent: "center", padding: "60px 64px",
-        position: "relative", overflow: "hidden"
+        position: "relative", overflow: "hidden",
       }}>
-        {/* Decorative circles */}
         <div style={{ position: "absolute", top: -80, right: -80, width: 300, height: 300, borderRadius: "50%", background: "rgba(99,102,241,0.15)", pointerEvents: "none" }} />
         <div style={{ position: "absolute", bottom: -60, left: -60, width: 240, height: 240, borderRadius: "50%", background: "rgba(139,92,246,0.12)", pointerEvents: "none" }} />
-        {/* Logo */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 48 }}>
           <div style={{ width: 40, height: 40, borderRadius: 10, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "grid", placeItems: "center", fontWeight: 900, color: "#fff", fontSize: 18 }}>V</div>
           <span style={{ color: "#e2e8f0", fontWeight: 700, fontSize: 18, letterSpacing: ".02em" }}>VTAB Workspace</span>
         </div>
         <h1 style={{ color: "#f8fafc", fontSize: 36, fontWeight: 800, lineHeight: 1.2, margin: "0 0 16px" }}>Your Analytics<br/>Workspace</h1>
         <p style={{ color: "#94a3b8", fontSize: 16, lineHeight: 1.6, margin: 0 }}>Access, visualize and share powerful reports with your team. All your data, one secure place.</p>
-        {/* Feature pills */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 40 }}>
-          {["📊 Interactive reports & dashboards", "🔒 Role-based access control", "⏳ Scheduled data refresh", "👥 Team workspaces"].map(f => (
-            <div key={f} style={{ display: "flex", alignItems: "center", gap: 10, color: "#cbd5e1", fontSize: 14 }}>{f}</div>
+          {["📊 Interactive reports & dashboards", "🔒 Role-based access control", "⏳ Scheduled data refresh", "👥 Team workspaces"].map(feat => (
+            <div key={feat} style={{ display: "flex", alignItems: "center", gap: 10, color: "#cbd5e1", fontSize: 14 }}>{feat}</div>
           ))}
         </div>
       </div>
@@ -126,48 +210,100 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
       {/* RIGHT PANEL */}
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc", padding: 40 }}>
         <div style={{ width: "100%", maxWidth: 420 }}>
-          {/* Card */}
           <div style={{ background: "#fff", borderRadius: 20, padding: "40px 36px", boxShadow: "0 4px 32px rgba(15,23,42,.08), 0 1px 4px rgba(15,23,42,.04)" }}>
-            {/* Logo mark (mobile / right side) */}
             <div style={{ width: 48, height: 48, borderRadius: 12, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "grid", placeItems: "center", fontWeight: 900, color: "#fff", fontSize: 22, marginBottom: 20 }}>V</div>
-            
-            <h2 style={{ margin: "0 0 4px", fontSize: 24, fontWeight: 800, color: "#0f172a" }}>
-              {mode === "login" ? "Welcome back" : mode === "register" ? "Create account" : mode === "forgot" ? "Reset password" : "Enter new password"}
-            </h2>
-            <p style={{ margin: "0 0 28px", fontSize: 14, color: "#64748b" }}>
-              {mode === "login" ? "Sign in to your workspace" :
-               mode === "register" ? "Access reports shared with you" :
-               mode === "forgot" ? "We'll send a 6-digit code to your email" :
-               "Enter the OTP from your email"}
-            </p>
+
+            <h2 style={{ margin: "0 0 4px", fontSize: 24, fontWeight: 800, color: "#0f172a" }}>{title[mode]}</h2>
+            <p style={{ margin: "0 0 28px", fontSize: 14, color: "#64748b" }}>{subtitle[mode]}</p>
+
+            {/* Registration step indicator */}
+            {(mode === "register" || mode === "register-verify" || mode === "register-setpass") && (
+              <div style={{ display: "flex", gap: 6, marginBottom: 24 }}>
+                {(["register", "register-verify", "register-setpass"] as Mode[]).map((step, i) => (
+                  <div key={step} style={{
+                    flex: 1, height: 4, borderRadius: 2,
+                    background: mode === step ? "#6366f1" :
+                      (["register", "register-verify", "register-setpass"].indexOf(mode) > i ? "#a5b4fc" : "#e2e8f0"),
+                  }} />
+                ))}
+              </div>
+            )}
 
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+              {/* Step 1 Register: Name + Email */}
               {mode === "register" && (
+                <>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Full Name</label>
+                    <input autoFocus value={form.name} onChange={f("name")} placeholder="Your name"
+                      style={inputStyle}
+                      onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
+                      onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Email</label>
+                    <input type="email" value={form.email} onChange={f("email")}
+                      placeholder="you@example.com" onKeyDown={e => e.key === "Enter" && submit()}
+                      style={inputStyle}
+                      onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
+                      onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
+                  </div>
+                </>
+              )}
+
+              {/* Step 2 Register: OTP */}
+              {mode === "register-verify" && (
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Display Name</label>
-                  <input autoFocus value={form.name} onChange={f("name")} placeholder="Your name"
-                    style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "11px 14px", fontSize: 14, outline: "none", boxSizing: "border-box", transition: "border .15s" }}
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>6-digit verification code</label>
+                  <input autoFocus inputMode="numeric" maxLength={6} value={form.otp}
+                    onChange={e => setForm(p => ({ ...p, otp: e.target.value.replace(/\D/g, "").slice(0, 6) }))}
+                    onKeyDown={e => e.key === "Enter" && submit()} placeholder="123456"
+                    style={{ ...inputStyle, fontSize: 26, letterSpacing: "0.35em", textAlign: "center", padding: "11px 14px" }}
+                    onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
+                    onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
+                  <p style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>Didn't get it? Check spam, or <button onClick={() => switchMode("register")} style={{ background: "none", border: "none", color: "#6366f1", cursor: "pointer", fontSize: 12, padding: 0 }}>go back</button> to resend.</p>
+                </div>
+              )}
+
+              {/* Step 3 Register: Set password */}
+              {mode === "register-setpass" && (
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Password</label>
+                  <div style={{ position: "relative" }}>
+                    <input autoFocus type={showNewPass ? "text" : "password"} value={form.newPassword} onChange={f("newPassword")}
+                      placeholder="At least 6 characters" onKeyDown={e => e.key === "Enter" && submit()}
+                      style={{ ...inputStyle, paddingRight: 40 }}
+                      onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
+                      onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
+                    <button type="button" onClick={() => setShowNewPass(p => !p)}
+                      style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 14, padding: 0 }}>
+                      {showNewPass ? "🙈" : "👁️"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Login: Email */}
+              {mode === "login" && (
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Email</label>
+                  <input autoFocus type="email" value={form.email} onChange={f("email")}
+                    placeholder="you@example.com" onKeyDown={e => e.key === "Enter" && submit()}
+                    style={inputStyle}
                     onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
                     onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
                 </div>
               )}
 
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Email</label>
-                <input autoFocus={mode === "login" || mode === "forgot"} type="email" value={form.email} onChange={f("email")}
-                  placeholder="you@example.com" onKeyDown={e => e.key === "Enter" && submit()}
-                  style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "11px 14px", fontSize: 14, outline: "none", boxSizing: "border-box", transition: "border .15s" }}
-                  onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
-                  onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
-              </div>
-
-              {(mode === "login" || mode === "register") && (
+              {/* Login: Password */}
+              {mode === "login" && (
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Password</label>
                   <div style={{ position: "relative" }}>
                     <input type={showPass ? "text" : "password"} value={form.password} onChange={f("password")}
                       placeholder="••••••••" onKeyDown={e => e.key === "Enter" && submit()}
-                      style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "11px 40px 11px 14px", fontSize: 14, outline: "none", boxSizing: "border-box", transition: "border .15s" }}
+                      style={{ ...inputStyle, paddingRight: 40 }}
                       onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
                       onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
                     <button type="button" onClick={() => setShowPass(p => !p)}
@@ -178,14 +314,27 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
                 </div>
               )}
 
+              {/* Forgot: Email */}
+              {mode === "forgot" && (
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Email</label>
+                  <input autoFocus type="email" value={form.email} onChange={f("email")}
+                    placeholder="you@example.com" onKeyDown={e => e.key === "Enter" && submit()}
+                    style={inputStyle}
+                    onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
+                    onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
+                </div>
+              )}
+
+              {/* Reset: OTP + New password */}
               {mode === "reset" && (
                 <>
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>6-digit OTP</label>
                     <input inputMode="numeric" maxLength={6} value={form.otp}
-                      onChange={e => setForm(p => ({ ...p, otp: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
+                      onChange={e => setForm(p => ({ ...p, otp: e.target.value.replace(/\D/g, "").slice(0, 6) }))}
                       onKeyDown={e => e.key === "Enter" && submit()} placeholder="123456"
-                      style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "11px 14px", fontSize: 20, letterSpacing: "0.3em", outline: "none", boxSizing: "border-box", textAlign: "center" }}
+                      style={{ ...inputStyle, fontSize: 20, letterSpacing: "0.3em", textAlign: "center" }}
                       onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
                       onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
                   </div>
@@ -194,7 +343,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
                     <div style={{ position: "relative" }}>
                       <input type={showNewPass ? "text" : "password"} value={form.newPassword} onChange={f("newPassword")}
                         placeholder="••••••••" onKeyDown={e => e.key === "Enter" && submit()}
-                        style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "11px 40px 11px 14px", fontSize: 14, outline: "none", boxSizing: "border-box" }}
+                        style={{ ...inputStyle, paddingRight: 40 }}
                         onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
                         onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
                       <button type="button" onClick={() => setShowNewPass(p => !p)}
@@ -206,6 +355,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
                 </>
               )}
 
+              {/* Error / Info banners */}
               {err && (
                 <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "10px 14px", fontSize: 13, color: "#dc2626", display: "flex", gap: 8, alignItems: "flex-start" }}>
                   <span>⚠️</span><span>{err}</span>
@@ -217,14 +367,20 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
                 </div>
               )}
 
-              <button onClick={submit} disabled={disabled}
+              {/* Submit button */}
+              <button onClick={submit} disabled={isDisabled}
                 style={{
-                  width: "100%", padding: "13px", borderRadius: 10, border: "none", cursor: disabled ? "not-allowed" : "pointer",
-                  background: disabled ? "#c7d2fe" : "linear-gradient(135deg, #6366f1, #8b5cf6)",
+                  width: "100%", padding: "13px", borderRadius: 10, border: "none", cursor: isDisabled ? "not-allowed" : "pointer",
+                  background: isDisabled ? "#c7d2fe" : "linear-gradient(135deg, #6366f1, #8b5cf6)",
                   color: "#fff", fontWeight: 700, fontSize: 15, letterSpacing: ".01em",
-                  transition: "opacity .15s", opacity: busy ? 0.8 : 1
+                  transition: "opacity .15s", opacity: busy ? 0.8 : 1,
                 }}>
-                {busy ? <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><span style={{ width: 14, height: 14, border: "2px solid #fff", borderTopColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "spin 0.7s linear infinite" }} />{buttonText}</span> : buttonText}
+                {busy
+                  ? <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ width: 14, height: 14, border: "2px solid #fff", borderTopColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "spin 0.7s linear infinite" }} />
+                      {busyLabel[mode]}
+                    </span>
+                  : buttonLabel[mode]}
               </button>
             </div>
 
@@ -238,7 +394,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
                   <button onClick={() => switchMode("forgot")} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12, padding: 0 }}>Forgot password?</button>
                 </>
               )}
-              {mode === "register" && (
+              {(mode === "register" || mode === "register-verify" || mode === "register-setpass") && (
                 <span>Already have an account?{" "}
                   <button onClick={() => switchMode("login")} style={{ background: "none", border: "none", color: "#6366f1", cursor: "pointer", fontWeight: 700, fontSize: 13, padding: 0 }}>Sign in</button>
                 </span>

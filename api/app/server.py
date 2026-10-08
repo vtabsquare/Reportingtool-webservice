@@ -84,6 +84,7 @@ app.add_middleware(
 
 _LOGIN_ATTEMPTS=defaultdict(deque)
 _PASSWORD_RESET_OTP={}
+_REGISTRATION_OTP={}  # email -> {hash, expires, name}
 
 def _client_key(request):
     host=getattr(request.client,'host',None) or 'unknown'
@@ -115,7 +116,7 @@ async def secure_authoring_api(request, call_next):
     if request.method.upper() == 'OPTIONS':
         return await call_next(request)
     enforce=os.environ.get('VTAB_ENFORCE_API_AUTH','0')=='1'
-    public=path in ('/api/v1/health','/api/v1/auth/status','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/password-reset/request','/api/v1/auth/password-reset/confirm')
+    public=path in ('/api/v1/health','/api/v1/auth/status','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/password-reset/request','/api/v1/auth/password-reset/confirm','/api/v1/auth/register/request','/api/v1/auth/register/confirm')
     consumer=path.startswith('/api/v1/published')
     if enforce and path.startswith('/api/v1/') and not public and not consumer:
         token=(request.headers.get('authorization') or '').replace('Bearer ','',1).strip()
@@ -172,6 +173,8 @@ class CalendarReq(BaseModel):
     name:str='Calendar'; mode:str='manual'; startDate:str|None=None; endDate:str|None=None; sourceTable:str|None=None; sourceColumn:str|None=None; columns:list[str]|None=None
 class PasswordResetRequestReq(BaseModel):email:str
 class PasswordResetConfirmReq(BaseModel):email:str; otp:str; newPassword:str
+class RegisterRequestReq(BaseModel):email:str; name:str=''
+class RegisterConfirmReq(BaseModel):email:str; otp:str; password:str; name:str=''
 class ServicePublishReq(BaseModel):
     workspaceId:str
     reportName:str
@@ -394,6 +397,61 @@ def password_reset_confirm(req:PasswordResetConfirmReq):
     _supabase_admin('PUT','/admin/users/'+item['user_id'],{'password':new_password})
     _PASSWORD_RESET_OTP.pop(email,None)
     return {'ok':True}
+
+@app.post('/api/v1/auth/register/request')
+def register_request(req:RegisterRequestReq, request:Request):
+    """Send a 6-digit OTP to the given email to verify it before account creation."""
+    email=(req.email or '').strip().lower()
+    name=(req.name or '').strip()
+    if not email: raise HTTPException(400,'Enter your email address.')
+    # Rate-limit: max 3 OTP sends per 5 minutes per IP+email
+    key='reg:'+_client_key(request)+':'+email; now=time.time(); q=_LOGIN_ATTEMPTS[key]
+    while q and now-q[0]>300: q.popleft()
+    if len(q)>=3: raise HTTPException(429,'Too many registration attempts. Try again later.')
+    q.append(now)
+    # Check whether a Supabase user already exists with this email
+    existing=_supabase_user_by_email(email)
+    if existing: raise HTTPException(409,'An account with this email already exists. Please sign in.')
+    otp=f'{secrets.randbelow(1000000):06d}'
+    _REGISTRATION_OTP[email]={'hash':hashlib.sha256(otp.encode()).hexdigest(),'expires':now+600,'name':name}
+    cfg=_smtp_cfg()
+    subject='Your registration code'
+    body=(
+        f'Hello{" "+name if name else ""},\n\n'
+        f'Your registration verification code is: {otp}\n\n'
+        f'This code expires in 10 minutes. Do not share it with anyone.\n\n'
+        f'If you did not request this, you can safely ignore this email.'
+    )
+    send_report_email(smtp_cfg=cfg, to=[email], subject=subject, body=body)
+    return {'ok':True}
+
+@app.post('/api/v1/auth/register/confirm')
+def register_confirm(req:RegisterConfirmReq):
+    """Verify OTP and create a new Supabase account with the given password."""
+    email=(req.email or '').strip().lower()
+    otp=(req.otp or '').strip()
+    password=req.password or ''
+    name=(req.name or '').strip()
+    if not email or not otp or not password: raise HTTPException(400,'Email, OTP and password are all required.')
+    if len(otp)!=6 or not otp.isdigit(): raise HTTPException(400,'Enter the 6-digit OTP from your email.')
+    if len(password)<6: raise HTTPException(400,'Password must be at least 6 characters.')
+    item=_REGISTRATION_OTP.get(email)
+    if not item or time.time()>item['expires']: raise HTTPException(400,'OTP expired or not found. Request a new code.')
+    if not hmac.compare_digest(item['hash'],hashlib.sha256(otp.encode()).hexdigest()): raise HTTPException(400,'Invalid OTP.')
+    display_name=name or item.get('name') or ''
+    # Create the user in Supabase (email is pre-confirmed because we verified the OTP ourselves)
+    payload:dict={'email':email,'password':password,'email_confirm':True}
+    if display_name: payload['user_metadata']={'display_name':display_name,'full_name':display_name}
+    try:
+        _supabase_admin('POST','/admin/users',payload)
+    except HTTPException as e:
+        detail=str(e.detail).lower()
+        if 'already' in detail or 'exist' in detail or '422' in str(e.status_code):
+            raise HTTPException(409,'An account with this email already exists. Please sign in.')
+        raise
+    _REGISTRATION_OTP.pop(email,None)
+    return {'ok':True}
+
 
 @app.get('/api/v1/health')
 def health():
