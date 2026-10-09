@@ -5,7 +5,7 @@ This is an ADDITIVE module. It does NOT modify existing SQLite storage.
 The existing `storage.py` and all its callers are completely unchanged.
 """
 from __future__ import annotations
-import os, json, io, zipfile, hashlib
+import os, json, io, zipfile, hashlib, time
 from typing import Optional
 from datetime import datetime, timezone
 
@@ -43,6 +43,92 @@ WORKSPACE_PERMISSIONS = {
     'Contributor': {'view', 'create', 'edit', 'publish'},
     'Viewer': {'view'},
 }
+
+
+_ADMIN_USER_IDS_CACHE: dict[str, tuple[float, bool]] = {}
+
+def get_admin_emails() -> set[str]:
+    emails = set()
+    for env_key in ("ADMIN_EMAIL", "ADMIN_EMAILS"):
+        val = os.environ.get(env_key, "")
+        for em in val.split(","):
+            clean = em.strip().lower()
+            if clean:
+                emails.add(clean)
+    emails.add("harishkadhi18022001@gmail.com")
+    emails.add("vitabsquare@gmail.com")
+    return emails
+
+def is_admin_user(user_id: str) -> bool:
+    if not user_id:
+        return False
+    now = time.time()
+    cached = _ADMIN_USER_IDS_CACHE.get(user_id)
+    if cached and now - cached[0] < 60:
+        return cached[1]
+    
+    admin_emails = get_admin_emails()
+    sb = _admin_client()
+    try:
+        res = sb.table('vtab_users').select('email').eq('id', user_id).limit(1).execute()
+        if res.data:
+            user_email = str(res.data[0].get('email') or '').strip().lower()
+            if user_email in admin_emails:
+                _ADMIN_USER_IDS_CACHE[user_id] = (now, True)
+                return True
+        auth_user = sb.auth.admin.get_user_by_id(user_id)
+        if auth_user and auth_user.user:
+            email = str(auth_user.user.email or '').strip().lower()
+            u_meta = auth_user.user.user_metadata or {}
+            a_meta = auth_user.user.app_metadata or {}
+            if email in admin_emails or u_meta.get('role') == 'Admin' or a_meta.get('role') == 'Admin' or u_meta.get('is_admin') is True or a_meta.get('is_admin') is True:
+                _ADMIN_USER_IDS_CACHE[user_id] = (now, True)
+                return True
+    except Exception:
+        pass
+
+    _ADMIN_USER_IDS_CACHE[user_id] = (now, False)
+    return False
+
+def ensure_admin_workspace_access(user_id: str) -> None:
+    """Ensures an admin user has Admin membership in all created/team workspaces and report access."""
+    if not is_admin_user(user_id):
+        return
+    sb = _admin_client()
+    try:
+        all_ws = sb.table('workspaces').select('id, name, is_personal').execute().data or []
+        team_ws = [w for w in all_ws if not w.get('is_personal') and str(w.get('name') or '').strip().lower() != 'my workspace']
+        if not team_ws:
+            return
+        team_ws_ids = [w['id'] for w in team_ws]
+        existing_mem = sb.table('workspace_members').select('workspace_id, role').eq('user_id', user_id).in_('workspace_id', team_ws_ids).execute().data or []
+        mem_map = {m['workspace_id']: m['role'] for m in existing_mem}
+        
+        for w in team_ws:
+            wid = w['id']
+            if mem_map.get(wid) != 'Admin':
+                sb.table('workspace_members').upsert({
+                    'workspace_id': wid,
+                    'user_id': user_id,
+                    'role': 'Admin'
+                }).execute()
+        
+        reports = sb.table('published_reports').select('id').in_('workspace_id', team_ws_ids).execute().data or []
+        if reports:
+            rep_ids = [r['id'] for r in reports]
+            existing_grants = sb.table('report_access_grants').select('report_id').eq('user_id', user_id).in_('report_id', rep_ids).execute().data or []
+            granted_ids = {g['report_id'] for g in existing_grants}
+            missing = [rid for rid in rep_ids if rid not in granted_ids]
+            for rid in missing:
+                sb.table('report_access_grants').upsert({
+                    'report_id': rid,
+                    'user_id': user_id,
+                    'role': 'Owner'
+                }).execute()
+    except Exception as e:
+        import logging
+        logging.warning(f"Error ensuring admin access: {e}")
+
 
 def publish_to_cloud(project: dict, access_token: str = None) -> dict:
     """
@@ -128,6 +214,8 @@ def grant_access(report_id: str, email: str, role: str, granter_user_id: str, ac
 
 def list_accessible_reports(user_id: str) -> list:
     """List all reports the given Supabase user has been granted access to."""
+    if is_admin_user(user_id):
+        ensure_admin_workspace_access(user_id)
     sb = _admin_client()
     grants = sb.table("report_access_grants") \
         .select("report_id, role") \
@@ -341,7 +429,7 @@ def delete_workspace(workspace_id: str, user_id: str) -> dict:
     is_creator = bool(ws.data and ws.data[0].get('created_by') == user_id)
 
     mem = sb.table('workspace_members').select('role').eq('workspace_id', workspace_id).eq('user_id', user_id).execute()
-    is_admin = bool(mem.data and mem.data[0]['role'] == 'Admin')
+    is_admin = bool(mem.data and mem.data[0]['role'] == 'Admin') or is_admin_user(user_id)
     
     if not is_creator and not is_admin:
         raise PermissionError('Only workspace Admins can delete this workspace.')
@@ -352,6 +440,8 @@ def delete_workspace(workspace_id: str, user_id: str) -> dict:
 
 def list_workspaces(user_id: str) -> list:
     """List all workspaces the user is a member of or created."""
+    if is_admin_user(user_id):
+        ensure_admin_workspace_access(user_id)
     sb = _admin_client()
     memberships = sb.table('workspace_members').select('workspace_id, role').eq('user_id', user_id).execute()
     created = sb.table('workspaces').select('id').eq('created_by', user_id).execute()
@@ -408,16 +498,17 @@ def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
     is_creator = (ws.data[0].get('created_by') == user_id)
 
     # Verify membership
+    is_admin = is_admin_user(user_id)
     mem = sb.table('workspace_members') \
         .select('role') \
         .eq('workspace_id', workspace_id) \
         .eq('user_id', user_id) \
         .execute()
     
-    if not is_creator and not mem.data:
+    if not is_creator and not is_admin and not mem.data:
         raise PermissionError('You are not a member of this workspace.')
         
-    role = 'Admin' if is_creator else mem.data[0]['role']
+    role = 'Admin' if (is_creator or is_admin) else mem.data[0]['role']
 
     # Get members with emails
     members = sb.table('workspace_members') \
@@ -512,13 +603,14 @@ def add_workspace_member(workspace_id: str, email: str, role: str, granter_id: s
         raise PermissionError('My Workspace is private and cannot have additional members. Create a team workspace to collaborate.')
 
     # Check granter is Admin
-    granter = sb.table('workspace_members') \
-        .select('role') \
-        .eq('workspace_id', workspace_id) \
-        .eq('user_id', granter_id) \
-        .execute()
-    if not granter.data or granter.data[0]['role'] != 'Admin':
-        raise PermissionError('Only workspace Admins can add members.')
+    if not is_admin_user(granter_id):
+        granter = sb.table('workspace_members') \
+            .select('role') \
+            .eq('workspace_id', workspace_id) \
+            .eq('user_id', granter_id) \
+            .execute()
+        if not granter.data or granter.data[0]['role'] != 'Admin':
+            raise PermissionError('Only workspace Admins can add members.')
 
     # Lookup user by email via Supabase Admin API
     import urllib.request
@@ -590,13 +682,14 @@ def share_report_to_workspace(report_id: str, workspace_id: str, granter_id: str
         raise PermissionError('You do not have permission to share this report.')
 
     # Check granter is Admin
-    granter = sb.table('workspace_members') \
-        .select('role') \
-        .eq('workspace_id', workspace_id) \
-        .eq('user_id', granter_id) \
-        .execute()
-    if not granter.data or granter.data[0]['role'] != 'Admin':
-        raise PermissionError('Only workspace Admins can share reports.')
+    if not is_admin_user(granter_id):
+        granter = sb.table('workspace_members') \
+            .select('role') \
+            .eq('workspace_id', workspace_id) \
+            .eq('user_id', granter_id) \
+            .execute()
+        if not granter.data or granter.data[0]['role'] != 'Admin':
+            raise PermissionError('Only workspace Admins can share reports.')
 
     # Add to workspace_reports
     sb.table('workspace_reports').upsert({
@@ -635,21 +728,17 @@ def _is_personal_workspace(workspace: dict | None) -> bool:
 
 # ── User Search (autocomplete) ──────────────────────────────────────────────────
 
-def search_users(query: str, limit: int = 10) -> list:
+def search_users(query: str = '', limit: int = 100) -> list:
     """
-    Search registered users by email prefix using the vtab_users mirror table.
+    Search registered users by email prefix or list all registered users using the vtab_users mirror table.
     Returns a list of {id, email, display_name} dicts.
     """
     sb = _admin_client()
-    q = query.strip().lower()
-    if not q or len(q) < 2:
-        return []
-
-    res = sb.table('vtab_users') \
-        .select('id, email, display_name') \
-        .ilike('email', f'{q}%') \
-        .limit(limit) \
-        .execute()
+    q = (query or '').strip().lower()
+    qb = sb.table('vtab_users').select('id, email, display_name')
+    if q:
+        qb = qb.ilike('email', f'%{q}%')
+    res = qb.order('email').limit(limit).execute()
 
     return [
         {'id': u['id'], 'email': u['email'], 'display_name': u.get('display_name') or u['email'].split('@')[0]}
@@ -665,9 +754,9 @@ def _semantic_model_manager(sb, semantic_model_id: str, user_id: str) -> dict:
         raise ValueError('Semantic model not found.')
     model = rows[0]
     members = sb.table('workspace_members').select('role').eq('workspace_id', model['workspace_id']).eq('user_id', user_id).limit(1).execute().data or []
-    if not members or members[0].get('role') not in ('Admin', 'Member', 'Contributor'):
+    if (not members or members[0].get('role') not in ('Admin', 'Member', 'Contributor')) and not is_admin_user(user_id):
         raise PermissionError('You need edit access to manage this semantic model.')
-    model['role'] = members[0]['role']
+    model['role'] = 'Admin' if is_admin_user(user_id) else (members[0]['role'] if members else 'Admin')
     return model
 
 
@@ -871,7 +960,7 @@ def save_workspace_gateway(workspace_id: str, payload: dict, user_id: str) -> di
     """Create or update a gateway cluster the current member can administer."""
     sb = _admin_client()
     members = sb.table('workspace_members').select('role').eq('workspace_id', workspace_id).eq('user_id', user_id).limit(1).execute().data or []
-    if not members or members[0].get('role') not in ('Admin', 'Member'):
+    if (not members or members[0].get('role') not in ('Admin', 'Member')) and not is_admin_user(user_id):
         raise PermissionError('You need workspace Admin or Member access to manage gateway clusters.')
     name = str(payload.get('name') or '').strip()
     mode = str(payload.get('execution_mode') or 'service_network').strip()
@@ -1306,7 +1395,7 @@ def delete_published_report_cloud(report_id: str, user_id: str) -> dict:
         raise ValueError('Report not found')
         
     is_owner = bool(rep.data[0].get('owner_id') == user_id)
-    if not is_owner:
+    if not is_owner and not is_admin_user(user_id):
         raise PermissionError('Only the report owner can delete this report from the cloud.')
         
     sb.table('published_reports').delete().eq('id', report_id).execute()

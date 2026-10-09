@@ -433,7 +433,7 @@ def publish_context(access_token: str) -> dict[str, Any]:
         raise PermissionError(data["error"])
     return {
         "user": user,
-        "workspaces": data.get("workspaces", []) if isinstance(data, dict) else [],
+        "workspaces": [w for w in (data.get("workspaces", []) if isinstance(data, dict) else []) if w.get("role") in ("Admin", "Owner")],
         "serviceApiVersion": SERVICE_API_VERSION,
         "reportSchemaVersion": REPORT_SCHEMA_VERSION,
     }
@@ -460,13 +460,15 @@ def list_workspace_reports(workspace_id: str, access_token: str) -> list[dict[st
 
 def _workspace_access(workspace_id: str, access_token: str, require_manage: bool = False) -> dict[str, Any]:
     """Return the caller's workspace entry and enforce model-management roles."""
-    context = publish_context(access_token)
-    workspace = next((item for item in context["workspaces"] if str(item.get("id")) == workspace_id), None)
-    if not workspace:
+    client = _anon_client(access_token)
+    result = client.table("workspaces").select("id").eq("id", workspace_id).execute()
+    if not result.data:
         raise PermissionError("You are not a member of this workspace.")
-    if require_manage and not workspace.get("canPublish"):
-        raise PermissionError("Your workspace role does not include semantic model management permission.")
-    return workspace
+    if require_manage:
+        context = publish_context(access_token)
+        if not any(str(w.get("id")) == workspace_id for w in context.get("workspaces", [])):
+            raise PermissionError("Only Co-Owners and Owners are allowed to manage models in this workspace.")
+    return {"id": workspace_id}
 
 
 def list_workspace_semantic_models(workspace_id: str, access_token: str) -> list[dict[str, Any]]:
@@ -574,6 +576,11 @@ def publish_report(payload: dict[str, Any], access_token: str, service_base_url:
     report_name = str(payload.get("reportName") or "").strip()
     desktop_version = str(payload.get("desktopVersion") or "").strip()
     schema_version = str(payload.get("reportSchemaVersion") or REPORT_SCHEMA_VERSION).strip()
+
+    context = publish_context(access_token)
+    if not any(str(w.get("id")) == workspace_id for w in context.get("workspaces", [])):
+        raise PermissionError("Only Co-Owners and Owners are allowed to publish reports to this workspace.")
+
     if not workspace_id:
         raise ServiceValidationError("Select a workspace before publishing.")
     if not report_name:
@@ -683,3 +690,4 @@ def restore_version(report_id: str, version_id: str, access_token: str) -> dict[
     if isinstance(data, dict) and data.get("error"):
         raise PermissionError(data["error"])
     return data
+

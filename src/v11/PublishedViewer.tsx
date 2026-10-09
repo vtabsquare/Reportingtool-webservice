@@ -176,7 +176,7 @@ function ViewerVisual({v,result,loading,onCrossFilter,onAction}:{v:Visual,result
  </div>;
  return <>{card}{focus&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>setFocus(false)}><div className="visualFocusPanel viewerFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>FOCUS MODE</small><b>{v.title}</b></div><button onClick={()=>setFocus(false)}>Close</button></div><div className="visualFocusBody">{content}</div></div></div>,document.body)}</>
 }
-export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string}){
+export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId,userRole}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string,userRole?:string}){
  const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(!embedded),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'>('fitPage'),[scale,setScale]=useState(1),[interactionFilters,setInteractionFilters]=useState<VisualFilter[]>([]),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
  const[publishedMode,setPublishedMode]=useState<'interactive'|'paginated'>(initialPaginatedId?'paginated':'interactive');
  const stageRef=useRef<HTMLElement|null>(null);
@@ -184,10 +184,10 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  const load=()=>{
   if(initialItem && initialItem.project){setItem(initialItem);setError('');return;}
   if(WORKSPACE_ONLY){
-   fetchReportFromSupabase(reportId).then(x=>{setItem(x);setError('')}).catch(e=>setError(e.message||String(e)));
+   fetchReportFromSupabase(reportId).then(x=>{setItem({...x, role: userRole || initialItem?.role || x?.role});setError('')}).catch(e=>setError(e.message||String(e)));
    return;
   }
-  api<any>(`/published/${reportId}`).then(x=>{setItem(x);setError('')}).catch(e=>setError(e.message||String(e)))
+  api<any>(`/published/${reportId}`).then(x=>{setItem({...x, role: userRole || initialItem?.role || x?.role});setError('')}).catch(e=>setError(e.message||String(e)))
  };
  useEffect(()=>{
   if(initialItem && initialItem.project){setItem(initialItem);setError('');return;}
@@ -245,6 +245,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  if(!item)return <div className="viewerLoading">Opening published report…</div>;
  if(!page)return <div className="viewerLoading">This published report has no pages.</div>;
  const exportFile=async(fmt:'pdf'|'pptx')=>{
+   if(item?.role==='Viewer'||item?.role?.toLowerCase()==='viewer'){alert('Viewers are strictly prohibited from downloading or exporting reports.');return;}
   if(exporting)return;const originalPage=pageIndex;setExporting(fmt);
   try{
    const rendered=[] as Array<{name:string,image:string,insights:string[],narratives:ExportNarrative[]}>;
@@ -273,9 +274,21 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
   setRuntimeHidden(hidden=>{const next={...hidden};for(const command of commands){const allHidden=command.targets.length>0&&command.targets.every((target:Visual)=>visualIsHidden(target,next));for(const target of command.targets){if(!Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,target.id))runtimeVisibilityDefaultsRef.current[target.id]=!!target.hidden;const value=command.operation==='show'?false:command.operation==='hide'?true:!allHidden;target.hidden=value;next[target.id]=value}}return next});
  };
  for(const visual of page.visuals||[])if(visual.type==='button'&&visual.action?.dynamicLabel!==false)visual.buttonLabel=resolveActionButtonLabel(visual,page,pages,runtimeHidden);
+ const effectiveRole = userRole || item?.role || initialItem?.role;
+ const isViewer = effectiveRole === 'Viewer' || effectiveRole?.toLowerCase() === 'viewer';
  return <div className={'publishedViewer '+(full?'viewerFull':'')}>
-  <header className="viewerTopbar"><div className="viewerBrand"><span>V</span><div><b>VTAB Workspace</b><small>Published Analytics</small></div></div><div className="viewerReportName"><small>PUBLISHED REPORT</small><b>{report.name}</b></div><div className="viewerActions"><span><ShieldCheck size={14}/>Governed</span><span><CalendarDays size={14}/>{new Date(item.updated_at||item.published_at).toLocaleString()}</span>{paginatedReports.length>0&&project.paginatedPublishMode!=='separate'&&<div className="publishedContentSwitch" aria-label="Published content"><button className={publishedMode==='interactive'?'active':''} onClick={()=>setPublishedMode('interactive')}><BarChart3 size={15}/>Dashboard</button><button className={publishedMode==='paginated'?'active':''} onClick={()=>setPublishedMode('paginated')}><FileText size={15}/>Paginated report</button></div>}{interactionFilters.length>0&&<button onClick={()=>setInteractionFilters([])}><Eraser size={15}/>Clear Selection</button>}<button onClick={load}><RefreshCcw size={15}/>Refresh</button><button disabled={!!exporting} onClick={()=>exportFile('pdf')}><FileDown size={15}/>{exporting==='pdf'?'Preparing…':'PDF'}</button><button disabled={!!exporting} onClick={()=>exportFile('pptx')}><Presentation size={15}/>{exporting==='pptx'?'Preparing…':'PPT'}</button><button onClick={shareEmail}><Mail size={15}/>Share</button><div className="viewerViewModes"><button className={viewMode==='fitPage'?'active':''} onClick={()=>setViewMode('fitPage')} title="Show the complete report page"><Scaling size={15}/>Full Report</button><button className={viewMode==='fitWidth'?'active':''} onClick={()=>setViewMode('fitWidth')} title="Fit report to browser width"><MonitorUp size={15}/>Fit Width</button><button className={viewMode==='actual'?'active':''} onClick={()=>setViewMode('actual')} title="Use report design size"><Expand size={15}/>Actual</button></div><button onClick={()=>setFull(x=>!x)}>{full?<Minimize2 size={15}/>:<Maximize2 size={15}/>}{full?'Exit Full Screen':'Full Screen'}</button><button onClick={()=>location.href='/?workspace=1'}><Home size={15}/>Workspace</button></div></header>
-  {publishedMode==='paginated'?<PaginatedReportViewer reportId={reportId} project={project} filters={combinedFilters} cloudMode={cloudMode||WORKSPACE_ONLY} initialDefinitionId={initialPaginatedId}/>:<><main className="viewerStage" ref={stageRef}>
+  <header className="viewerTopbar"><div className="viewerBrand"><span>V</span><div><b>VTAB Workspace</b><small>Published Analytics</small></div></div><div className="viewerReportName"><small>PUBLISHED REPORT</small><b>{report.name}</b></div><div className="viewerActions"><span><ShieldCheck size={14}/>Governed</span><span><CalendarDays size={14}/>{new Date(item.updated_at||item.published_at).toLocaleString()}</span>{paginatedReports.length>0&&project.paginatedPublishMode!=='separate'&&<div className="publishedContentSwitch" aria-label="Published content"><button className={publishedMode==='interactive'?'active':''} onClick={()=>setPublishedMode('interactive')}><BarChart3 size={15}/>Dashboard</button><button className={publishedMode==='paginated'?'active':''} onClick={()=>setPublishedMode('paginated')}><FileText size={15}/>Paginated report</button></div>}{interactionFilters.length>0&&<button onClick={()=>setInteractionFilters([])}><Eraser size={15}/>Clear Selection</button>}<button onClick={load}><RefreshCcw size={15}/>Refresh</button>{isViewer ? (
+    <>
+      <button disabled title="Viewers are not permitted to export reports" style={{ opacity: 0.38, cursor: 'not-allowed', filter: 'grayscale(1)', pointerEvents: 'none' }}><FileDown size={15}/>PDF</button>
+      <button disabled title="Viewers are not permitted to export reports" style={{ opacity: 0.38, cursor: 'not-allowed', filter: 'grayscale(1)', pointerEvents: 'none' }}><Presentation size={15}/>PPT</button>
+    </>
+  ) : (
+    <>
+      <button disabled={!!exporting} onClick={()=>exportFile('pdf')}><FileDown size={15}/>{exporting==='pdf'?'Preparing…':'PDF'}</button>
+      <button disabled={!!exporting} onClick={()=>exportFile('pptx')}><Presentation size={15}/>{exporting==='pptx'?'Preparing…':'PPT'}</button>
+    </>
+  )}<button onClick={shareEmail}><Mail size={15}/>Share</button><div className="viewerViewModes"><button className={viewMode==='fitPage'?'active':''} onClick={()=>setViewMode('fitPage')} title="Show the complete report page"><Scaling size={15}/>Full Report</button><button className={viewMode==='fitWidth'?'active':''} onClick={()=>setViewMode('fitWidth')} title="Fit report to browser width"><MonitorUp size={15}/>Fit Width</button><button className={viewMode==='actual'?'active':''} onClick={()=>setViewMode('actual')} title="Use report design size"><Expand size={15}/>Actual</button></div><button onClick={()=>setFull(x=>!x)}>{full?<Minimize2 size={15}/>:<Maximize2 size={15}/>}{full?'Exit Full Screen':'Full Screen'}</button><button onClick={()=>location.href='/?workspace=1'}><Home size={15}/>Workspace</button></div></header>
+  {publishedMode==='paginated'?<PaginatedReportViewer reportId={reportId} project={project} filters={combinedFilters} cloudMode={cloudMode||WORKSPACE_ONLY} initialDefinitionId={initialPaginatedId} isViewer={isViewer}/>:<><main className="viewerStage" ref={stageRef}>
    {(visualLoading||visualLoadError)&&<div className={'viewerPageLoadNotice '+(visualLoadError?'error':'')} role="status">{visualLoading?<><span className="viewerSpinner"/><b>Preparing {queryVisualIds.length} visual{queryVisualIds.length===1?'':'s'}…</b><span>The report will appear as soon as the page data is ready.</span></>:<><b>Page data could not be loaded.</b><span>{visualLoadError}</span><button onClick={()=>setVisualReloadKey(key=>key+1)}>Try again</button></>}</div>}
    <div className="viewerScaleFrame" style={{width:width*scale,height:effectiveHeight*scale}}>
    <div className={'viewerPage '+(pixelLayout?'pixelPublishedPage':'legacyPublishedPage')} data-page-id={String(page.id||'')} style={{width,height:effectiveHeight,background:s.background||'#f5f7fb',transform:`scale(${scale})`}}>

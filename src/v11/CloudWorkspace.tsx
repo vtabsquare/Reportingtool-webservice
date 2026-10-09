@@ -66,8 +66,9 @@ export default function CloudWorkspace({ session }: { session: any }) {
   // Add Member modal state
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [memberEmail, setMemberEmail] = useState("");
-  const [memberRole, setMemberRole] = useState<"Admin" | "Member" | "Contributor" | "Viewer">("Member");
+  const [memberRole, setMemberRole] = useState<"Admin" | "Member" | "Contributor" | "Viewer">("Viewer");
   const [memberSuggestions, setMemberSuggestions] = useState<any[]>([]);
+  const [registeredUsers, setRegisteredUsers] = useState<any[]>([]);
   const [memberSuggestLoading, setMemberSuggestLoading] = useState(false);
   const [memberBusy, setMemberBusy] = useState(false);
   const [memberErr, setMemberErr] = useState("");
@@ -90,6 +91,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
       }
       const target = workspaceTarget();
       if (target.reportId && !r.some((x:any) => x.id === target.reportId)) setTargetDenied("This report is not shared with the signed-in account.");
+      void loadRegisteredUsers();
     } catch (e: any) { setErr(e.message || String(e)); } finally { setLoading(false); }
   };
 
@@ -167,16 +169,16 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
   const handleMemberEmailChange = (val: string) => {
     setMemberEmail(val);
-    if (suggestTimeout.current) clearTimeout(suggestTimeout.current);
-    if (val.trim().length < 2) { setMemberSuggestions([]); return; }
-    suggestTimeout.current = setTimeout(async () => {
-      setMemberSuggestLoading(true);
-      try {
-        const res = await fetch(`/api/v1/cloud/users/search?q=${encodeURIComponent(val.trim())}`,
-          { headers: { Authorization: `Bearer ${session?.access_token}` } });
-        if (res.ok) setMemberSuggestions(await res.json());
-      } catch {} finally { setMemberSuggestLoading(false); }
-    }, 300);
+    if (!val.trim()) {
+      setMemberSuggestions(registeredUsers);
+      return;
+    }
+    const q = val.toLowerCase();
+    const filtered = registeredUsers.filter((u: any) =>
+      u.email.toLowerCase().includes(q) ||
+      (u.display_name && u.display_name.toLowerCase().includes(q))
+    );
+    setMemberSuggestions(filtered);
   };
 
   const submitAddMember = async () => {
@@ -187,12 +189,46 @@ export default function CloudWorkspace({ session }: { session: any }) {
         method: 'POST', body: JSON.stringify({ email: memberEmail.trim(), role: memberRole })
       });
       setAddMemberOpen(false);
-      setMemberEmail(""); setMemberRole("Member"); setMemberSuggestions([]);
+      setMemberEmail(""); setMemberRole("Viewer"); setMemberSuggestions([]);
       loadWorkspace(activeWorkspace.id); loadData();
     } catch (e: any) { setMemberErr(e.message || String(e)); } finally { setMemberBusy(false); }
   };
 
-  const addMember = () => { setMemberEmail(""); setMemberRole("Member"); setMemberSuggestions([]); setMemberErr(""); setAddMemberOpen(true); };
+  const loadRegisteredUsers = async () => {
+    try {
+      const users = await api<any[]>('/cloud/users/search?q=');
+      if (Array.isArray(users) && users.length) {
+        setRegisteredUsers(users);
+        setMemberSuggestions(users);
+        return;
+      }
+    } catch {}
+
+    try {
+      const { supabase } = await import('../supabase');
+      if (supabase) {
+        const { data } = await supabase.from('vtab_users').select('id, email, display_name').order('email');
+        if (data && data.length) {
+          const mapped = data.map((u: any) => ({
+            id: u.id,
+            email: u.email,
+            display_name: u.display_name || u.email.split('@')[0]
+          }));
+          setRegisteredUsers(mapped);
+          setMemberSuggestions(mapped);
+        }
+      }
+    } catch {}
+  };
+
+  const addMember = async () => {
+    setMemberEmail("");
+    setMemberRole("Viewer");
+    setMemberSuggestions(registeredUsers);
+    setMemberErr("");
+    setAddMemberOpen(true);
+    void loadRegisteredUsers();
+  };
 
   const shareToWorkspace = async () => {
     if (!reports.length) return alert("You don't have any reports to share yet.");
@@ -229,7 +265,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
           )}
         </div>
         <div style={{ flex: 1, overflow: "hidden" }}>
-          <PublishedViewer reportId={viewing.id} initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project }} embedded cloudMode initialPaginatedId={viewing.paginatedId}/>
+          <PublishedViewer reportId={viewing.id} userRole={viewing.role} initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project, role: viewing.role }} embedded cloudMode initialPaginatedId={viewing.paginatedId}/>
         </div>
         {sharing && <ShareDialog reportId={sharing.id} reportName={sharing.name} workspaceIsPersonal={isPersonalReport(sharing)} onClose={() => setSharing(null)} supabaseSession={session} />}
       </div>
@@ -258,7 +294,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
         {/* Nav */}
         <nav style={{ flex: 1, padding: "0 12px", display: "flex", flexDirection: "column", gap: 2 }}>
-          <div style={{display:'flex',alignItems:'center',padding:'0 10px 8px',color:'#64748b',fontSize:11,fontWeight:800,letterSpacing:'.08em'}}><span style={{flex:1}}>WORKSPACES</span><button title="New workspace" onClick={createWorkspace} style={{border:0,background:'transparent',color:'#94a3b8',cursor:'pointer',fontSize:18}}>+</button></div>
+          <div style={{display:'flex',alignItems:'center',padding:'0 10px 8px',color:'#64748b',fontSize:11,fontWeight:800,letterSpacing:'.08em'}}><span style={{flex:1}}>WORKSPACES</span></div>
           {workspaces.map(workspace => (
             <button key={workspace.id} onClick={() => { setActiveTab('workspaces'); void loadWorkspace(workspace.id); }}
               style={{
@@ -465,10 +501,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                     </div>
                     <b style={{ display: "block", fontSize: 16, color: "#0f172a", marginBottom: 4 }}>{w.name}</b>
                     <small style={{ color: "#94a3b8", fontSize: 12 }}>{w.member_count} member{w.member_count !== 1 ? 's' : ''} · {w.report_count} report{w.report_count !== 1 ? 's' : ''}</small>
-                    {w.role === 'Admin' && w.name.trim().toLowerCase() !== 'my workspace' && (
-                      <button onClick={e => { e.stopPropagation(); if (!confirm(`Delete workspace "${w.name}"?`)) return; fetch(`/api/v1/cloud/workspaces/${w.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${session?.access_token}` } }).then(async res => { if (res.ok) loadData(); else { const d = await res.json(); alert(d.detail || 'Delete failed'); } }); }}
-                        style={{ position: "absolute", bottom: 20, right: 20, background: "#fef2f2", color: "#ef4444", border: "1px solid #fee2e2", padding: "4px 10px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Delete</button>
-                    )}
+                    
                   </div>
                 ))}
               </div>
@@ -482,8 +515,8 @@ export default function CloudWorkspace({ session }: { session: any }) {
               {activeWorkspace.role === 'Admin' && !isPersonalWorkspace(activeWorkspace) && (
                 <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
                   <button onClick={addMember} style={{ background: "#fff", border: "1.5px solid #e2e8f0", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>+ Add Member</button>
-                  <button onClick={shareToWorkspace} style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)", color: "#fff", border: "none", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Share Report</button>
-                  {activeWorkspace.name.trim().toLowerCase() !== 'my workspace' && <button onClick={deleteWorkspace} style={{ background: "#fef2f2", color: "#ef4444", border: "1px solid #fee2e2", padding: "8px 16px", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Delete Workspace</button>}
+                  
+                  
                 </div>
               )}
               <SemanticModelService workspace={activeWorkspace} reports={activeWorkspace.reports} onOpenReport={r=>{const report=reports.find(item=>(r.itemKey&&item.itemKey===r.itemKey)||(item.id===r.id&&item.paginatedId===r.paginatedId))||{...r,role:activeWorkspace.role,pages:0,published_at:r.published_at||r.updated_at||new Date().toISOString()};history.replaceState(null,'',`${location.pathname}?workspace=1&report=${encodeURIComponent(r.id)}`);setViewing(report as Report)}} onReportSettings={r=>setSettingsReport({...(reports.find(item=>item.id===r.id&&!item.paginatedId)||r),role:activeWorkspace.role,pages:0,published_at:r.published_at||r.updated_at||new Date().toISOString()} as Report)} onShareReport={r=>setSharing({...(reports.find(item=>item.id===r.id&&!item.paginatedId)||r),role:activeWorkspace.role,pages:0,published_at:r.published_at||r.updated_at||new Date().toISOString()} as Report)} onDeleteReport={async r=>{if(!confirm(`Delete report "${r.name}"? This cannot be undone.`))return;try{await api(`/cloud/reports/${r.id}`,{method:'DELETE'});await loadWorkspace(activeWorkspace.id);await loadData()}catch(e:any){alert(e.message||String(e))}}} onRefresh={model=>{const linked=model.reports?.[0]||{id:model.report_id||'',name:model.name};if(linked.id)setScheduling({id:linked.id,name:linked.name,published_at:model.updated_at||new Date().toISOString(),updated_at:model.updated_at,pages:0,role:activeWorkspace.role})}}/>
@@ -509,36 +542,31 @@ export default function CloudWorkspace({ session }: { session: any }) {
               <button onClick={() => setAddMemberOpen(false)} style={{ background: "#f1f5f9", border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16, display: "grid", placeItems: "center" }}>✕</button>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div style={{ position: "relative" }}>
-                <input style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "10px 14px", fontSize: 13, boxSizing: "border-box", outline: "none" }}
-                  placeholder="Search user by email…" value={memberEmail}
-                  onChange={e => handleMemberEmailChange(e.target.value)}
-                  onBlur={() => setTimeout(() => setMemberSuggestions([]), 150)}
-                  onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
-                  autoComplete="off" />
-                {memberSuggestLoading && <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: "#94a3b8", fontSize: 12 }}>…</span>}
-                {memberSuggestions.length > 0 && (
-                  <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: "#fff", border: "1.5px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 32px rgba(15,23,42,.12)", overflow: "hidden", marginTop: 4 }}>
-                    {memberSuggestions.map((u: any) => (
-                      <div key={u.id} onMouseDown={() => { setMemberEmail(u.email); setMemberSuggestions([]); }}
-                        style={{ padding: "10px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}
-                        onMouseOver={e => e.currentTarget.style.background = "#f8fafc"}
-                        onMouseOut={e => e.currentTarget.style.background = "#fff"}>
-                        <Avatar email={u.email} />
-                        <div><b style={{ fontSize: 13 }}>{u.email}</b>{u.display_name && <span style={{ fontSize: 11, color: "#64748b", marginLeft: 6 }}>{u.display_name}</span>}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Select Registered User</label>
+                <select 
+                  style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "10px 12px", fontSize: 13, outline: "none", background: "#fff" }}
+                  value={memberEmail}
+                  onChange={e => {
+                    setMemberEmail(e.target.value);
+                    setMemberSuggestions([]);
+                  }}
+                >
+                  <option value="">-- Choose registered user --</option>
+                  {registeredUsers.map((u: any) => (
+                    <option key={u.id} value={u.email}>
+                      {u.email} {u.display_name && u.display_name !== u.email.split('@')[0] ? `(${u.display_name})` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Role</label>
                 <select style={{ width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "10px 12px", fontSize: 13, outline: "none" }}
                   value={memberRole} onChange={e => setMemberRole(e.target.value as any)}>
-                  <option value="Viewer">Viewer — view reports only</option>
-                  <option value="Contributor">Contributor — create, edit and publish</option>
-                  <option value="Member">Member — publish and manage workspace content</option>
-                  <option value="Admin">Admin — full workspace and member management</option>
+                  <option value="Viewer">Viewer (can only view the report)</option>
+                  <option value="Contributor">Contributor (can export report as PDF/PPT)</option>
+                  <option value="Admin">Co-Owner (has all access as owner)</option>
                 </select>
               </div>
               {memberErr && <div style={{ color: "#dc2626", fontSize: 12, background: "#fef2f2", padding: "8px 12px", borderRadius: 8 }}>⚠️ {memberErr}</div>}
@@ -558,3 +586,8 @@ export default function CloudWorkspace({ session }: { session: any }) {
     </div>
   );
 }
+
+
+
+
+

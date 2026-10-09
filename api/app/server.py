@@ -310,6 +310,39 @@ def _workspace_auth_required():
 def _authoring_auth_required():
     return bool((store.get_setting('workspace_email',{}) or {}).get('requireAuthoringLogin',False))
 
+
+def _enforce_viewer_block(authorization: str | None, report_id: str):
+    if not authorization: return
+    token = authorization.replace('Bearer ', '', 1).strip()
+    if token.startswith('eyJ') and len(token) > 50:
+        try:
+            import base64, json as _json
+            payload_b64 = token.split('.')[1]
+            padding = 4 - len(payload_b64) % 4
+            payload = _json.loads(base64.urlsafe_b64decode(payload_b64 + '=' * padding))
+            user_id = payload.get('sub')
+            if not user_id: return
+
+            from .supabase_store import _admin_client
+            sb = _admin_client()
+            ws_id = None
+            rep = sb.table('published_reports').select('workspace_id').eq('id', report_id).limit(1).execute()
+            if rep.data and rep.data[0].get('workspace_id'):
+                ws_id = rep.data[0]['workspace_id']
+            
+            if ws_id:
+                mem = sb.table('workspace_members').select('role').eq('workspace_id', ws_id).eq('user_id', user_id).limit(1).execute()
+                if mem.data and mem.data[0].get('role') == 'Viewer':
+                    raise HTTPException(403, 'Viewers are strictly prohibited from downloading or exporting reports.')
+
+            grant = sb.table('report_access_grants').select('role').eq('report_id', report_id).eq('user_id', user_id).limit(1).execute()
+            if grant.data and grant.data[0].get('role') == 'Viewer':
+                raise HTTPException(403, 'Viewers are strictly prohibited from downloading or exporting reports.')
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"Error in _enforce_viewer_block: {e}", flush=True)
+
 def _workspace_user(authorization:str|None):
     if not (_workspace_auth_required() or _authoring_auth_required()): return {'id':'local','displayName':'Local Author','memberships':[{'role':'Admin'}]}
     token=(authorization or '').replace('Bearer ','',1).strip() if authorization else ''
@@ -391,12 +424,35 @@ def password_reset_confirm(req:PasswordResetConfirmReq):
     if not email or not otp or not new_password:raise HTTPException(400,'Enter email, 6-digit OTP and new password.')
     if len(otp)!=6 or not otp.isdigit():raise HTTPException(400,'Enter the 6-digit OTP from your email.')
     if len(new_password)<6:raise HTTPException(400,'Password must be at least 6 characters.')
+    
+    calc_hash = hashlib.sha256(otp.encode()).hexdigest()
+
+    # 1. Check in-memory password reset OTP (requested via Forgot Password)
     item=_PASSWORD_RESET_OTP.get(email)
-    if not item or time.time()>item['expires']:raise HTTPException(400,'OTP expired. Request a new code.')
-    if not hmac.compare_digest(item['hash'],hashlib.sha256(otp.encode()).hexdigest()):raise HTTPException(400,'Invalid OTP.')
-    _supabase_admin('PUT','/admin/users/'+item['user_id'],{'password':new_password})
-    _PASSWORD_RESET_OTP.pop(email,None)
-    return {'ok':True}
+    if item and time.time()<=item.get('expires', 0) and hmac.compare_digest(item.get('hash', ''), calc_hash):
+        _supabase_admin('PUT','/admin/users/'+item['user_id'],{'password':new_password})
+        _PASSWORD_RESET_OTP.pop(email,None)
+        return {'ok':True}
+
+    # 2. Check onboarding first-login OTP from Supabase user_metadata (set when Admin onboards user)
+    user=_supabase_user_by_email(email)
+    if user:
+        meta = user.get('user_metadata') or {}
+        first_hash = meta.get('first_login_otp_hash', '')
+        first_expires = meta.get('first_login_otp_expires', 0)
+        if first_hash and (time.time() <= first_expires or not first_expires):
+            if hmac.compare_digest(first_hash, calc_hash) or secrets.compare_digest(first_hash, calc_hash):
+                clean_meta = dict(meta)
+                clean_meta.pop('first_login_otp_hash', None)
+                clean_meta.pop('first_login_otp_expires', None)
+                _supabase_admin('PUT', '/admin/users/' + user['id'], {
+                    'password': new_password,
+                    'user_metadata': clean_meta
+                })
+                _PASSWORD_RESET_OTP.pop(email, None)
+                return {'ok': True}
+
+    raise HTTPException(400, 'Invalid or expired OTP. Please enter the 6-digit OTP received in your email.')
 
 @app.post('/api/v1/auth/register/request')
 def register_request(req:RegisterRequestReq, request:Request):
@@ -888,6 +944,7 @@ def cloud_get_workspace(workspace_id:str, authorization:str|None=Header(default=
 @app.post('/api/v1/cloud/workspaces')
 def cloud_create_workspace(payload:dict, authorization:str|None=Header(default=None)):
     """Create a new workspace."""
+    raise HTTPException(403, "Workspace creation is restricted to the Admin Application.")
     try:
         from .supabase_store import create_workspace as _create
     except ImportError:
@@ -901,16 +958,7 @@ def cloud_create_workspace(payload:dict, authorization:str|None=Header(default=N
 
 @app.delete('/api/v1/cloud/workspaces/{workspace_id}')
 def cloud_delete_workspace(workspace_id:str, authorization:str|None=Header(default=None)):
-    """Delete a workspace."""
-    try:
-        from .supabase_store import delete_workspace as _delete
-    except ImportError:
-        raise HTTPException(503,'supabase package not installed')
-    user_id=_supabase_user_id_from_token(authorization)
-    try:
-        return _delete(workspace_id, user_id)
-    except PermissionError as e: raise HTTPException(403,str(e))
-    except Exception as e: raise HTTPException(400,str(e))
+    raise HTTPException(403, "Only administrators using the Admin Panel can delete workspaces.")
 
 
 @app.delete('/api/v1/cloud/reports/{report_id}')
@@ -969,10 +1017,8 @@ def cloud_search_users(q: str = '', authorization: str | None = Header(default=N
     except ImportError:
         raise HTTPException(503, 'supabase package not installed')
     _supabase_user_id_from_token(authorization)  # Require auth
-    if not q or len(q.strip()) < 2:
-        return []
     try:
-        return _search(q.strip())
+        return _search(q.strip() if q else '')
     except Exception as e:
         raise HTTPException(400, str(e))
 
@@ -1512,7 +1558,8 @@ def admin_save_settings(payload:dict):
 
 @app.get('/api/v1/published/{report_id}/export/{fmt}')
 def export_published(report_id:str,fmt:str,authorization:str|None=Header(default=None)):
-    _workspace_user(authorization);item=store.get_published(report_id)
+    _enforce_viewer_block(authorization, report_id)
+    item=store.get_published(report_id)
     if not item:raise HTTPException(404,'Published report not found')
     project=item['project'];safe=''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in item['name']) or 'VTAB_Report'
     if fmt.lower()=='pdf':
@@ -1525,7 +1572,8 @@ def export_published(report_id:str,fmt:str,authorization:str|None=Header(default
 @app.post('/api/v1/published/{report_id}/export-rendered/{fmt}')
 def export_published_rendered(report_id:str,fmt:str,payload:dict,authorization:str|None=Header(default=None)):
     """Export the browser-rendered dashboard so every report page and chart is retained."""
-    _workspace_user(authorization);item=store.get_published(report_id)
+    _enforce_viewer_block(authorization, report_id)
+    item=store.get_published(report_id)
     project=(item or {}).get('project') or (payload.get('project') if isinstance(payload,dict) else None)
     if not isinstance(project,dict) or not project:raise HTTPException(404,'Published report not found')
     pages=payload.get('pages') if isinstance(payload,dict) else None
@@ -1553,6 +1601,7 @@ def export_published_rendered(report_id:str,fmt:str,payload:dict,authorization:s
 
 @app.post('/api/v1/published/{report_id}/paginated/pdf')
 def export_published_paginated(report_id:str,payload:PaginatedPdfReq,authorization:str|None=Header(default=None)):
+    _enforce_viewer_block(authorization, report_id)
     from .rls_runtime import resolve_published_rls
     item=store.get_published(report_id)
     p = item['project'] if item else _get_cloud_project(report_id)
@@ -1573,6 +1622,7 @@ def export_published_paginated_snapshot(payload:PaginatedPdfReq,authorization:st
     if not payload.project:raise HTTPException(400,'Published project snapshot is required.')
     try:
         report_id=str((payload.project.get('report') or {}).get('id') or payload.project.get('id') or '')
+        _enforce_viewer_block(authorization, report_id)
         resolved=resolve_published_rls(report_id,payload.project,token)
         hydrated=hydrate_snapshot_sources(payload.project,token,skip_auth_check=True)
         data,filename,_count=render_paginated_pdf(hydrated,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'])
@@ -2267,3 +2317,44 @@ def clear_query_cache():
 
 @app.get('/api/v1/audit')
 def audit():return store.audits()
+
+
+class SetupPasswordReq(BaseModel):
+    email: str
+    otp: str
+    password: str
+
+@app.post("/api/v1/admin-app/auth/first-login-setup")
+def first_login_setup(req: SetupPasswordReq):
+    import hashlib
+    import secrets
+    import time
+    
+    email = req.email.lower().strip()
+    user = _supabase_user_by_email(email)
+    if not user:
+        raise HTTPException(404, "User not found")
+        
+    meta = user.get('user_metadata', {})
+    
+    expires = meta.get('first_login_otp_expires', 0)
+    if time.time() > expires:
+        raise HTTPException(401, "OTP expired or invalid.")
+        
+    otp_hash = meta.get('first_login_otp_hash', '')
+    calc = hashlib.sha256(req.otp.encode()).hexdigest()
+    if not secrets.compare_digest(calc, otp_hash):
+        raise HTTPException(401, "Invalid OTP.")
+        
+    # Clear OTP
+    meta.pop('first_login_otp_hash', None)
+    meta.pop('first_login_otp_expires', None)
+    
+    # Update password and clear OTP
+    _supabase_admin('PUT', '/admin/users/' + user['id'], {
+        'password': req.password,
+        'user_metadata': meta
+    })
+    
+    return {"ok": True}
+

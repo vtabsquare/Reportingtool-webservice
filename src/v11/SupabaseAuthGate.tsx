@@ -13,7 +13,7 @@ type Props = { onSignedIn: (session: any) => void };
  *  forgot          → enter email → sends password-reset OTP
  *  reset           → enter OTP + new password
  */
-type Mode = "login" | "register" | "register-verify" | "register-setpass" | "forgot" | "reset";
+type Mode = "login" | "register" | "register-verify" | "register-setpass" | "forgot" | "reset" | "first-setup";
 
 export default function SupabaseAuthGate({ onSignedIn }: Props) {
   const [mode, setMode] = useState<Mode>("login");
@@ -142,7 +142,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
     "register-verify": "Check your email",
     "register-setpass": "Set your password",
     forgot: "Reset password",
-    reset: "Enter new password",
+    reset: "Set Your Password",
   };
   const subtitle: Record<Mode, string> = {
     login: "Sign in to your workspace",
@@ -150,7 +150,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
     "register-verify": `We sent a 6-digit code to ${form.email}`,
     "register-setpass": "Choose a secure password for your new account",
     forgot: "We'll send a 6-digit code to your email",
-    reset: "Enter the OTP from your email",
+    reset: "Enter your email, 6-digit OTP, and new password",
   };
   const buttonLabel: Record<Mode, string> = {
     login: "Sign In",
@@ -285,7 +285,57 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
               )}
 
               {/* Login: Email */}
-              {mode === "login" && (
+        
+      {mode === "first-setup" && (
+        <form onSubmit={async (e) => {
+          e.preventDefault();
+          if (busy) return;
+          if (form.newPassword.length < 8) return setError("Password must be at least 8 characters.");
+          setBusy(true); setError("");
+          try {
+            await api("/admin-app/auth/first-login-setup", {
+              method: "POST",
+              body: JSON.stringify({ email: form.email, otp: form.otp, password: form.newPassword })
+            });
+            // Auto login after setup
+            const { error: sbErr } = await supabase.auth.signInWithPassword({ email: form.email, password: form.newPassword });
+            if (sbErr) throw new Error(sbErr.message);
+            onSignedIn();
+          } catch (err: any) {
+            setError(err.message || "Invalid OTP or failed to set password.");
+          } finally {
+            setBusy(false);
+          }
+        }} className="flex flex-col gap-4">
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white">First-Time Setup</h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400">Enter the OTP sent to your email by your administrator.</p>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email Address</label>
+            <input required type="email" value={form.email} onChange={(e) => update({ email: e.target.value })} className="w-full px-3 py-2 border rounded-md" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">OTP</label>
+            <input required type="text" placeholder="123456" value={form.otp} onChange={(e) => update({ otp: e.target.value })} className="w-full px-3 py-2 border rounded-md" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New Password</label>
+            <input required type="password" value={form.newPassword} onChange={(e) => update({ newPassword: e.target.value })} className="w-full px-3 py-2 border rounded-md" />
+          </div>
+          {error && <div className="text-red-600 text-sm">{error}</div>}
+          <button disabled={busy} type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded-md transition-colors disabled:opacity-50">
+            {busy ? "Processing..." : "Set Password & Login"}
+          </button>
+          
+          <div className="text-center mt-2">
+            <a href="#" className="text-sm font-medium hover:underline text-indigo-600" onClick={(e) => { e.preventDefault(); setMode("login"); }}>
+              Back to Login
+            </a>
+          </div>
+        </form>
+      )}
+
+      {mode === "login" && (
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Email</label>
                   <input autoFocus type="email" value={form.email} onChange={f("email")}
@@ -329,6 +379,14 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
               {/* Reset: OTP + New password */}
               {mode === "reset" && (
                 <>
+                  <div>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>Email</label>
+                    <input type="email" value={form.email} onChange={f("email")}
+                      placeholder="name@company.com"
+                      style={inputStyle}
+                      onFocus={e => e.target.style.border = "1.5px solid #6366f1"}
+                      onBlur={e => e.target.style.border = "1.5px solid #e2e8f0"} />
+                  </div>
                   <div>
                     <label style={{ fontSize: 12, fontWeight: 600, color: "#374151", display: "block", marginBottom: 6 }}>6-digit OTP</label>
                     <input inputMode="numeric" maxLength={6} value={form.otp}
@@ -392,6 +450,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
                     <button onClick={() => switchMode("register")} style={{ background: "none", border: "none", color: "#6366f1", cursor: "pointer", fontWeight: 700, fontSize: 13, padding: 0 }}>Register here</button>
                   </span>
                   <button onClick={() => switchMode("forgot")} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12, padding: 0 }}>Forgot password?</button>
+                  <button onClick={() => { setResetProvider("backend"); setMode("reset"); setErr(""); setInfo(""); }} style={{ background: "none", border: "none", color: "#6366f1", cursor: "pointer", fontWeight: 600, fontSize: 12, padding: 0 }}>First time login? Set your password with OTP</button>
                 </>
               )}
               {(mode === "register" || mode === "register-verify" || mode === "register-setpass") && (

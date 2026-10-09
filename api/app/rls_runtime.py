@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 from .reporting_service import authenticate, get_semantic_model, _workspace_access
-from .supabase_store import _admin_client
+from .supabase_store import _admin_client, is_admin_user
 
 EDITOR_ROLES = {"Admin", "Member", "Contributor", "Owner", "Co-Owner"}
 
@@ -99,9 +99,12 @@ def _resolve_published_rls_impl(report_id: str, project: dict[str, Any], access_
     workspace_id = str(report.get("workspace_id") or "")
     workspace_rows = sb.table("workspace_members").select("role").eq("workspace_id", workspace_id).eq("user_id", user_id).limit(1).execute().data or []
     grant_rows = sb.table("report_access_grants").select("role").eq("report_id", report_id).eq("user_id", user_id).limit(1).execute().data or []
-    if not workspace_rows and not grant_rows:
+    is_admin = is_admin_user(user_id)
+    if not workspace_rows and not grant_rows and not is_admin:
         raise PermissionError("You do not have access to this report.")
     access_roles = [str(row.get("role") or "Viewer") for row in [*workspace_rows, *grant_rows]]
+    if is_admin:
+        access_roles.append("Admin")
     application_role = next((role for role in access_roles if role in EDITOR_ROLES), access_roles[0] if access_roles else "Viewer")
     role_defs = _roles(project)
     context = {
