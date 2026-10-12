@@ -1,7 +1,8 @@
-import {useEffect,useMemo,useRef,useState} from 'react';
+import React, {useEffect,useMemo,useRef,useState} from 'react';
 import ReactECharts from 'echarts-for-react';
 import type { Visual } from '../types';
 import { formatForField } from '../formatting';
+import {resolveTableFieldValueColor} from '../conditionalFormatting';
 
 // Compute the auto mid-color for a diverging heatmap scale.
 // Blends each endpoint toward white in HSL space, then averages the hues.
@@ -48,7 +49,13 @@ function buildScatterSeriesData(
   accent: string,
   chartOpacity: number,
   dotSize: number,
-  maxBubbleSize: number
+  maxBubbleSize: number,
+  marker: string,
+  showMarkers: boolean,
+  showLabels: boolean,
+  labelColor: string,
+  labelSize: number,
+  labelPosition: string
 ): any[] {
   var maxSz = 1;
   if (sizeField) {
@@ -72,7 +79,7 @@ function buildScatterSeriesData(
     };
   }
   if (!legendField) {
-    return [{ type: 'scatter', name: yField || 'Scatter', data: rows.map(makePoint), symbolSize: dotSizeFn, itemStyle: { color: accent, opacity: chartOpacity } }];
+    return [{ type: 'scatter', name: yField || 'Scatter', data: rows.map(makePoint), symbol: marker, symbolSize: showMarkers?dotSizeFn:0, itemStyle: { color: accent, opacity: chartOpacity }, label:{show:showLabels,color:labelColor,fontSize:labelSize,position:labelPosition==='inside'?'inside':'top',formatter:(p:any)=>p.data?.name||p.value?.[1]} }];
   }
   var legendVals: string[] = [];
   for (var li = 0; li < rows.length; li++) {
@@ -84,8 +91,10 @@ function buildScatterSeriesData(
       type: 'scatter',
       name: sn,
       data: rows.filter(function(r) { return String(r[legendField] || '') === sn; }).map(makePoint),
-      symbolSize: dotSizeFn,
-      itemStyle: { color: palette[si % palette.length], opacity: chartOpacity }
+      symbol: marker,
+      symbolSize: showMarkers?dotSizeFn:0,
+      itemStyle: { color: palette[si % palette.length], opacity: chartOpacity },
+      label:{show:showLabels,color:labelColor,fontSize:labelSize,position:'top',formatter:(p:any)=>p.data?.name||p.value?.[1]}
     };
   });
 }
@@ -115,17 +124,17 @@ function ChartScrollerWrapper({option,categories,horizontal,events,echartsKey,vi
     }
   };
   return (
-    <div style={{display:'flex',flexDirection:'column',height:'100%',width:'100%'}}>
-      <div style={{flex:1,minHeight:0}}>
+    <div style={{display:'flex',flexDirection:horizontal?'row':'column',height:'100%',width:'100%'}}>
+      <div style={{flex:1,minHeight:0,minWidth:0}}>
         <ReactECharts ref={echartsRef} key={echartsKey} opts={{renderer:'canvas'}} notMerge={true}
           style={{height:'100%',width:'100%'}} onEvents={events} option={option}/>
       </div>
       {needsScroll&&(
-        <div className="chartNativeScroller" style={{flexShrink:0,padding:horizontal?'0 4px 0 0':'6px 12px 2px 12px'}}>
+        <div className="chartNativeScroller" style={{flexShrink:0,display:'flex',width:horizontal?'24px':'100%',height:horizontal?'100%':'24px',padding:horizontal?'12px 4px 12px 0':'6px 12px 2px 12px'}}>
           <input type="range" min={0} max={maxStart} step={0.001} value={localStart}
             onChange={handleChange}
-            style={{width:horizontal?undefined:'100%',height:horizontal?'100%':undefined,
-              writingMode:horizontal?('vertical-lr' as any):undefined,
+            style={{width:horizontal?'16px':'100%',height:horizontal?'100%':'16px',
+              WebkitAppearance:horizontal?'slider-vertical':undefined,
               direction:horizontal?('rtl' as any):undefined,cursor:'pointer'}}
             aria-label="Scroll chart categories"/>
         </div>
@@ -134,14 +143,96 @@ function ChartScrollerWrapper({option,categories,horizontal,events,echartsKey,vi
   );
 }
 
-function PremiumDataTable({rows,formats,visual,matrix=false}:{rows:any[];formats:any;visual:Visual;matrix?:boolean}){
+function tableCssVariables(visual:Visual){
+  console.log("tableCssVariables visual.format:", visual.format);
+  return {'--table-text':visual.format.tableTextColor||'#242424','--table-font':visual.format.tableFontFamily||'Segoe UI','--table-align':visual.format.tableTextAlign||'left','--table-weight':visual.format.tableTextBold?700:400,'--table-style':visual.format.tableTextItalic?'italic':'normal','--table-wrap':visual.format.tableTextWrap?'normal':'nowrap','--table-bg':visual.format.tableBackground||'#ffffff','--table-font-size':`${visual.format.tableFontSize||11}px`,'--table-row-padding':`${visual.format.tableRowPadding??8}px`,'--table-alt':visual.format.tableAlternatingRows===false?(visual.format.tableBackground||'#ffffff'):visual.format.tableAlternateColor||'#f8fafc','--table-header-color':visual.format.tableHeaderColor||'#0f172a','--table-header-font':visual.format.tableHeaderFontFamily||'Segoe UI','--table-header-align':visual.format.tableHeaderTextAlign||'left','--table-header-weight':visual.format.tableHeaderBold===false?400:700,'--table-header-style':visual.format.tableHeaderItalic?'italic':'normal','--table-header-wrap':visual.format.tableHeaderWordWrap?'normal':'nowrap','--table-header-bg':visual.format.tableHeaderBackground||'#f1f5f9','--table-header-size':`${visual.format.tableHeaderFontSize||11}px`,'--table-grid':visual.format.tableGridVisible===false?'transparent':visual.format.tableGridColor||'#e2e8f0','--table-vgrid':visual.format.tableVerticalGridVisible?visual.format.tableGridColor||'#e2e8f0':'transparent','--table-grid-width':`${visual.format.tableGridWidth??1}px`,'--table-col-width':visual.format.tableAutoWidth===false?`${visual.format.tableColumnWidth||100}px`:'auto','--table-total-bg':visual.format.tableTotalBackground||'#f1f5f9','--table-total-color':visual.format.tableTotalTextColor||'#0f172a','--table-accent':visual.format.accent||'#118dff'} as any;
+}
+
+function mixRuleColor(from:string,to:string,ratio:number){
+  const parse=(hex:string)=>{const raw=hex.replace('#','');const full=raw.length===3?raw.split('').map(x=>x+x).join(''):raw;return [0,2,4].map(i=>Number.parseInt(full.slice(i,i+2),16))};
+  const a=parse(from),b=parse(to),t=Math.max(0,Math.min(1,ratio));
+  if(a.some(Number.isNaN)||b.some(Number.isNaN))return ratio<.5?from:to;
+  return '#'+a.map((value,i)=>Math.round(value+(b[i]-value)*t).toString(16).padStart(2,'0')).join('');
+}
+
+function tableConditionalStyle(visual:Visual,field:string,value:any,conditionalValues:Record<string,any>={}){
+  const rule=visual.format.tableConditionalRules?.[field];
+  const numeric=Number(value);
+  const baseStyle: any = {
+    '--cell-text': visual.format.tableTextColor || undefined,
+    '--table-text': visual.format.tableTextColor || undefined,
+    '--table-font-size': visual.format.tableFontSize ? `${visual.format.tableFontSize}px` : undefined,
+    fontSize: visual.format.tableFontSize ? `${visual.format.tableFontSize}px` : undefined,
+    fontFamily: visual.format.tableFontFamily || undefined,
+    textAlign: visual.format.tableTextAlign || undefined,
+    fontWeight: visual.format.tableTextBold ? 700 : undefined,
+    fontStyle: visual.format.tableTextItalic ? 'italic' : undefined,
+    whiteSpace: visual.format.tableTextWrap ? 'normal' : 'nowrap',
+    color: visual.format.tableTextColor || undefined
+  };
+  if(!rule?.enabled)return baseStyle;
+  if(rule.formatBy==='fieldValue'){
+    const color=resolveTableFieldValueColor(rule,conditionalValues);
+    if(!color)return baseStyle;
+    if(rule.applyTo==='text')return {...baseStyle,__textColor:color};
+    const style:any={...baseStyle,backgroundImage:'none','--cell-bg':color};
+    if(rule.applyTo==='both')style['--cell-text']=colorContrast(color);
+    return style;
+  }
+  if(!Number.isFinite(numeric))return baseStyle;
+  const min=Number.isFinite(rule.min)?Number(rule.min):0,max=Number.isFinite(rule.max)?Number(rule.max):100;
+  // 3-stop gradient: when midColor is set, use min→mid→max
+  let color:string;
+  if(rule.midColor){
+    const midVal=Number.isFinite(rule.midValue)?Number(rule.midValue):(min+max)/2;
+    const minColor=rule.minColor||'#ffffff';
+    const midColor=rule.midColor;
+    const maxColor=rule.maxColor||'#118dff';
+    if(numeric<=midVal){
+      const r=midVal===min?0:Math.max(0,Math.min(1,(numeric-min)/(midVal-min)));
+      color=mixRuleColor(minColor,midColor,r);
+    } else {
+      const r=max===midVal?1:Math.max(0,Math.min(1,(numeric-midVal)/(max-midVal)));
+      color=mixRuleColor(midColor,maxColor,r);
+    }
+  } else {
+    const ratio=max===min?(numeric>=max?1:0):(numeric-min)/(max-min);
+    color=mixRuleColor(rule.minColor||'#ffffff',rule.maxColor||'#118dff',ratio);
+  }
+  if(rule.applyTo==='text'){
+    // Return __textColor so the td renderer wraps content in a span — this avoids !important CSS wars
+    return {backgroundImage:'none',__textColor:color} as any;
+  }
+  const style:any={backgroundImage:'none'};
+  style['--cell-bg']=color;
+  if(rule.applyTo==='both'){
+    const rgb=[1,3,5].map(i=>Number.parseInt(color.slice(i,i+2),16));
+    style['--cell-text']=(rgb[0]*299+rgb[1]*587+rgb[2]*114)/1000>145?'#111827':'#ffffff';
+  }
+  return {...baseStyle, ...style};
+}
+
+function colorContrast(color:string){
+  const hex=/^#([0-9a-f]{6})$/i.exec(color);
+  if(!hex)return'#111827';
+  const rgb=[0,2,4].map(index=>Number.parseInt(hex[1].slice(index,index+2),16));
+  return(rgb[0]*299+rgb[1]*587+rgb[2]*114)/1000>145?'#111827':'#ffffff';
+}
+
+function matrixConditionalStyle(visual:Visual,field:string,value:any,conditionalValues:Record<string,any>){
+  const style:any=tableConditionalStyle(visual,field,value,conditionalValues);
+  if(style.__textColor){style.color=style.__textColor;style['--cell-text']=style.__textColor;delete style.__textColor}
+  return style;
+}
+
+function PremiumDataTable({rows,formats,visual,matrix=false,conditionalValues={}}:{rows:any[];formats:any;visual:Visual;matrix?:boolean;conditionalValues?:Record<string,any>}){
   const[search,setSearch]=useState('');const[page,setPage]=useState(0);const[sort,setSort]=useState<{field:string,dir:'asc'|'desc'}|null>(null);const pageSize=20;
   const columns=rows.length?Object.keys(rows[0]):[];
   const filtered=useMemo(()=>{const q=search.trim().toLowerCase();let data=!q?rows:rows.filter(r=>columns.some(c=>String(r[c]??'').toLowerCase().includes(q)));if(sort){data=[...data].sort((a,b)=>{const av=a[sort.field],bv=b[sort.field];const cmp=typeof av==='number'&&typeof bv==='number'?av-bv:String(av??'').localeCompare(String(bv??''));return sort.dir==='asc'?cmp:-cmp})}return data},[rows,search,sort]);
   const pages=Math.max(1,Math.ceil(filtered.length/pageSize));const current=Math.min(page,pages-1);const visible=filtered.slice(current*pageSize,(current+1)*pageSize);
   const numericMax:Record<string,number>={};for(const c of columns){numericMax[c]=Math.max(...filtered.map(r=>typeof r[c]==='number'?Math.abs(r[c]):0),1)}
-  const tableStyle:any={'--table-text':visual.format.tableTextColor||'#242424','--table-font':visual.format.tableFontFamily||'Segoe UI','--table-align':visual.format.tableTextAlign||'left','--table-bg':visual.format.tableBackground||'#ffffff','--table-font-size':`${visual.format.tableFontSize||11}px`,'--table-row-padding':`${visual.format.tableRowPadding??8}px`,'--table-alt':visual.format.tableAlternatingRows===false?'transparent':visual.format.tableAlternateColor||'#f8fafc','--table-header-color':visual.format.tableHeaderColor||'#0f172a','--table-header-font':visual.format.tableHeaderFontFamily||'Segoe UI','--table-header-align':visual.format.tableHeaderTextAlign||'left','--table-header-wrap':visual.format.tableHeaderWordWrap?'normal':'nowrap','--table-header-bg':visual.format.tableHeaderBackground||'#f1f5f9','--table-header-size':`${visual.format.tableHeaderFontSize||11}px`,'--table-grid':visual.format.tableGridVisible===false?'transparent':visual.format.tableGridColor||'#e2e8f0','--table-vgrid':visual.format.tableVerticalGridVisible?visual.format.tableGridColor||'#e2e8f0':'transparent','--table-grid-width':`${visual.format.tableGridWidth??1}px`,'--table-col-width':visual.format.tableAutoWidth===false?`${visual.format.tableColumnWidth||100}px`:'auto','--table-total-bg':visual.format.tableTotalBackground||'#f1f5f9','--table-total-color':visual.format.tableTotalTextColor||'#0f172a'};
-  const conditionalCell=(value:any,pct:number)=>{if(!visual.format.conditionalColorsEnabled)return `linear-gradient(90deg, rgba(37,99,235,.08) ${pct}%, transparent ${pct}%)`;const n=Number(value),color=n>0?(visual.format.conditionalPositiveColor||'#16a34a'):n<0?(visual.format.conditionalNegativeColor||'#dc2626'):(visual.format.conditionalZeroColor||'#64748b');return `linear-gradient(90deg, color-mix(in srgb, ${color} 20%, transparent) ${pct}%, transparent ${pct}%)`};
+  const tableStyle=tableCssVariables(visual);
+  const conditionalCell=(value:any,pct:number)=>{if(!visual.format.conditionalColorsEnabled)return `linear-gradient(90deg, color-mix(in srgb, ${visual.format.accent||'#118dff'} 18%, transparent) ${pct}%, transparent ${pct}%)`;const n=Number(value),color=n>0?(visual.format.conditionalPositiveColor||'#16a34a'):n<0?(visual.format.conditionalNegativeColor||'#dc2626'):(visual.format.conditionalZeroColor||'#64748b');return `linear-gradient(90deg, color-mix(in srgb, ${color} 20%, transparent) ${pct}%, transparent ${pct}%)`};
   const [colWidths, setColWidths] = useState<Record<string,number>>({});
   const startResize=(e:any,c:string)=>{
     e.stopPropagation();
@@ -170,24 +261,12 @@ function PremiumDataTable({rows,formats,visual,matrix=false}:{rows:any[];formats
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
   };
-  const formatColumnHeader = (c: string) => {
-    if (c.includes('::')) {
-      const [core, agg] = c.split('::');
-      if (!agg) return core;
-      const lowerAgg = agg.toLowerCase();
-      if (lowerAgg === 'sum') return `Sum of ${core}`;
-      if (lowerAgg === 'average') return `Average of ${core}`;
-      if (lowerAgg === 'min') return `Min of ${core}`;
-      if (lowerAgg === 'max') return `Max of ${core}`;
-      if (lowerAgg === 'count') return `Count of ${core}`;
-      if (lowerAgg === 'count_distinct') return `Distinct Count of ${core}`;
-      return `${agg} of ${core}`;
-    }
-    return c;
-  };
+  const displayNames=(visual.format as any).fieldDisplayNames;
+  const formatColumnHeaderLocal = (c: string) => formatColumnHeader(c, visual.format.tableShowPrefix === true, displayNames);
   return <div className={'premiumDataTable '+(matrix?'matrixMode':'')+(visual.format.tableHeaderVisible===false?' hideTableHeader':'')} style={tableStyle}>
     <div className="premiumTableToolbar"><div className="premiumTableSearch">⌕<input value={search} onChange={e=>{setSearch(e.target.value);setPage(0)}} placeholder="Search rows…"/></div><span>{filtered.length.toLocaleString()} rows</span></div>
-    <div className="tableWrap premiumTable"><table style={{tableLayout: Object.keys(colWidths).length ? 'fixed' : 'auto', width: Object.keys(colWidths).length ? 'max-content' : '100%', minWidth: '100%'}}><thead><tr>{columns.map(c=><th key={c} onClick={()=>setSort(s=>s?.field===c?{field:c,dir:s.dir==='asc'?'desc':'asc'}:{field:c,dir:'asc'})} style={{width: colWidths[c], position: 'relative'}}>{formatColumnHeader(c)}<span>{sort?.field===c?(sort.dir==='asc'?' ↑':' ↓'):''}</span><div style={{cursor: 'col-resize', position:'absolute', right:0, top:0, bottom:0, width:8}} onMouseDown={(e)=>startResize(e,c)} /></th>)}</tr></thead><tbody>{visible.map((row,ri)=><tr key={ri}>{columns.map((c,ci)=>{const numeric=typeof row[c]==='number';const pct=numeric?Math.min(100,Math.abs(row[c])/numericMax[c]*100):0;const hasFormat=!!formats?.[c];return <td key={c} className={matrix&&ci===0?'matrixRowHeader':''} style={numeric?{backgroundImage:conditionalCell(row[c],pct)}:undefined}>{numeric||hasFormat?formatForField(row[c],c,formats):String(row[c]??'')}</td>})}</tr>)}</tbody>
+    <div className="tableWrap premiumTable"><table style={{tableLayout:Object.keys(colWidths).length||visual.format.tableAutoWidth===false?'fixed':'auto',width:Object.keys(colWidths).length||visual.format.tableAutoWidth===false?'max-content':'100%',minWidth:'100%'}}><thead><tr>{columns.map(c=><th key={c} onClick={()=>setSort(s=>s?.field===c?{field:c,dir:s.dir==='asc'?'desc':'asc'}:{field:c,dir:'asc'})} style={{width:colWidths[c]||(visual.format.tableAutoWidth===false?visual.format.tableColumnWidth||100:undefined),position:'relative'}}>{formatColumnHeaderLocal(c)}<span>{sort?.field===c?(sort.dir==='asc'?' ↑':' ↓'):''}</span><div style={{cursor: 'col-resize', position:'absolute', right:0, top:0, bottom:0, width:8}} onMouseDown={(e)=>startResize(e,c)} /></th>)}</tr></thead><tbody>{visible.map((row,ri)=><tr key={ri}>{columns.map((c,ci)=>{const numeric=typeof row[c]==='number';const pct=numeric?Math.min(100,Math.abs(row[c])/numericMax[c]*100):0;const hasFormat=!!formats?.[c];const ruleStyle=tableConditionalStyle(visual,c,row[c],conditionalValues);const textColor=ruleStyle.__textColor;const userColor=textColor||visual.format.tableTextColor||undefined;const rowBg=visual.format.tableAlternatingRows===false?(visual.format.tableBackground||undefined):(ri%2!==0?(visual.format.tableAlternateColor||'#f8fafc'):(visual.format.tableBackground||undefined));const tdStyle:any={...(numeric?{backgroundImage:conditionalCell(row[c],pct)}:{}),...ruleStyle};if(textColor)delete tdStyle.__textColor;// Set CSS variables directly on td so !important CSS rules like var(--cell-text,#172033) pick up user settings
+tdStyle['--cell-text']=userColor;tdStyle['--table-text']=userColor;tdStyle['--cell-bg']=ruleStyle['--cell-bg']||rowBg;tdStyle['--table-font-size']=visual.format.tableFontSize?`${visual.format.tableFontSize}px`:undefined;tdStyle.fontSize=visual.format.tableFontSize?`${visual.format.tableFontSize}px`:undefined;tdStyle.fontFamily=visual.format.tableFontFamily||undefined;tdStyle.textAlign=visual.format.tableTextAlign||undefined;tdStyle.fontWeight=visual.format.tableTextBold?700:undefined;tdStyle.fontStyle=visual.format.tableTextItalic?'italic':undefined;tdStyle.whiteSpace=visual.format.tableTextWrap?'normal':'nowrap';const content=numeric||hasFormat?formatForField(row[c],c,formats):String(row[c]??'');return <td key={c} className={matrix&&ci===0?'matrixRowHeader':''} style={tdStyle}>{content}</td>})}</tr>)}</tbody>
     {visual.format.tableGrandTotal!==false&&<tfoot><tr>{columns.map((c,i)=>{
       if(i===0) return <th key={c}>{visual.format.tableTotalLabel||'Total'}</th>;
       const isNum = filtered.some(r=>typeof r[c]==='number');
@@ -200,9 +279,14 @@ function PremiumDataTable({rows,formats,visual,matrix=false}:{rows:any[];formats
   </div>
 }
 
-export function formatColumnHeader(c: string) {
-  if (c.includes('::')) {
-    const [core, agg] = c.split('::');
+export function formatColumnHeader(c: string, showTablePrefix = false, displayNames?: Record<string,string>) {
+  if(displayNames && displayNames[c]) return displayNames[c];
+  let display = c;
+  if (!showTablePrefix && display.includes('.')) {
+    display = display.split('.').pop() || display;
+  }
+  if (display.includes('::')) {
+    const [core, agg] = display.split('::');
     if (!agg) return core;
     const lowerAgg = agg.toLowerCase();
     if (lowerAgg === 'sum') return `Sum of ${core}`;
@@ -213,10 +297,10 @@ export function formatColumnHeader(c: string) {
     if (lowerAgg === 'count_distinct') return `Distinct Count of ${core}`;
     return `${agg} of ${core}`;
   }
-  return c;
+  return display;
 }
 
-function PremiumMatrix({rows,visual,formats}:{rows:any[];visual:Visual;formats:any}){
+function PremiumMatrix({rows,visual,formats,conditionalValues={}}:{rows:any[];visual:Visual;formats:any;conditionalValues?:Record<string,any>}){
   const rowFields=visual.bindings.axis||[];
   const columnField=visual.bindings.legend?.[0];
   const valueFields=visual.bindings.values||[];
@@ -231,37 +315,37 @@ function PremiumMatrix({rows,visual,formats}:{rows:any[];visual:Visual;formats:a
     return Array.from(map.values());
   },[rows,rowFields.join('|')]);
   const aggregate=(items:any[],field:string)=>{const nums=items.map(r=>Number(r[field])).filter(Number.isFinite);return nums.length?nums.reduce((a,b)=>a+b,0):items[0]?.[field]};
-  return <div className="premiumDataTable matrixMode">
+  return <div className={'premiumDataTable matrixMode'+(visual.format.tableHeaderVisible===false?' hideTableHeader':'')} style={tableCssVariables(visual)}>
     <div className="premiumTableToolbar"><b>Matrix hierarchy</b><span>{grouped.length.toLocaleString()} row groups</span></div>
-    <div className="tableWrap premiumTable matrixTable"><table><thead>
-      {visual.format.tableHeaderVisible!==false&&<tr>{rowFields.map(f=><th key={f} rowSpan={columnField?2:1}>{formatColumnHeader(f)}</th>)}{columnField?columnValues.map(c=><th key={c} colSpan={Math.max(1,valueFields.length)} className="matrixColumnGroup">{c}</th>):valueFields.map(v=><th key={v}>{formatColumnHeader(v)}</th>)}</tr>}
-      {columnField&&visual.format.tableHeaderVisible!==false&&<tr>{columnValues.flatMap(c=>valueFields.map(v=><th key={`${c}:${v}`}>{formatColumnHeader(v)}</th>))}</tr>}
-    </thead><tbody>{grouped.map((group:any)=><><tr key={group.key} style={{height:(visual.format.matrixRowPadding??8)*2+18}}>{rowFields.map((f,i)=><td key={f} className="matrixRowHeader"><span style={{paddingLeft:visual.format.matrixSteppedLayout===false?0:i*14}}>{i>0&&visual.format.matrixSteppedLayout!==false?'↳ ':''}{visual.format.matrixExpandIcons!==false&&i===0?'⊞ ':''}{String(group.labels[i]??'')}</span></td>)}{columnField?columnValues.flatMap(c=>valueFields.map(v=>{const matching=group.rows.filter((r:any)=>String(r[columnField]??'')===c);return <td key={`${c}:${v}`}>{matching.length?formatForField(aggregate(matching,v),v,formats):'—'}</td>})):valueFields.map(v=><td key={v}>{formatForField(aggregate(group.rows,v),v,formats)}</td>)}</tr>{visual.format.matrixSubtotals!==false&&group.rows.length>1&&<tr className="matrixSubtotal"><th colSpan={Math.max(1,rowFields.length)}>Subtotal</th>{columnField?columnValues.flatMap(c=>valueFields.map(v=><th key={`${c}:${v}`}>{formatForField(aggregate(group.rows.filter((r:any)=>String(r[columnField]??'')===c),v),v,formats)}</th>)):valueFields.map(v=><th key={v}>{formatForField(aggregate(group.rows,v),v,formats)}</th>)}</tr>}</>)}</tbody>
-    {visual.format.matrixGrandTotal!==false&&<tfoot><tr><th colSpan={Math.max(1,rowFields.length)}>Grand total</th>{columnField?columnValues.flatMap(c=>valueFields.map(v=><th key={`${c}:${v}`}>{formatForField(aggregate(rows.filter(r=>String(r[columnField]??'')===c),v),v,formats)}</th>)):valueFields.map(v=><th key={v}>{formatForField(aggregate(rows,v),v,formats)}</th>)}</tr></tfoot>}
+    <div className="tableWrap premiumTable matrixTable"><table style={{tableLayout:visual.format.tableAutoWidth===false?'fixed':'auto',width:visual.format.tableAutoWidth===false?'max-content':'100%',minWidth:'100%'}}><thead>
+      {visual.format.tableHeaderVisible!==false&&<tr>{rowFields.map(f=><th key={f} rowSpan={columnField?2:1}>{formatColumnHeader(f, visual.format.tableShowPrefix === true, (visual.format as any).fieldDisplayNames)}</th>)}{columnField?columnValues.map(c=><th key={c} colSpan={Math.max(1,valueFields.length)} className="matrixColumnGroup">{c}</th>):valueFields.map(v=><th key={v}>{formatColumnHeader(v, visual.format.tableShowPrefix === true, (visual.format as any).fieldDisplayNames)}</th>)}</tr>}
+      {columnField&&visual.format.tableHeaderVisible!==false&&<tr>{columnValues.flatMap(c=>valueFields.map(v=><th key={`${c}:${v}`}>{formatColumnHeader(v, visual.format.tableShowPrefix === true)}</th>))}</tr>}
+    </thead><tbody>{grouped.map((group:any)=><><tr key={group.key} style={{height:(visual.format.matrixRowPadding??8)*2+18}}>{rowFields.map((f,i)=><td key={f} className="matrixRowHeader" style={matrixConditionalStyle(visual,f,group.labels[i],conditionalValues)}><span style={{paddingLeft:visual.format.matrixSteppedLayout===false?0:i*14}}>{i>0&&visual.format.matrixSteppedLayout!==false?'↳ ':''}{visual.format.matrixExpandIcons!==false&&i===0?'⊞ ':''}{String(group.labels[i]??'')}</span></td>)}{columnField?columnValues.flatMap(c=>valueFields.map(v=>{const matching=group.rows.filter((r:any)=>String(r[columnField]??'')===c);const value=matching.length?aggregate(matching,v):undefined;return <td key={`${c}:${v}`} style={matrixConditionalStyle(visual,v,value,conditionalValues)}>{matching.length?formatForField(value,v,formats):'—'}</td>})):valueFields.map(v=>{const value=aggregate(group.rows,v);return <td key={v} style={matrixConditionalStyle(visual,v,value,conditionalValues)}>{formatForField(value,v,formats)}</td>})}</tr>{visual.format.matrixSubtotals!==false&&group.rows.length>1&&<tr className="matrixSubtotal"><th colSpan={Math.max(1,rowFields.length)}>Subtotal</th>{columnField?columnValues.flatMap(c=>valueFields.map(v=><th key={`${c}:${v}`}>{formatForField(aggregate(group.rows.filter((r:any)=>String(r[columnField]??'')===c),v),v,formats)}</th>)):valueFields.map(v=><th key={v}>{formatForField(aggregate(group.rows,v),v,formats)}</th>)}</tr>}</>)}</tbody>
+    {visual.format.matrixGrandTotal!==false&&<tfoot><tr><th colSpan={Math.max(1,rowFields.length)}>{visual.format.tableTotalLabel||'Grand total'}</th>{columnField?columnValues.flatMap(c=>valueFields.map(v=><th key={`${c}:${v}`}>{formatForField(aggregate(rows.filter(r=>String(r[columnField]??'')===c),v),v,formats)}</th>)):valueFields.map(v=><th key={v}>{formatForField(aggregate(rows,v),v,formats)}</th>)}</tr></tfoot>}
     </table></div>
   </div>;
 }
 
-export default function Chart({ visual, rows, onPointClick }: { visual: Visual; rows: any[]; onPointClick?:(field:string,value:any)=>void }) {
+function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: Visual; rows: any[]; onPointClick?:(field:string,value:any)=>void;conditionalValues?:Record<string,any> }) {
   const axis = visual.bindings.axis?.[visual.drillLevel || 0] || visual.bindings.axis?.slice(-1)[0];
   const valueField = visual.bindings.values?.[0];
   const targetField = visual.bindings.target?.[0];
   const legendField=visual.bindings.legend?.[0];
-  const accent = visual.format.accent || '#22d3ee';
+  const accent = visual.format.accent || '#118dff';
   const formats = visual.format.fieldFormats || {};
   const fmt = (value: any, field = valueField) => formatForField(value, field, formats);
-  const labelColor = visual.format.labelColor || '#dce8f5';
-  const labelSize = visual.format.labelFontSize || 11;
-  const axisColor=visual.format.axisColor||'#8497ae';
-  const axisSize=visual.format.axisFontSize||10;
+  const labelColor = visual.format.labelColor || '#242424';
+  const labelSize = visual.format.labelFontSize || 10;
+  const axisColor=visual.format.axisColor||'#616161';
+  const axisSize=visual.format.axisFontSize||9;
   const lineWidth=visual.format.lineWidth||3;
   const smooth=visual.format.smoothLines!==false;
   const marker=visual.format.markerShape||'circle';
-  const chartOpacity=Math.max(.2,Math.min(1,(visual.format.chartOpacity??100)/100));
+  const chartOpacity=Math.max(0,Math.min(1,(visual.format.chartOpacity??100)/100));
   const valueColor=(raw:any)=>{const n=Number(raw);if(!visual.format.conditionalColorsEnabled||!Number.isFinite(n))return accent;return n>0?(visual.format.conditionalPositiveColor||'#16a34a'):n<0?(visual.format.conditionalNegativeColor||'#dc2626'):(visual.format.conditionalZeroColor||'#64748b')};
   const fontFamily=`${visual.format.fontFamily||'Aptos'}, 'Segoe UI Variable', 'Segoe UI', sans-serif`;
-  const gridLineColor=visual.format.gridLineColor||'#e2e8f0';
-  const gridLineStyle=visual.format.gridLineStyle||'dashed';
+  const gridLineColor=visual.format.gridLineColor||'#e6e6e6';
+  const gridLineStyle=visual.format.gridLineStyle||'dotted';
   const axisTitleStyle={color:axisColor,fontSize:axisSize,fontFamily,fontWeight:600};
   const showXAxis = visual.format.xAxisVisible ?? visual.format.axesVisible !== false;
   const showYAxis = visual.format.yAxisVisible ?? visual.format.axesVisible !== false;
@@ -279,7 +363,10 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
   };
   const tooltipBase:any={show:visual.format.tooltipEnabled!==false,backgroundColor:visual.format.tooltipBackground||'#ffffff',borderColor:visual.format.tooltipColor||'#242424',borderWidth:1,textStyle:{color:visual.format.tooltipColor||'#242424',fontFamily,fontSize:12},extraCssText:'box-shadow:0 6px 18px rgba(0,0,0,.16);border-radius:3px;'};
   const allValueFields=visual.bindings.values||[];
-  const premiumPalette=['#2563eb','#10b981','#8b5cf6','#f59e0b','#0ea5e9','#ef4444','#14b8a6','#f97316','#6366f1','#22c55e'];
+  const premiumPalette=[accent,...['#118dff','#12239e','#e66c37','#6b007b','#e044a7','#744ec2','#d9b300','#d64550','#197278','#1aab40'].filter(color=>color.toLowerCase()!==accent.toLowerCase())];
+  const configuredSeriesColor=(field:string|undefined,index:number,fallback?:string)=>field&&visual.format.seriesColors?.[field]||fallback||premiumPalette[index%premiumPalette.length];
+  const categoryOverrides=useMemo(()=>(visual.format as any).categoryColors||{},[visual.format]);
+  const categoryColor=(name:any,index:number,raw:any)=>categoryOverrides[String(name)]||(visual.format.conditionalColorsEnabled?valueColor(raw):visual.format.categoricalColors===false?accent:premiumPalette[index%premiumPalette.length]);
   const onPointClickRef = useRef(onPointClick);
   useEffect(() => { onPointClickRef.current = onPointClick; }, [onPointClick]);
   
@@ -301,20 +388,11 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
   const chartEvents:Record<string,Function>|undefined=axis?{mousedown:(p:any)=>p?.event?.event?.stopPropagation?.(),click:(p:any)=>{const value=p?.name!==undefined&&p?.name!==''?p.name:rows[p?.dataIndex||0]?.[axis];if(value!==undefined)onPointClickRef.current?.(axis,value)}}:undefined;
   // Formatting updates must be reflected immediately. Remount the ECharts instance when
   // renderer-relevant formatting changes so stale tooltip/axis/legend state cannot survive.
-  const formatRefreshKey=JSON.stringify({
-    tooltipEnabled:visual.format.tooltipEnabled,tooltipBackground:visual.format.tooltipBackground,tooltipColor:visual.format.tooltipColor,
-    legendVisible:visual.format.legendVisible,legendPosition:visual.format.legendPosition,legendColor:visual.format.legendColor,legendFontSize:visual.format.legendFontSize,
-    axisFontSize:visual.format.axisFontSize,axisColor:visual.format.axisColor,axisTitleVisible:visual.format.axisTitleVisible,xAxisTitle:visual.format.xAxisTitle,yAxisTitle:visual.format.yAxisTitle,
-    gridLines:visual.format.gridLines,gridLineColor:visual.format.gridLineColor,gridLineStyle:visual.format.gridLineStyle,
-    markerShape:visual.format.markerShape,lineWidth:visual.format.lineWidth,smoothLines:visual.format.smoothLines,barRadius:visual.format.barRadius,barWidth:visual.format.barWidth,chartOpacity:visual.format.chartOpacity,
-    referenceLineEnabled:visual.format.referenceLineEnabled,referenceLineValue:visual.format.referenceLineValue,referenceLineLabel:visual.format.referenceLineLabel,referenceLineColor:visual.format.referenceLineColor,
-    zoomSlider:visual.format.zoomSlider,visibleCategoryCount:visual.format.visibleCategoryCount,accent:visual.format.accent,dataLabels:visual.format.dataLabels,showDataPoints:visual.format.showDataPoints,dataPointSize:visual.format.dataPointSize
-  });
+  const formatRefreshKey=JSON.stringify(visual.format);
 
 
   const legendVisible = visual.format.legendVisible !== false;
-  const _rawLg = visual.format.legendPosition || 'bottom';
-  const legendPosition = (_rawLg === 'left' || _rawLg === 'right') ? 'bottom' : _rawLg;
+  const legendPosition = visual.format.legendPosition || 'bottom';
   const legend: any = {
     show: legendVisible,
     textStyle: { color: visual.format.legendColor||axisColor, fontSize: visual.format.legendFontSize||11,fontFamily }
@@ -359,18 +437,20 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
     const trans=Math.max(0,Math.min(100,visual.format.cardBackgroundTransparency??0));
     const imagePosition=visual.format.cardImagePosition||'left';
     const image=visual.format.cardImageEnabled&&visual.format.cardImageUrl?<img className="powerCardImage" src={visual.format.cardImageUrl} alt="" style={{width:visual.format.cardImageSize||44,height:visual.format.cardImageSize||44,objectFit:visual.format.cardImageFit||'contain'}}/>:null;
-    return <div className="powerCardGrid" style={{gridTemplateColumns:columns,columnGap:visual.format.cardGapX??10,rowGap:visual.format.cardGapY??10}}>{fields.map(field=>{const category=(visual.format.categoryLabelText||field||'Value').replace(/^.*\./,'').replace(/_/g,' ');const referenceValue=targetField?row[targetField]:undefined;const categoryNode=visual.format.categoryLabelVisible!==false?<div className="powerCardCategory" style={{color:visual.format.categoryLabelColor||'#616161',fontSize:visual.format.categoryLabelFontSize||11,fontWeight:visual.format.categoryLabelFontWeight||400}}>{category}</div>:null;const referenceNode=visual.format.referenceLabelsVisible?<div className="powerCardReference" style={{color:visual.format.referenceLabelColor||'#616161',fontSize:visual.format.referenceLabelFontSize||10}}><span>{visual.format.referenceLabelText||'Reference'}</span><b>{targetField?formatForField(referenceValue,targetField,formats):'—'}</b></div>:null;return <div key={field} className={'powerCardItem '+(image?'image-'+imagePosition:'image-none')} style={{background:`color-mix(in srgb, ${visual.format.cardBackground||'#ffffff'} ${100-trans}%, transparent)`,border:visual.format.cardBorderVisible?`${visual.format.cardBorderWidth||1}px solid ${visual.format.cardBorderColor||'#e2e8f0'}`:'none',borderRadius:visual.format.cardCornerRadius??8,padding:visual.format.cardPadding??12,minHeight:visual.format.cardMinHeight||92,alignItems:justify,justifyContent:vertical,textAlign:visual.format.cardHorizontalAlign||'center'}}>{imagePosition==='background'&&image?<div className="powerCardImageBackground">{image}</div>:null}{['left','above'].includes(imagePosition)&&image}{visual.format.referenceLabelPosition==='above'&&referenceNode}{visual.format.categoryLabelPosition==='above'&&categoryNode}{visual.format.calloutVisible!==false&&<div className="advancedCardValue" style={{color:visual.format.labelColor||'#242424',fontFamily,fontSize:visual.format.fontSize||28,fontWeight:visual.format.calloutFontWeight||700,whiteSpace:visual.format.calloutWrap===false?'nowrap':'normal'}}>{formatForField(row[field],field,formats)}</div>}{visual.format.categoryLabelPosition!=='above'&&categoryNode}{visual.format.referenceLabelPosition!=='above'&&referenceNode}{['right','below'].includes(imagePosition)&&image}</div>})}</div>;
+    return <div className="powerCardGrid" style={{gridTemplateColumns:columns,columnGap:visual.format.cardGapX??10,rowGap:visual.format.cardGapY??10}}>{fields.map(field=>{const category=visual.format.categoryLabelText||(visual.format as any).fieldDisplayNames?.[field]||(field||'Value').replace(/^.*\./,'').replace(/_/g,' ');const referenceValue=targetField?row[targetField]:undefined;const categoryNode=visual.format.categoryLabelVisible!==false?<div className="powerCardCategory" style={{color:visual.format.categoryLabelColor||'#616161',fontSize:visual.format.categoryLabelFontSize||11,fontWeight:visual.format.categoryLabelFontWeight||400}}>{category}</div>:null;const referenceNode=visual.format.referenceLabelsVisible?<div className="powerCardReference" style={{color:visual.format.referenceLabelColor||'#616161',fontSize:visual.format.referenceLabelFontSize||10}}><span>{visual.format.referenceLabelText||'Reference'}</span><b>{targetField?formatForField(referenceValue,targetField,formats):'-'}</b></div>:null;return <div key={field} className={'powerCardItem '+(image?'image-'+imagePosition:'image-none')} style={{background:`color-mix(in srgb, ${visual.format.cardBackground||'#ffffff'} ${100-trans}%, transparent)`,border:visual.format.cardBorderVisible?`${visual.format.cardBorderWidth||1}px solid ${visual.format.cardBorderColor||'#e2e8f0'}`:'none',borderRadius:visual.format.cardCornerRadius??8,padding:visual.format.cardPadding??12,minHeight:visual.format.cardMinHeight||92,alignItems:justify,justifyContent:vertical,textAlign:visual.format.cardHorizontalAlign||'center'}}>{imagePosition==='background'&&image?<div className="powerCardImageBackground">{image}</div>:null}{['left','above'].includes(imagePosition)&&image}{visual.format.referenceLabelPosition==='above'&&referenceNode}{visual.format.categoryLabelPosition==='above'&&categoryNode}{visual.format.calloutVisible!==false&&<div className="advancedCardValue" style={{color:visual.format.labelColor||'#242424',fontFamily,fontSize:visual.format.fontSize||28,fontWeight:visual.format.calloutFontWeight||700,whiteSpace:visual.format.calloutWrap===false?'nowrap':'normal'}}>{formatForField(row[field],field,formats)}</div>}{visual.format.categoryLabelPosition!=='above'&&categoryNode}{visual.format.referenceLabelPosition!=='above'&&referenceNode}{['right','below'].includes(imagePosition)&&image}</div>})}</div>;
   }
 
   if (visual.type === 'multirowcard') {
     const row=rows?.[0]||{};
-    const fields=allValueFields.length?allValueFields:Object.keys(row).slice(0,6);
+    const boundFields=allValueFields.length?allValueFields:Object.keys(row).slice(0,6);
+    const fields=[...boundFields].sort((a,b)=>{const order=visual.format.cardSortOrder||'binding';if(order==='reverse')return boundFields.indexOf(b)-boundFields.indexOf(a);if(order==='valueAsc'||order==='valueDesc'){const delta=(Number(row[a])||0)-(Number(row[b])||0);return order==='valueAsc'?delta:-delta}return boundFields.indexOf(a)-boundFields.indexOf(b)});
     const tilePalette=['#2563eb','#10b981','#8b5cf6','#f59e0b','#0ea5e9','#ef4444','#14b8a6','#6366f1'];
     const iconFor=(field:string)=>field.match(/sales|revenue|amount|price|cost|profit/i)?'₹':field.match(/customer|employee|user|people/i)?'●':field.match(/product|item|sku/i)?'◆':field.match(/order|invoice|ticket|case/i)?'▣':'#';
     const niceValue=(field:string,value:any)=>{const n=Number(value);if(Number.isFinite(n)&&Number.isInteger(n)&&field.match(/customer|product|order|count|quantity/i))return n.toLocaleString();return formatForField(value,field,formats)};
-    const autoFit=visual.format.cardAutoFit!==false,columns=autoFit?`repeat(auto-fit,minmax(${visual.format.cardMinWidth||150}px,1fr))`:`repeat(${Math.max(1,visual.format.cardsPerRow||2)},minmax(0,1fr))`;
+    const autoFit=visual.format.cardAutoFit!==false,columns=visual.format.cardLayoutDirection==='vertical'?'1fr':autoFit?`repeat(auto-fit,minmax(${visual.format.cardMinWidth||150}px,1fr))`:`repeat(${Math.max(1,visual.format.cardsPerRow||2)},minmax(0,1fr))`;
     const justify={left:'flex-start',center:'center',right:'flex-end'}[visual.format.cardHorizontalAlign||'left'];const align={top:'flex-start',middle:'center',bottom:'flex-end'}[visual.format.cardVerticalAlign||'middle'];
-    return <div className="multiCardGrid premiumMultiCardGrid" style={{gridTemplateColumns:columns,columnGap:visual.format.cardGapX??10,rowGap:visual.format.cardGapY??10}}>{fields.map((field,i)=>{const c=tilePalette[i%tilePalette.length],iconPosition=visual.format.cardIconPosition||'left',labelOrder=visual.format.cardTitlePosition==='bottom'?3:1,valueOrder=visual.format.cardValuePosition==='top'?0:visual.format.cardValuePosition==='bottom'?4:2;return <div className={'multiCardItem premiumMultiCardItem icon-'+iconPosition} key={field} style={{'--metric-color':c,minHeight:visual.format.cardMinHeight||92,padding:visual.format.cardPadding??12,justifyContent:align,textAlign:visual.format.cardHorizontalAlign||'left'} as any}><span className="premiumMultiIcon" style={{background:`${c}14`,color:c,width:visual.format.cardIconSize||34,height:visual.format.cardIconSize||34,fontSize:Math.max(12,(visual.format.cardIconSize||34)*.4),alignSelf:justify}}>{iconFor(field)}</span><div className="premiumMultiContent" style={{alignItems:justify}}><span className="premiumMultiLabel" style={{order:labelOrder}}>{field.replace(/^.*\./,'').replace(/_/g,' ')}</span><b style={{order:valueOrder}}>{niceValue(field,row[field])}</b><small style={{order:5}}>Current value</small></div></div>})}</div>;
+    const trans=Math.max(0,Math.min(100,visual.format.cardBackgroundTransparency??0));
+    return <div className="multiCardGrid premiumMultiCardGrid" style={{'--multi-grid-columns':columns,columnGap:visual.format.cardGapX??10,rowGap:visual.format.cardGapY??10} as any}>{fields.map((field,i)=>{const local=visual.format.cardStyles?.[field]||{},c=local.accent||tilePalette[i%tilePalette.length],iconPosition=visual.format.cardIconPosition||'left',labelOrder=visual.format.cardTitlePosition==='bottom'?3:1,valueOrder=visual.format.cardValuePosition==='top'?0:visual.format.cardValuePosition==='bottom'?4:2,localBorder=local.borderVisible??visual.format.cardBorderVisible;return <div className={'multiCardItem premiumMultiCardItem icon-'+iconPosition} key={field} style={{'--metric-color':c,'--multi-bg':`color-mix(in srgb, ${local.background||visual.format.cardBackground||'#ffffff'} ${100-trans}%, transparent)`,'--multi-border':localBorder?`${local.borderWidth||visual.format.cardBorderWidth||1}px solid ${local.borderColor||visual.format.cardBorderColor||'#e2e8f0'}`:'none','--multi-radius':`${local.cornerRadius??visual.format.cardCornerRadius??8}px`,'--multi-padding':`${visual.format.cardPadding??12}px`,'--multi-min-height':`${visual.format.cardMinHeight||92}px`,'--multi-label-color':local.labelColor||visual.format.categoryLabelColor||'#616161','--multi-label-size':`${visual.format.categoryLabelFontSize||11}px`,'--multi-label-weight':visual.format.categoryLabelFontWeight||400,'--multi-value-color':local.valueColor||visual.format.labelColor||'#242424','--multi-value-size':`${visual.format.fontSize||28}px`,'--multi-value-weight':visual.format.calloutFontWeight||700,justifyContent:align,textAlign:visual.format.cardHorizontalAlign||'left'} as any}><span className="premiumMultiIcon" style={{background:`${c}14`,color:c,width:visual.format.cardIconSize||34,height:visual.format.cardIconSize||34,fontSize:Math.max(12,(visual.format.cardIconSize||34)*.4),alignSelf:justify}}>{iconFor(field)}</span><div className="premiumMultiContent" style={{alignItems:justify}}>{visual.format.categoryLabelVisible!==false&&<span className="premiumMultiLabel" style={{order:labelOrder}}>{visual.format.categoryLabelText||(visual.format as any).fieldDisplayNames?.[field]||(field||'').replace(/^.*\./,'').replace(/_/g,' ')}</span>}{visual.format.calloutVisible!==false&&<b style={{order:valueOrder,whiteSpace:visual.format.calloutWrap===false?'nowrap':'normal'}}>{niceValue(field,row[field])}</b>}<small style={{order:5}}>Current value</small></div></div>})}</div>;
   }
 
   if (visual.type === 'progress') {
@@ -393,9 +473,9 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
     return (
       <div className="progressVisual" style={{ padding: '0 12px', display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '100%', boxSizing: 'border-box' }}>
         <div className="progressMetric" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '8px' }}>
-          <b style={{ color: visual.format.labelColor || valueColor(current), fontSize: Math.max(16, visual.format.fontSize || 28) + 'px', lineHeight: 1 }}>
+          {visual.format.dataLabels!==false&&<b style={{ color: visual.format.labelColor || valueColor(current), fontSize: Math.max(10, visual.format.labelFontSize || visual.format.fontSize || 28) + 'px', lineHeight: 1 }}>
             {showPercent ? `${pct.toFixed(1)}%` : fmt(current)}
-          </b>
+          </b>}
           <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 500 }}>
             {valueField || 'Progress'}
           </span>
@@ -418,39 +498,41 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
 
           {hasTarget && (
             <>
-              <div style={{
-                position: 'absolute', top: '50%', left: `${targetPct}%`, transform: 'translate(-50%, -50%)',
-                width: '4px', height: 'calc(100% + 8px)',
-                background: visual.format.targetColor || '#333333',
-                borderRadius: '2px', zIndex: 10
-              }} />
-              <div style={{
+                <div style={{
+                  position: 'absolute', top: '50%', left: `${targetPct}%`, transform: 'translate(-50%, -50%)',
+                  width: '4px', height: 'calc(100% + 8px)',
+                  background: visual.format.targetColor || '#333333',
+                  borderRadius: '2px', zIndex: 10, boxSizing:'border-box'
+                }} />
+              {visual.format.targetLabelVisible!==false&&<div style={{
                 position: 'absolute', top: 'calc(100% + 4px)', left: `${targetPct}%`, transform: 'translateX(-50%)',
                 color: visual.format.targetColor || '#333333', fontSize: '11px', fontWeight: 700, whiteSpace: 'nowrap'
               }}>
                 ▲ {showPercent ? `${targetPct!.toFixed(1)}%` : fmt(rawTarget!)}
-              </div>
+              </div>}
             </>
           )}
         </div>
 
-        <div style={{ position: 'relative', marginTop: '6px', height: '16px', fontSize: '11px', color: '#94a3b8' }}>
+        {visual.format.gaugeAxisLabelsVisible!==false&&<div style={{ position: 'relative', marginTop: '6px', height: '16px', fontSize: `${visual.format.gaugeAxisLabelFontSize||11}px`, color: visual.format.gaugeAxisLabelColor||'#64748b' }}>
           <span style={{ position: 'absolute', left: 0 }}>{showPercent ? '0%' : fmt(minimum)}</span>
           <span style={{ position: 'absolute', right: 0 }}>{showPercent ? '100%' : fmt(maximum)}</span>
-        </div>
+        </div>}
       </div>
     );
   }
 
-  if (visual.type === 'matrix') return <PremiumMatrix rows={rows} visual={visual} formats={formats}/>;
+  if (visual.type === 'matrix') return <PremiumMatrix rows={rows} visual={visual} formats={formats} conditionalValues={conditionalValues}/>;
 
-  if (visual.type === 'table') return <PremiumDataTable rows={rows} formats={formats} visual={visual}/>;
+  if (visual.type === 'table') return <PremiumDataTable rows={rows} formats={formats} visual={visual} conditionalValues={conditionalValues}/>;
 
   // For pie/donut the category field is placed in bindings.legend (not axis).
   // Fall back to legendField so every chart type works regardless of which pane was used.
   const effectiveAxis = axis || legendField;
   const names = rows.map((row) => row[effectiveAxis || '']);
   const values = rows.map((row) => row[valueField || '']);
+  const globalMaxCatW = Math.max(0, ...(names.length ? names : ['']).map(c => String(fmtCategoryLabel(c)).length)) * (axisSize * 0.6);
+  const globalXNameGap = globalMaxCatW > 40 ? globalMaxCatW * 0.7 + 25 : 35;
   const tooltipFormatter = (params: any) => {
     const entries = Array.isArray(params) ? params : [params];
     const first = entries[0];
@@ -470,17 +552,17 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
   if (visual.type === 'treemap') {
     return <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true} style={{height:'100%'}} onEvents={chartEvents} option={{
       tooltip:{...tooltipBase,formatter:(p:any)=>`${p.name}<br/><b>${fmt(p.value)}</b>`},
-      series:[{type:'treemap',roam:false,nodeClick:false,breadcrumb:{show:false},label:{show:!!visual.format.dataLabels,position:visual.format.labelPosition==='inside'?'inside':'insideTopLeft',formatter:(p:any)=>`{name|${p.name}}\n{val|${fmt(p.value)}}`,rich:{name:{color:labelColor,fontFamily,fontSize:Math.max(12,labelSize+2),fontWeight:'bold',padding:[0,0,3,0]},val:{color:labelColor,fontFamily,fontSize:labelSize}}},
-        upperLabel:{show:visual.format.treemapGroupLabels!==false,color:labelColor,formatter:'{name}'},itemStyle:{borderColor:'#ffffff',borderWidth:visual.format.treemapBorderWidth??2,gapWidth:visual.format.treemapGap??2},data:rows.map(r=>{const value=Number(r[valueField||'']||0);return{name:String(r[effectiveAxis||'']),value,...(visual.format.conditionalColorsEnabled?{itemStyle:{color:valueColor(value)}}:{})}})}]
+       series:[{type:'treemap',roam:false,nodeClick:false,breadcrumb:{show:false},label:{show:!!visual.format.dataLabels,position:visual.format.labelPosition==='center'?'inside':'insideTop',align:'center',verticalAlign:visual.format.labelPosition==='center'?'middle':'top',color:labelColor,fontFamily,fontSize:labelSize,formatter:visual.format.labelPosition==='center'?(p:any)=>`${p.name}\n${fmt(p.value)}`:(p:any)=>`{name|${p.name}}\n{val|${fmt(p.value)}}`,rich:visual.format.labelPosition==='center'?undefined:{name:{color:labelColor,fontFamily,fontSize:Math.max(12,labelSize+2),fontWeight:'bold',padding:[0,0,3,0]},val:{color:labelColor,fontFamily,fontSize:labelSize}},overflow:'truncate'},labelLayout:(params:any)=>visual.format.labelPosition==='center'&&params.rect?{x:params.rect.x+params.rect.width/2,y:params.rect.y+params.rect.height/2,align:'center',verticalAlign:'middle'}:{},
+        upperLabel:{show:visual.format.treemapGroupLabels!==false,color:labelColor,formatter:'{name}'},itemStyle:{borderColor:'#ffffff',borderWidth:visual.format.treemapBorderWidth??2,gapWidth:visual.format.treemapGap??2},data:rows.map((r,i)=>{const name=String(r[effectiveAxis||'']),value=Number(r[valueField||'']||0);return{name,value,itemStyle:{color:categoryColor(name,i,value),opacity:chartOpacity}}})}]
     }}/>;
   }
 
   if (visual.type === 'funnel') {
     return <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true} style={{height:'100%'}} onEvents={chartEvents} option={{
       tooltip:{...tooltipBase,trigger:'item',formatter:tooltipFormatter},series:[{type:'funnel',left:'8%',top:12,bottom:12,width:'84%',sort:visual.format.funnelSort||'descending',gap:visual.format.funnelGap??2,
-        label:{show:!!visual.format.dataLabels,color:labelColor,fontFamily,fontSize:labelSize,formatter:(p:any)=>`${p.name}  ${fmt(p.value)}`},
+        label:{show:!!visual.format.dataLabels,color:labelColor,fontFamily,fontSize:labelSize,position:'right',formatter:(p:any)=>`${p.name}  ${fmt(p.value)}`},
         itemStyle:{borderColor:'#ffffff',borderWidth:1,opacity:chartOpacity},
-        data:rows.map(r=>{const value=Number(r[valueField||'']||0);return{name:String(r[effectiveAxis||'']),value,...(visual.format.conditionalColorsEnabled?{itemStyle:{color:valueColor(value)}}:{})}})}]
+        data:rows.map((r,i)=>{const name=String(r[effectiveAxis||'']),value=Number(r[valueField||'']||0);return{name,value,itemStyle:{color:categoryColor(name,i,value)}}})}]
     }}/>;
   }
 
@@ -543,7 +625,7 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
           const prevCat = categories[i - 1];
           const prevMap = dataMap.get(prevCat) || new Map();
           const allBreakdowns = Array.from(new Set([...currentMap.keys(), ...prevMap.keys()]));
-          let deltas = allBreakdowns.map(b => {
+          let deltas: {name: any, delta: number, isOther?: boolean}[] = allBreakdowns.map(b => {
             const curVal = currentMap.get(b) || 0;
             const prevVal = prevMap.get(b) || 0;
             return { name: b, delta: curVal - prevVal };
@@ -580,41 +662,28 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
       }
     }
 
+    const maxValW = Math.max(0, ...nums.map(n => String(fmt(parseFloat(Number(n.raw||0).toFixed(3)))).length)) * (axisSize * 0.55);
+    const wfYGap = showYAxis ? Math.max(45, maxValW + 15) : 45;
     return <ChartScrollerWrapper echartsKey={formatRefreshKey} events={chartEvents} categories={finalNames} horizontal={false} visibleCount={visual.format.visibleCategoryCount||12} option={{
-      tooltip:{...tooltipBase,trigger:'axis',formatter:(p:any)=>`${p[1]?.name}<br/><b>${fmt(nums[p[1]?.dataIndex]?.raw)}</b>`},grid:{left:58,right:20,top:16,bottom:28},dataZoom:categoryZoom(finalNames),
-      xAxis:{show:showXAxis,type:'category',data:finalNames,axisLabel:{color:axisColor,fontSize:axisSize,fontFamily}},
-      yAxis:{show:showYAxis,type:'value',axisLabel:{color:axisColor,fontSize:axisSize,formatter:(x:number)=>fmt(x)},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},
+      tooltip:{...tooltipBase,trigger:'axis',formatter:(p:any)=>`${p[1]?.name}<br/><b>${fmt(nums[p[1]?.dataIndex]?.raw)}</b>`},grid:{containLabel:true,left:showYAxisTitle?35:15,right:20,top:16,bottom:15+(showXAxisTitle?35:0)},dataZoom:categoryZoom(finalNames),
+      xAxis:{show:showXAxis||showXAxisTitle,type:'category',data:finalNames,name:showXAxisTitle?(visual.format.xAxisTitle||catField||'Category'):'',nameLocation:'middle',nameGap:globalXNameGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showXAxis,color:axisColor,fontSize:axisSize,fontFamily}},
+      yAxis:{show:showYAxis||showYAxisTitle,type:'value',name:showYAxisTitle?(visual.format.yAxisTitle||valField||'Value'):'',nameLocation:'middle',nameGap:wfYGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showYAxis,color:axisColor,fontSize:axisSize,formatter:(x:number)=>fmt(x)},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},
       series:[
         {type:'bar',stack:'wf',silent:true,itemStyle:{color:'transparent'},data:helpers},
         {type:'bar',stack:'wf',barMaxWidth:visual.format.barWidth||38,data:nums,
-         label:{show:visual.format.dataLabels,color:labelColor,position:'top',formatter:(p:any)=>fmt(nums[p.dataIndex]?.raw)},markLine:referenceMarkLine(false)}
+         itemStyle:{borderRadius:[visual.format.barRadius??0,visual.format.barRadius??0,0,0]},
+         label:{show:visual.format.dataLabels,color:labelColor,fontSize:labelSize,position:'top',formatter:(p:any)=>fmt(nums[p.dataIndex]?.raw)},markLine:referenceMarkLine(false)}
       ]
     }}/>;
   }
 
   if (visual.type === 'radar') {
-    // Render radar geometry directly. This keeps the visual stable even when a
-    // report has sparse categories; ECharts' radar coordinator can throw while
-    // mounting malformed/small indicator sets and take down the whole designer.
-    const radarNames=names.slice(0,12).map(n=>String(n??''));
-    const radarValues=values.slice(0,12).map(v=>Number(v)||0);
-    const count=Math.max(3,radarNames.length);
-    while(radarNames.length<count)radarNames.push('');
-    while(radarValues.length<count)radarValues.push(0);
-    const cx=160,cy=94,radius=62,max=Math.max(...radarValues.map(v=>Math.abs(v)),1)*1.1;
-    const point=(i:number,r:number)=>{const a=-Math.PI/2+i*Math.PI*2/count;return [cx+Math.cos(a)*r,cy+Math.sin(a)*r] as const};
-    const polygon=(r:number)=>Array.from({length:count},(_,i)=>point(i,r).join(',')).join(' ');
-    const dataPoints=radarValues.map((v,i)=>point(i,Math.max(0,Math.min(1,Math.abs(v)/max))*radius).join(',')).join(' ');
-    return <div style={{height:'100%',width:'100%',display:'grid',placeItems:'center'}}>
-      <svg viewBox="0 0 320 205" role="img" aria-label={`${valueField||'Value'} radar chart`} style={{width:'100%',height:'100%',overflow:'visible',fontFamily}}>
-        {visual.format.radarGridVisible!==false&&[.25,.5,.75,1].map(level=><polygon key={level} points={polygon(radius*level)} fill={level%1===0?'#f8fafc':'none'} stroke={gridLineColor} strokeWidth="1"/>) }
-        {visual.format.radarGridVisible!==false&&Array.from({length:count},(_,i)=>{const[x,y]=point(i,radius);return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke={gridLineColor} strokeWidth="1"/>})}
-        <polygon points={dataPoints} fill={accent} fillOpacity={(visual.format.radarFillOpacity??18)/100} stroke={accent} strokeWidth={lineWidth} strokeLinejoin="round"/>
-        {visual.format.showDataPoints!==false&&radarValues.map((v,i)=>{const[x,y]=point(i,Math.max(0,Math.min(1,Math.abs(v)/max))*radius);return <circle key={i} cx={x} cy={y} r={Math.max(2,visual.format.dataPointSize||4)} fill="#fff" stroke={accent} strokeWidth="2"><title>{radarNames[i]}: {fmt(v)}</title></circle>})}
-        {visual.format.radarLabelVisible!==false&&radarNames.map((name,i)=>{const[x,y]=point(i,radius+17),anchor=x<cx-8?'end':x>cx+8?'start':'middle';return <text key={i} x={x} y={y} textAnchor={anchor} dominantBaseline="middle" fill={axisColor} fontSize={axisSize}>{name}</text>})}
-        <text x={cx} y="198" textAnchor="middle" fill={axisColor} fontSize="10" fontWeight="600">{valueField||'Value'}</text>
-      </svg>
-    </div>;
+    return <RadarChartWrapper 
+      visual={visual} names={names} values={values} valueField={valueField} 
+      gridLineColor={gridLineColor} accent={accent} lineWidth={lineWidth} 
+      marker={marker} labelColor={labelColor} axisColor={axisColor} 
+      fontFamily={fontFamily} fmt={fmt} labelSize={labelSize} axisSize={axisSize} 
+    />;
   }
 
   if (visual.type === 'heatmap') {
@@ -660,11 +729,11 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
 
     return <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true} style={{height:'100%'}} onEvents={chartEvents} option={{
       tooltip:{...tooltipBase,position:'top', formatter:(p:any) => p.value[2] !== '-' ? `${xCategories[p.value[0]]} - ${yCategories[p.value[1]]}<br/><b>${fmt(p.value[2], valField)}</b>` : `${xCategories[p.value[0]]} - ${yCategories[p.value[1]]}<br/><b>No Data</b>`},
-      grid:{left:80,right:20,top:30,bottom:legendVisible?65:15,containLabel:true},
+      grid:{left:legendVisible&&legendPosition==='left'?125:80,right:legendVisible&&legendPosition==='right'?125:20,top:legendVisible&&legendPosition==='top'?65:30,bottom:legendVisible&&legendPosition==='bottom'?65:15,containLabel:true},
       xAxis:{show:showXAxis,type:'category',position:'top',data:xCategories,axisLabel:{color:axisColor,fontSize:axisSize,rotate:xCategories.length>12?45:0},axisLine:{show:false},axisTick:{show:false},splitLine:{show:true,lineStyle:{color:'#ffffff',width:gap}}},
       yAxis:{show:showYAxis,type:'category',data:yCategories,inverse:true,axisLabel:{color:axisColor,fontSize:axisSize},axisLine:{show:false},axisTick:{show:false},splitLine:{show:true,lineStyle:{color:'#ffffff',width:gap}}},
-      visualMap:{show:legendVisible,min,max,calculable:true,orient:'horizontal',left:'center',bottom:0,textStyle:{color:axisColor},formatter:(v:number)=>fmt(v, valField),inRange:{color:(() => { const lo = visual.format.heatmapMinColor||'#00b050'; const hi = visual.format.heatmapMaxColor||'#ff0000'; const mid = visual.format.heatmapMidColor || heatmapAutoMid(lo, hi); return [lo, mid, hi]; })()}},
-      series:[{type:'heatmap',data:gridData,label:{show:visual.format.dataLabels,color:labelColor,formatter:(p:any)=>p.value[2]!=='-'?fmt(p.value[2], valField):''},itemStyle:{borderColor:'#ffffff',borderWidth:0}}]
+      visualMap:{show:legendVisible,min,max,calculable:true,orient:legendPosition==='left'||legendPosition==='right'?'vertical':'horizontal',left:legendPosition==='left'?0:legendPosition==='right'?'auto':'center',right:legendPosition==='right'?0:'auto',top:legendPosition==='top'?0:legendPosition==='left'||legendPosition==='right'?'middle':'auto',bottom:legendPosition==='bottom'?0:'auto',textStyle:{color:visual.format.legendColor||axisColor,fontSize:Number(visual.format.legendFontSize)||11,fontFamily},formatter:(v:number)=>fmt(v, valField),inRange:{color:(() => { const lo = visual.format.heatmapMinColor||'#00b050'; const hi = visual.format.heatmapMaxColor||'#ff0000'; const mid = visual.format.heatmapMidColor || heatmapAutoMid(lo, hi); return [lo, mid, hi]; })()}},
+      series:[{type:'heatmap',data:gridData,label:{show:visual.format.dataLabels,color:labelColor,fontSize:Number(labelSize)||11,formatter:(p:any)=>p.value[2]!=='-'?fmt(p.value[2], valField):''},itemStyle:{borderColor:'#ffffff',borderWidth:gap}}]
     }}/>;
   }
 
@@ -672,71 +741,108 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
     const valField = effectiveAxis || '';
     const freqField = valueField || '';
 
-    const dataPoints: {val: number, freq: number}[] = [];
+    let labels: string[] = [];
+    let barData: any[] = [];
+    let isCategorical = false;
+    let barWidth = '100%';
+
+    // Check if the data is numerical or categorical
+    let validNumbers = 0;
     rows.forEach(r => {
-      const v = Number(r[valField]);
-      if (Number.isFinite(v)) {
-        const f = freqField ? Number(r[freqField] || 0) : 1;
-        dataPoints.push({val: v, freq: f});
+      const raw = r[valField];
+      if (raw != null && raw !== '') {
+         if (Number.isFinite(Number(raw))) validNumbers++;
       }
     });
+    if (validNumbers === 0 && rows.length > 0) isCategorical = true;
 
-    if (dataPoints.length === 0) {
+    if (isCategorical) {
+       // Categorical histogram (frequency bar chart)
+       const catCounts: Record<string, number> = {};
+       rows.forEach(r => {
+          const raw = r[valField];
+          const cat = raw != null && raw !== '' ? String(raw) : '(Blank)';
+          const f = freqField ? Number(r[freqField] || 0) : 1;
+          catCounts[cat] = (catCounts[cat] || 0) + f;
+       });
+       labels = Object.keys(catCounts);
+       barData = labels.map(label => ({
+         name: label,
+         value: catCounts[label],
+         itemStyle: { color: valueColor(catCounts[label]) }
+       }));
+       barWidth = 'auto'; // Give bars some breathing room for categorical data
+    } else {
+       // Existing numerical binning logic
+       const dataPoints: {val: number, freq: number}[] = [];
+       rows.forEach(r => {
+         const v = Number(r[valField]);
+         if (Number.isFinite(v)) {
+           const f = freqField ? Number(r[freqField] || 0) : 1;
+           dataPoints.push({val: v, freq: f});
+         }
+       });
+       
+       if (dataPoints.length > 0) {
+           const binCount = Math.max(2, Math.min(100, visual.format.histogramBinCount || 10));
+           const minVal = Math.min(...dataPoints.map(d => d.val));
+           const maxVal = Math.max(...dataPoints.map(d => d.val));
+           const step = (maxVal - minVal) / binCount || 1;
+       
+           const allBins: {lo: number, hi: number, count: number}[] = [];
+           for (let i = 0; i < binCount; i++) {
+             allBins.push({lo: minVal + i * step, hi: minVal + (i + 1) * step, count: 0});
+           }
+           dataPoints.forEach(d => {
+             let idx = Math.floor((d.val - minVal) / step);
+             if (idx >= binCount) idx = binCount - 1;
+             if (idx < 0) idx = 0;
+             allBins[idx].count += d.freq;
+           });
+       
+           const precision = step < 1 ? 2 : (step < 100 ? 1 : 0);
+           const edgeFmt = (v: number) => {
+             if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(precision > 0 ? precision : 1)}M`;
+             if (Math.abs(v) >= 1e3) return `${(v / 1e3).toFixed(precision > 0 ? precision : 1)}K`;
+             return v.toFixed(precision);
+           };
+       
+           labels = allBins.map(b => isCategorical ? b.lo.toString() : edgeFmt(b.lo));
+           barData = allBins.map((b, i) => ({
+             name: `${edgeFmt(b.lo)} - ${edgeFmt(b.hi)}`,
+             value: b.count,
+             itemStyle: {color: valueColor(b.count)}
+           }));
+       }
+    }
+
+    if (barData.length === 0) {
       return <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true} style={{height:'100%'}} option={{}}/>;
     }
 
-    const binCount = Math.max(2, Math.min(100, visual.format.histogramBinCount || 10));
-    const minVal = Math.min(...dataPoints.map(d => d.val));
-    const maxVal = Math.max(...dataPoints.map(d => d.val));
-    const step = (maxVal - minVal) / binCount || 1;
-
-    // Build all bins including empty ones — zero-height bins hold space so filled bins are contiguous
-    const allBins: {lo: number, hi: number, count: number}[] = [];
-    for (let i = 0; i < binCount; i++) {
-      allBins.push({lo: minVal + i * step, hi: minVal + (i + 1) * step, count: 0});
-    }
-    dataPoints.forEach(d => {
-      let idx = Math.floor((d.val - minVal) / step);
-      if (idx >= binCount) idx = binCount - 1;
-      if (idx < 0) idx = 0;
-      allBins[idx].count += d.freq;
-    });
-
-    // Format bin edge labels — use compact numeric notation with auto precision
-    const precision = step < 1 ? 2 : (step < 100 ? 1 : 0);
-    const edgeFmt = (v: number) => {
-      if (Math.abs(v) >= 1e6) return `${(v / 1e6).toFixed(precision > 0 ? precision : 1)}M`;
-      if (Math.abs(v) >= 1e3) return `${(v / 1e3).toFixed(precision > 0 ? precision : 1)}K`;
-      return v.toFixed(precision);
-    };
-
-    const labels = allBins.map(b => edgeFmt(b.lo));
-    const barData = allBins.map((b, i) => ({
-      name: `${edgeFmt(b.lo)} – ${edgeFmt(b.hi)}`,
-      value: b.count,
-      itemStyle: {color: valueColor(b.count)}
-    }));
-
+    const maxValW = Math.max(0, ...barData.map(b => String(fmt(parseFloat(Number(b.value||0).toFixed(3)))).length)) * (axisSize * 0.55);
+    const histYGap = showYAxis ? Math.max(42, maxValW + 15) : 42;
     return <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true} style={{height:'100%'}} onEvents={chartEvents} option={{
       tooltip:{...tooltipBase,trigger:'axis',formatter:(params:any)=>{const p=params[0];return p?`${p.name}<br/><b>${p.value}</b>`:''}},
-      grid:{left:52,right:18,top:14,bottom:58},
-      xAxis:{show:showXAxis,type:'category',data:labels,axisLabel:{color:axisColor,fontSize:10,rotate:40,hideOverlap:true},axisTick:{alignWithLabel:true}},
-      yAxis:{show:showYAxis,type:'value',name:freqField?freqField.split('.').pop()?.split('::')[0]:'Frequency',nameTextStyle:{color:axisColor,fontSize:axisSize},axisLabel:{color:axisColor,fontSize:axisSize},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},
+      grid:{containLabel:true,left:showYAxisTitle?35:15,right:18,top:14,bottom:15+(showXAxisTitle?35:0)},
+      xAxis:{show:showXAxis||showXAxisTitle,type:'category',data:labels,name:showXAxisTitle?(visual.format.xAxisTitle||valField||'Bins'):'',nameLocation:'middle',nameGap:48,nameTextStyle:axisTitleStyle,axisLabel:{show:showXAxis,color:axisColor,fontSize:axisSize,rotate:isCategorical?45:40,hideOverlap:true},axisTick:{alignWithLabel:true}},
+      yAxis:{show:showYAxis||showYAxisTitle,type:'value',name:showYAxisTitle?(visual.format.yAxisTitle||(freqField?freqField.split('.').pop()?.split('::')[0]:'Frequency')):'',nameLocation:'middle',nameGap:histYGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showYAxis,color:axisColor,fontSize:axisSize},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},
       series:[{type:'bar',data:barData,
-        label:{show:!!visual.format.dataLabels,color:labelColor,position:'top',formatter:(p:any)=>p.value>0?String(p.value):''},
-        barWidth:'100%',barGap:'0%',barCategoryGap:'0%',
+        label:{show:!!visual.format.dataLabels,color:labelColor,fontSize:labelSize,position:'top',formatter:(p:any)=>p.value>0?String(p.value):''},
+        barWidth: barWidth,
         itemStyle:{borderColor:'#ffffff',borderWidth:1,opacity:chartOpacity,borderRadius:[visual.format.barRadius||0,visual.format.barRadius||0,0,0]},markLine:referenceMarkLine(false)}]
     }}/>;
   }
-
 
   if (visual.type === 'boxplot') {
     const sorted = [...values].map(v => Number(v) || 0).sort((a, b) => a - b);
     const q = (p: number) => sorted[Math.floor(p * (sorted.length - 1))];
     const data = [[q(0), q(0.25), q(0.5), q(0.75), q(1)]];
     const nums = values.map(v => Number(v) || 0);
+    const maxValW = Math.max(0, ...nums.map(v => String(fmt(parseFloat(Number(v||0).toFixed(3)))).length)) * (axisSize * 0.55);
+    const boxYGap = showYAxis ? Math.max(42, maxValW + 15) : 42;
     return <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true} style={{height:'100%'}} onEvents={chartEvents} option={{
-      tooltip:{...tooltipBase,trigger:'item'},grid:{containLabel:true,left:15,right:20,top:20,bottom:15},xAxis:{show:showXAxis,type:'category',data:[valueField||'Distribution'],axisLabel:{color:axisColor,fontSize:axisSize}},yAxis:{show:showYAxis,type:'value',axisLabel:{color:axisColor,fontSize:axisSize,formatter:(x:number)=>fmt(x)},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},
+      tooltip:{...tooltipBase,trigger:'item'},grid:{containLabel:true,left:showYAxisTitle?35:15,right:20,top:20,bottom:15+(showXAxisTitle?35:0)},xAxis:{show:showXAxis||showXAxisTitle,type:'category',data:[valueField||'Distribution'],name:showXAxisTitle?(visual.format.xAxisTitle||valueField||'Distribution'):'',nameLocation:'middle',nameGap:globalXNameGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showXAxis,color:axisColor,fontSize:axisSize}},yAxis:{show:showYAxis||showYAxisTitle,type:'value',name:showYAxisTitle?(visual.format.yAxisTitle||'Value'):'',nameLocation:'middle',nameGap:boxYGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showYAxis,color:axisColor,fontSize:axisSize,formatter:(x:number)=>fmt(x)},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},
       series:[{type:'boxplot',data,itemStyle:{color:`${accent}55`,borderColor:accent,borderWidth:lineWidth},markLine:referenceMarkLine(false)},...(visual.format.boxShowOutliers===false?[]:[{type:'scatter',data:nums.filter(v=>v<q(.25)-1.5*(q(.75)-q(.25))||v>q(.75)+1.5*(q(.75)-q(.25))).map(v=>[0,v]),symbolSize:6,itemStyle:{color:accent}}])]
     }}/>;
   }
@@ -744,36 +850,43 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
   if (visual.type === 'bubble') {
     const second=allValueFields[1];const secondVals=second?rows.map(r=>Number(r[second])||0):values.map((v,i)=>i+1);
     const max2=Math.max(...secondVals.map(Math.abs),1);
+    const maxValW = Math.max(0, ...values.map(v => String(fmt(parseFloat(Number(v||0).toFixed(3)))).length)) * (axisSize * 0.55);
+    const bubbleYGap = showYAxis ? Math.max(42, maxValW + 15) : 42;
     return <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true} style={{height:'100%'}} onEvents={chartEvents} option={{
       tooltip:{...tooltipBase,trigger:'item',formatter:(p:any)=>`${p.name}<br/>${valueField}: <b>${fmt(p.value[1])}</b>${second?`<br/>${second}: ${formatForField(p.value[2],second,formats)}`:''}`},
-      grid:{containLabel:true,left:15,right:25,top:25,bottom:15},xAxis:{show:showXAxis,type:'category',data:names,axisLabel:{color:axisColor,fontSize:axisSize}},yAxis:{show:showYAxis,type:'value',axisLabel:{color:axisColor,formatter:(x:number)=>fmt(x)},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},
-      series:[{type:'scatter',data:values.map((v,i)=>[names[i],Number(v)||0,secondVals[i]]),symbol:marker,symbolSize:(d:any)=>(visual.format.bubbleMinSize??10)+Math.abs(d[2])/max2*((visual.format.bubbleMaxSize??45)-(visual.format.bubbleMinSize??10)),itemStyle:{color:(p:any)=>valueColor(p.value?.[1]),opacity:chartOpacity},label:{show:!!visual.format.dataLabels,color:labelColor,formatter:(p:any)=>fmt(p.value[1])},markLine:referenceMarkLine(false)}]
+      grid:{containLabel:true,left:showYAxisTitle?35:15,right:25,top:25,bottom:15+(showXAxisTitle?35:0)},xAxis:{show:showXAxis||showXAxisTitle,type:'category',data:names,name:showXAxisTitle?(visual.format.xAxisTitle||effectiveAxis||'Category'):'',nameLocation:'middle',nameGap:globalXNameGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showXAxis,color:axisColor,fontSize:axisSize}},yAxis:{show:showYAxis||showYAxisTitle,type:'value',name:showYAxisTitle?(visual.format.yAxisTitle||valueField||'Value'):'',nameLocation:'middle',nameGap:bubbleYGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showYAxis,color:axisColor,fontSize:axisSize,formatter:(x:number)=>fmt(x)},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},
+      series:[{type:'scatter',data:values.map((v,i)=>[names[i],Number(v)||0,secondVals[i]]),symbol:marker,symbolSize:visual.format.showDataPoints===false?0:(d:any)=>(visual.format.bubbleMinSize??10)+Math.abs(d[2])/max2*((visual.format.bubbleMaxSize??45)-(visual.format.bubbleMinSize??10)),itemStyle:{color:(p:any)=>valueColor(p.value?.[1]),opacity:chartOpacity},label:{show:!!visual.format.dataLabels,color:labelColor,fontSize:labelSize,position:'top',formatter:(p:any)=>fmt(p.value[1])},markLine:referenceMarkLine(false)}]
     }}/>;
   }
 
   if (visual.type === 'combo') {
-      const second=allValueFields[1];const secondData=second?rows.map(r=>r[second]):values;
-      const xMargin = (legendVisible && legendPosition === 'bottom' ? 45 : 15);
-      const lgLeft = (legendVisible && legendPosition === 'left' ? 85 : 15);
+      const second=visual.bindings.target?.[0];const secondData=second?rows.map(r=>r[second]):[];
+      const primaryColor=configuredSeriesColor(valueField,0,accent),secondaryColor=configuredSeriesColor(second,1,visual.format.comboSecondaryColor||'#f59e0b');
+      const xMargin = (legendVisible && legendPosition === 'bottom' ? 45 : 15) + (showXAxisTitle ? 35 : 0);
+      const lgLeft = (legendVisible && legendPosition === 'left' ? 85 : 15) + (showYAxisTitle ? 50 : 0);
       const lgRight = (legendVisible && legendPosition === 'right' ? 85 : 15);
+      const maxValW = Math.max(0, ...values.map(v => String(fmt(parseFloat(Number(v||0).toFixed(3)))).length)) * (axisSize * 0.55);
+      const comboYGap = showYAxis ? Math.max(42, maxValW + 15) : 42;
       return <ChartScrollerWrapper echartsKey={formatRefreshKey} events={chartEvents} categories={names} horizontal={false} visibleCount={visual.format.visibleCategoryCount||12} option={{
-      tooltip:{...tooltipBase,trigger:'axis'},legend:{...legend,data:[valueField,second].filter(Boolean)},grid:{containLabel:true,left:lgLeft,right:lgRight,top:30,bottom:xMargin},dataZoom:categoryZoom(names),
-      xAxis:{show:showXAxis,type:'category',data:names,axisLabel:{color:axisColor,fontSize:axisSize}},
-      yAxis:[{show:showYAxis,type:'value',axisLabel:{color:axisColor,formatter:(x:number)=>fmt(x,valueField)}},{show:showYAxis&&visual.format.comboSecondaryAxisVisible!==false,type:'value',axisLabel:{color:axisColor,formatter:(x:number)=>formatForField(x,second,formats)}}],
-      series:[{name:valueField,type:'bar',data:values.map(v=>({value:v,itemStyle:{color:valueColor(v)}})),label:{show:!!visual.format.dataLabels,color:'#fff',position:'insideTop',distance:6,fontSize:Math.max(10,labelSize),fontWeight:700,formatter:(p:any)=>fmt(p.value)},labelLayout:{hideOverlap:true},barMaxWidth:visual.format.barWidth||34,itemStyle:{opacity:chartOpacity,borderRadius:[visual.format.barRadius||5,visual.format.barRadius||5,0,0]},markLine:referenceMarkLine(false)},
-       {name:second||valueField,type:'line',yAxisIndex:1,data:secondData,smooth,lineStyle:{color:visual.format.comboSecondaryColor||'#f59e0b',width:lineWidth},itemStyle:{color:visual.format.comboSecondaryColor||'#f59e0b'},symbol:visual.format.showDataPoints===false?'none':marker,symbolSize:visual.format.dataPointSize||7,label:{show:!!visual.format.dataLabels,color:labelColor,position:'top',distance:8,fontSize:Math.max(10,labelSize),fontWeight:700,formatter:(p:any)=>formatForField(p.value,second,formats)},labelLayout:{hideOverlap:true}}]
+      color: premiumPalette,
+      tooltip:{...tooltipBase,trigger:'axis'},legend:{...legend,data:[valueField,second].filter(Boolean)},grid:{containLabel:true,left:(legendVisible && legendPosition === 'left' ? 85 : 15) + (showYAxisTitle ? 25 : 0),right:lgRight,top:30,bottom:xMargin},dataZoom:categoryZoom(names),
+      xAxis:{show:showXAxis||showXAxisTitle,type:'category',data:names,name:showXAxisTitle?(visual.format.xAxisTitle||effectiveAxis||'Category'):'',nameLocation:'middle',nameGap:globalXNameGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showXAxis,color:axisColor,fontSize:axisSize}},
+      yAxis:[{show:showYAxis||showYAxisTitle,type:'value',name:showYAxisTitle?(visual.format.yAxisTitle||valueField||'Value'):'',nameLocation:'middle',nameGap:comboYGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showYAxis,color:axisColor,fontSize:axisSize,formatter:(x:number)=>fmt(x,valueField)},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},...(second?[{show:(showYAxis||showYAxisTitle)&&visual.format.comboSecondaryAxisVisible!==false,type:'value',name:showYAxisTitle?formatColumnHeader(second):'',nameLocation:'middle',nameGap:comboYGap,nameTextStyle:{...axisTitleStyle,color:secondaryColor},axisLabel:{show:showYAxis,color:secondaryColor,fontSize:axisSize,formatter:(x:number)=>formatForField(x,second,formats)},splitLine:{show:false}}]:[])],
+      series:[{name:valueField,type:'bar',clip:true,data:values.map(v=>({value:v,itemStyle:{color:visual.format.conditionalColorsEnabled?valueColor(v):primaryColor}})),label:{show:!!visual.format.dataLabels,color:labelColor,fontSize:labelSize,position:visual.format.labelPosition==='outside'?'top':'inside',distance:5,formatter:(p:any)=>Number(p.value)===0?'':fmt(p.value)},labelLayout:{moveOverlap:'shiftY'},barMaxWidth:visual.format.barWidth||34,itemStyle:{color:primaryColor,opacity:chartOpacity,borderRadius:[visual.format.barRadius??0,visual.format.barRadius??0,0,0]},markLine:referenceMarkLine(false)},
+       ...(second?[{name:second,type:'line',clip:true,yAxisIndex:1,data:secondData,smooth,lineStyle:{color:secondaryColor,width:lineWidth},itemStyle:{color:secondaryColor},symbol:visual.format.showDataPoints===false?'none':marker,symbolSize:visual.format.dataPointSize||7,label:{show:!!visual.format.dataLabels,color:visual.format.comboSecondaryLabelColor||labelColor,fontSize:labelSize,position:'top',distance:8,formatter:(p:any)=>Number(p.value)===0?'':formatForField(p.value,second,formats)},labelLayout:{moveOverlap:'shiftY'}}]:[])]
     }}/>;
   }
 
   if (visual.type === 'donut' || visual.type === 'pie') {
     const total=values.reduce((a:any,b:any)=>Number(a||0)+Number(b||0),0);
-    const autoLegend=rows.length<=6?(legendPosition||'bottom'):'right';
-    const premiumLegend:any={show:legendVisible,textStyle:{color:visual.format.legendColor||axisColor,fontSize:visual.format.legendFontSize||11,fontWeight:600,fontFamily},itemWidth:12,itemHeight:12,itemGap:14};
-    if(autoLegend==='right')Object.assign(premiumLegend,{right:12,top:'middle',orient:'vertical'});
-    else if(autoLegend==='left')Object.assign(premiumLegend,{left:12,top:'middle',orient:'vertical'});
-    else if(autoLegend==='top')Object.assign(premiumLegend,{top:0,left:'center'});
-    else Object.assign(premiumLegend,{bottom:0,left:'center'});
-    const center:any=(autoLegend==='right'?['42%','46%']:autoLegend==='left'?['58%','46%']:['50%','43%']);
+    // Pie and donut legends are intentionally horizontal. Old reports that saved a
+    // side position are migrated at render time to bottom, keeping them usable.
+    const autoLegend=legendPosition==='top'?'top':'bottom';
+    const legendBand=legendVisible?44:6;
+    const premiumLegend:any={show:legendVisible,type:'scroll',orient:'horizontal',left:'center',width:'92%',height:28,textStyle:{color:visual.format.legendColor||axisColor,fontSize:visual.format.legendFontSize||11,fontWeight:600,fontFamily},itemWidth:12,itemHeight:12,itemGap:14,pageIconSize:10,pageTextStyle:{color:visual.format.legendColor||axisColor}};
+    if(autoLegend==='top')Object.assign(premiumLegend,{top:2,bottom:'auto'});
+    else Object.assign(premiumLegend,{bottom:2,top:'auto'});
+    const center:any=['50%','50%'];
     return (
       <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true}
         style={{ height: '100%' }}
@@ -793,27 +906,53 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
             }
           },
           legend:premiumLegend,
-          graphic: visual.type==='donut'&&values.length?[{type:'text',left:center[0],top:'38%',style:{text:fmt(total),fill:'#0f172a',fontSize:24,fontWeight:800,textAlign:'center'},z:10},{type:'text',left:center[0],top:'50%',style:{text:(valueField||'Total').replace(/^.*\./,''),fill:'#64748b',fontSize:10,fontWeight:600,textAlign:'center'},z:10}]:[],
+          graphic: visual.type==='donut'&&values.length?[{type:'text',left:'center',top:'42%',style:{text:fmt(total),fill:'#0f172a',fontSize:24,fontWeight:800,textAlign:'center',textVerticalAlign:'middle'},z:10},{type:'text',left:'center',top:'52%',style:{text:(valueField||'Total').replace(/^.*\./,''),fill:'#64748b',fontSize:10,fontWeight:600,textAlign:'center',textVerticalAlign:'middle'},z:10}]:[],
           series: [
             {
               type: 'pie',
+               left:8,
+               right:8,
+               top:autoLegend==='top'?legendBand:6,
+               bottom:autoLegend==='bottom'?legendBand:6,
               radius: visual.type === 'donut' ? [`${Math.max(10,Math.min(85,visual.format.donutInnerRadius??55))}%`, `${visual.format.pieOuterRadius??72}%`] : `${visual.format.pieOuterRadius??72}%`,
               startAngle:90-(visual.format.pieRotation??0),
               center,
               minAngle:2,
               avoidLabelOverlap:true,
-              data: rows.map((row) => ({name: row[axis || legendField || ''],value: row[valueField || '']})),
-              itemStyle: { borderColor: '#ffffff', borderWidth: visual.format.pieSliceGap??3,borderRadius:5,shadowBlur:4,shadowColor:'rgba(15,23,42,.08)' },
+              data: rows.map((row,i) => {const name=row[axis || legendField || ''],value=Number(row[valueField || '']||0);return {name,value,itemStyle:{color:categoryColor(name,i,value)}}}),
+              itemStyle: { borderColor: '#ffffff', borderWidth: visual.format.pieSliceGap??3,borderRadius:5,shadowBlur:4,shadowColor:'rgba(15,23,42,.08)',opacity:chartOpacity },
               emphasis:{scale:true,scaleSize:8,itemStyle:{shadowBlur:18,shadowColor:'rgba(15,23,42,.22)'}},
               labelLine:{show:!!visual.format.dataLabels,length:13,length2:10,lineStyle:{width:1.4}},
               label: {
                 show: !!visual.format.dataLabels,
-                color: '#334155',
-                fontSize: Math.max(11,labelSize),
-                lineHeight:15,
-                formatter: (p: any) => `{name|${p.name}}\n{value|${fmt(p.value)} (${p.percent}%)} `,
-                rich:{name:{fontWeight:700,color:'#334155',fontSize:11},value:{fontWeight:600,color:'#64748b',fontSize:10}}
-              }
+                position:'outside',
+                color: labelColor,
+                fontSize: Math.max(10, visual.format.labelFontSize || labelSize),
+                 edgeDistance:8,
+                 bleedMargin:4,
+                formatter: (p: any) => {
+                  const ov=categoryOverrides[p.name]||{};
+                  const sz=Math.max(10, ov.size || visual.format.labelFontSize || labelSize);
+                  const clr=ov.color || labelColor;
+                  const fstw=ov.bold?'bold':'700';
+                  const sndw=ov.bold?'bold':'600';
+                  const fsti=ov.italic?'italic':'normal';
+                  return `{name_${p.dataIndex}|${p.name}}\n{value_${p.dataIndex}|${fmt(p.value)} (${p.percent}%)} `;
+                },
+                rich: rows.reduce((acc, r, i) => {
+                   const name = r[effectiveAxis||''];
+                   const ov:any = { color: categoryOverrides[String(name)] };
+                  const sz = Math.max(10, ov.size || visual.format.labelFontSize || labelSize);
+                  const clr = ov.color || labelColor;
+                  const fstw = ov.bold ? 'bold' : 700;
+                  const sndw = ov.bold ? 'bold' : 600;
+                  const fsti = ov.italic ? 'italic' : 'normal';
+                  acc[`name_${i}`] = { fontWeight: fstw, fontStyle: fsti, color: clr, fontSize: sz, lineHeight: sz * 1.25 };
+                  acc[`value_${i}`] = { fontWeight: sndw, fontStyle: fsti, color: clr, fontSize: Math.max(10, sz - 1), lineHeight: Math.max(10, sz - 1) * 1.25 };
+                  return acc;
+                 }, {} as any)
+               },
+               labelLayout:{hideOverlap:true,moveOverlap:'shiftY'}
             }
           ]
         }}
@@ -862,19 +1001,21 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
                     color: [[1, trackColor]]
                   }
                 },
-                axisLabel: {
-                  show: true, distance: thickness + 8,
-                  color: visual.format.axisColor || '#94a3b8',
-                  fontSize: 11,
+                 axisLabel: {
+                   show: visual.format.gaugeAxisLabelsVisible!==false, distance: thickness + 8,
+                   color: visual.format.gaugeAxisLabelColor || '#64748b',
+                   fontSize: visual.format.gaugeAxisLabelFontSize || 11,
                   formatter: (val: number) => (val === displayMin || val === displayMax) ? (val === displayMin ? minLabel : maxLabel) : ''
                 },
                 axisTick: { show: false },
                 splitLine: { show: false },
-                pointer: { show: false, width: 0, length: 0 },
+                 pointer: {show:true,icon:'path://M-2 0 L2 0 L1 -70 L-1 -70 Z',length:'68%',width:5,itemStyle:{color:accent}},
+                 anchor:{show:true,size:10,itemStyle:{color:accent,borderColor:'#ffffff',borderWidth:2}},
                 detail: {
                   valueAnimation: true,
                   color: visual.format.labelColor || '#0f172a',
-                  fontSize: visual.format.fontSize || 28,
+                   show:visual.format.dataLabels!==false,
+                   fontSize: visual.format.labelFontSize || visual.format.fontSize || 28,
                   offsetCenter: [0, '35%'],
                   formatter: (x: number) => showPercent ? `${x.toFixed(1)}%` : fmt(numberValue)
                 },
@@ -883,7 +1024,7 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
                 title: { show: false }
               };
             })(),
-            // If there's a target, draw a line across the arc with a label outside
+            // If there's a target, draw a single notch on the arc using axisLine colormap
             ...(visual.format.gaugeTargetVisible !== false && (targetField || typeof visual.format.gaugeTargetValue === 'number') ? [(() => {
               const rawTarget = typeof visual.format.gaugeTargetValue === 'number' ? visual.format.gaugeTargetValue : Number(rows?.[0]?.[targetField || ''] || 0);
               const displayTarget = showPercent
@@ -894,34 +1035,54 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
                 : fmt(rawTarget);
 
               const targetRatio = Math.max(0, Math.min(1, (rawTarget - minimum) / range));
-              const targetAngle = 180 - (targetRatio * 180);
+              // Half-width of the notch in ratio units — 1.2% of arc = single visible tick
+              const hw = 0.012;
+              const lo = Math.max(0, targetRatio - hw);
+              const hi = Math.min(1, targetRatio + hw);
+              const tickColor = visual.format.targetColor || '#333333';
+
+              // Build color segments: transparent | tick color | transparent
+              // This renders a single colored notch on the arc at the target position
+              const colorSegments: [number, string][] =
+                lo === 0
+                  ? [[hi, tickColor], [1, 'transparent']]
+                  : hi === 1
+                    ? [[lo, 'transparent'], [1, tickColor]]
+                    : [[lo, 'transparent'], [hi, tickColor], [1, 'transparent']];
+
+              // Calculate position for the label near the marker (inside the arc)
+              const angle = (1 - targetRatio) * Math.PI;
+              const labelRadius = 75; // 75% of gauge radius (inside)
+              const offsetX = Math.cos(angle) * labelRadius;
+              const offsetY = -Math.sin(angle) * labelRadius;
 
               return {
                 type: 'gauge',
-                min: 0, max: 1,
-                startAngle: targetAngle, endAngle: targetAngle - 0.001,
+                min: displayMin, max: displayMax,
+                startAngle: 180, endAngle: 0,
                 center: ['50%', '72%'], radius: '90%',
                 progress: { show: false },
-                axisLine: { show: false, lineStyle: { width: thickness } }, // Must set width so tick calculates position correctly!
-                axisTick: { 
-                  show: true, 
-                  splitNumber: 1,
-                  length: thickness + 10,
-                  distance: -thickness - 5, // Cross the arc
-                  lineStyle: { color: visual.format.targetColor || '#0f172a', width: 2 }
-                },
-                splitLine: { show: false },
-                pointer: { show: false },
-                axisLabel: {
+                axisLine: {
                   show: true,
-                  distance: -thickness - 25, // Place outside the arc
-                  color: visual.format.targetColor || '#0f172a',
-                  fontSize: Math.max(11, (visual.format.fontSize || 28) * 0.45),
-                  formatter: () => targetLabel // Always return label since we only have one tick effectively
+                  lineStyle: {
+                    width: thickness + 6,  // slightly wider so the notch is visible over the track
+                    color: colorSegments
+                  }
                 },
+                axisTick: { show: false },
+                splitLine: { show: false },
+                pointer: {show:true,length:'92%',width:3,itemStyle:{color:visual.format.targetColor||'#333333'}},
+                anchor: { show: false },
+                axisLabel: { show: false },
                 title: { show: false },
-                detail: { show: false },
-                data: []
+                data: [{ value: displayTarget }],
+                detail: {
+                  show: visual.format.targetLabelVisible !== false,
+                  color: tickColor,
+                  fontSize: Math.max(9, Math.min(14, (visual.format.labelFontSize || 11) - 2)),
+                  offsetCenter: [`${offsetX}%`, `${offsetY}%`],
+                  formatter: () => `Target ${targetLabel}`
+                },
               };
             })()] : [])
           ]
@@ -937,18 +1098,21 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
     var scatterLgF = ((visual.bindings as any).legend || [])[0] as string | undefined;
     var scatterAxisF = axis || '';
 
+    const maxValLen = Math.max(0, ...values.map(v => String(fmt(parseFloat(Number(v||0).toFixed(3)))).length));
+    const scatterYGap = showYAxis ? (maxValLen * axisSize * 0.55 + 15) : 20;
+
     if (!scatterXF) {
-      // Legacy fallback — no X measure bound yet
+      // Legacy fallback - no X measure bound yet
       return (
         <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true}
           style={{ height: '100%' }}
           onEvents={chartEvents}
           option={{
             tooltip: { ...tooltipBase, trigger: 'item', formatter: tooltipFormatter },
-            grid: { left: 54, right: 20, top: 18, bottom: 44 },
-            xAxis: { type: 'category', data: names, show: showXAxis, axisLabel: { color: axisColor, fontSize: axisSize, fontFamily } },
-            yAxis: { show: showYAxis, type: 'value', axisLabel: { color: axisColor, fontSize: axisSize, fontFamily, formatter: (v: number) => fmt(v) }, splitLine: { show: visual.format.gridLines !== false, lineStyle: { color: gridLineColor, type: gridLineStyle } } },
-            series: [{ type: 'scatter', data: values, symbolSize: visual.format.dataPointSize || 10, itemStyle: { color: accent, shadowBlur: 8, shadowColor: `${accent}55`, opacity: chartOpacity }, label: { show: !!visual.format.dataLabels, color: labelColor, fontSize: labelSize, formatter: (p: any) => fmt(p.value) }, markLine: referenceMarkLine(false) }]
+            grid:{containLabel:true,left:showYAxisTitle?35:15,right:20,top:18,bottom:15+(showXAxisTitle?35:0)},
+            xAxis: { type: 'category', data: names, show: showXAxis||showXAxisTitle, name: showXAxisTitle?(visual.format.xAxisTitle||axis||'Category'):'', nameLocation:'middle', nameGap:30, nameTextStyle:axisTitleStyle, axisLabel: { show:showXAxis, color: axisColor, fontSize: axisSize, fontFamily } },
+            yAxis: { show: showYAxis||showYAxisTitle, type: 'value', name: showYAxisTitle?(visual.format.yAxisTitle||valueField||'Value'):'', nameLocation:'middle', nameGap:scatterYGap, nameTextStyle:axisTitleStyle, axisLabel: { show:showYAxis, color: axisColor, fontSize: axisSize, fontFamily, formatter: (v: number) => fmt(v) }, splitLine: { show: visual.format.gridLines !== false, lineStyle: { color: gridLineColor, type: gridLineStyle } } },
+            series: [{ type: 'scatter', data: values, symbol:marker, symbolSize: visual.format.showDataPoints===false?0:(visual.format.dataPointSize || 10), itemStyle: { color: accent, shadowBlur: 8, shadowColor: `${accent}55`, opacity: chartOpacity }, label: { show: !!visual.format.dataLabels, color: labelColor, fontSize: labelSize, position:'top',formatter: (p: any) => fmt(p.value) }, markLine: referenceMarkLine(false) }]
           }}
         />
       );
@@ -958,7 +1122,9 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
     var builtSeries = buildScatterSeriesData(
       rows, scatterAxisF, scatterXF, scatterYF, scatterSzF, scatterLgF,
       premiumPalette, accent, chartOpacity,
-      visual.format.dataPointSize || 10, visual.format.bubbleMaxSize || 45
+      visual.format.dataPointSize || 10, visual.format.bubbleMaxSize || 45,
+      marker, visual.format.showDataPoints!==false, !!visual.format.dataLabels,
+      labelColor, labelSize, 'top'
     );
     var capturedXF = scatterXF;
     var capturedYF = scatterYF;
@@ -990,7 +1156,7 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
             show: showXAxis || showXAxisTitle,
             type: 'value',
             name: showXAxisTitle ? (visual.format.xAxisTitle || capturedXF) : undefined,
-            nameLocation: 'middle', nameGap: 25,
+            nameLocation: 'middle', nameGap: 30,
             nameTextStyle: { color: axisColor, fontSize: axisSize, fontFamily, fontWeight: 600 },
             axisLabel: { color: axisColor, fontSize: axisSize, fontFamily, formatter: (v: number) => fmt(v, capturedXF) },
             splitLine: { show: false }
@@ -999,7 +1165,7 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
             show: showYAxis || showYAxisTitle,
             type: 'value',
             name: showYAxisTitle ? (visual.format.yAxisTitle || capturedYF) : undefined,
-            nameLocation: 'middle', nameGap: 35,
+            nameLocation: 'middle', nameGap: scatterYGap,
             nameTextStyle: { color: axisColor, fontSize: axisSize, fontFamily, fontWeight: 600 },
             axisLabel: { color: axisColor, fontSize: axisSize, fontFamily, formatter: (v: number) => fmt(v, capturedYF) },
             splitLine: { show: visual.format.gridLines !== false, lineStyle: { color: gridLineColor, type: gridLineStyle } }
@@ -1019,19 +1185,25 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
     const palette=premiumPalette;
     const horizontal=visual.type==='bar'||visual.type==='stackedbar';
     const maxCatW = Math.max(0, ...categories.map(c => String(fmtCategoryLabel(c)).length)) * (axisSize * 0.6);
-    const catGap = showYAxis || showXAxis ? maxCatW + 20 : 20;
-    const valGap = showYAxis || showXAxis ? 40 : 20;
-    const yNameGap = horizontal ? catGap : valGap;
-    const xNameGap = horizontal ? valGap : 35;
-    const yMargin = (legendVisible && legendPosition === 'left' ? 85 : 15) + (showYAxisTitle ? 25 : 0);
-    const xMargin = (legendVisible && legendPosition === 'bottom' ? 45 : 15) + (showXAxisTitle ? 25 : 0);
+    const seriesData = seriesNames.map((sn,si)=>({
+      name:sn,
+      data:categories.map(cat=>{const row=rows.find(r=>String(r[axis||''])===cat&&String(r[legendField])===sn);return Number(row?.[valueField||'']||0)})
+    }));
+    const allValuesForGap = seriesData.flatMap((s:any) => s.data.map((d:any) => d));
+    const maxValW = Math.max(0, ...allValuesForGap.map((v:any) => String(fmt(parseFloat(Number(v||0).toFixed(3)))).length)) * (axisSize * 0.55);
+      const yMargin = (legendPosition === 'left' ? 85 : 15) + (showYAxisTitle ? 25 : 0);
+      const xMargin = (legendPosition === 'bottom' ? 45 : 15) + (showXAxisTitle ? 25 : 0);
+      const estLabelW = horizontal ? maxCatW : maxValW;
+      const estLabelH = horizontal ? 15 : (maxCatW > 40 ? maxCatW * 0.7 + 5 : 15);
+      const yNameGap = estLabelW + yMargin / 2;
+      const xNameGap = estLabelH + xMargin / 2;
 
     const categoryAxis:any={show:horizontal?(showYAxis||showYAxisTitle):(showXAxis||showXAxisTitle),type:'category',data:categories,name:(horizontal?showYAxisTitle:showXAxisTitle)?((horizontal?visual.format.yAxisTitle:visual.format.xAxisTitle)||axis||'Category'):'',nameTextStyle:axisTitleStyle,nameLocation:'middle',nameGap:horizontal?yNameGap:xNameGap,axisLabel:{show:horizontal?showYAxis:showXAxis,color:axisColor,fontSize:axisSize,fontFamily,formatter:(v:any)=>fmtCategoryLabel(v)},axisTick:{show:false,lineStyle:{color:axisColor}},axisLine:{show:horizontal?showYAxis:showXAxis,lineStyle:{color:axisColor}}};
     const valueAxis:any={show:horizontal?(showXAxis||showXAxisTitle):(showYAxis||showYAxisTitle),type:'value',name:(horizontal?showXAxisTitle:showYAxisTitle)?((horizontal?visual.format.xAxisTitle:visual.format.yAxisTitle)||valueField||'Value'):'',nameTextStyle:axisTitleStyle,nameLocation:'middle',nameGap:horizontal?xNameGap:yNameGap,axisLabel:{show:horizontal?showXAxis:showYAxis,color:axisColor,fontSize:axisSize,fontFamily,formatter:(x:number)=>fmt(x)},axisLine:{show:false},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}};
     const isLine=visual.type==='line'||visual.type==='area';
-    const stacked=visual.type==='stackedbar'||visual.type==='stackedcolumn';
+    const stacked=(visual.type==='stackedbar'||visual.type==='stackedcolumn')&&seriesNames.length>1;
     return <ChartScrollerWrapper echartsKey={formatRefreshKey} events={chartEvents} categories={categories} horizontal={horizontal} visibleCount={visual.format.visibleCategoryCount||12} option={{
-      animationDuration:650,color:palette,legend:{...legend,data:seriesNames},
+      animationDuration:650,color:palette,legend:{...legend,show:true,data:seriesNames},
       tooltip:{...tooltipBase,trigger:'axis',formatter:tooltipFormatter},
       grid:{containLabel:true,left:yMargin,right:horizontal?42:24,top:30,bottom:xMargin},
       toolbox: { show: false },
@@ -1040,11 +1212,11 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
       series:seriesNames.map((sn,si)=>({
         name:sn,type:isLine?'line':'bar',stack:stacked?'total':undefined,smooth,
         data:categories.map(cat=>{const row=rows.find(r=>String(r[axis||''])===cat&&String(r[legendField])===sn);return Number(row?.[valueField||'']||0)}),
-        itemStyle:{color:palette[si%palette.length],opacity:chartOpacity,borderRadius:!isLine?(stacked?0:[visual.format.barRadius||8,visual.format.barRadius||8,visual.format.barRadius||8,visual.format.barRadius||8]):0},
+        itemStyle:{color:palette[si%palette.length],opacity:chartOpacity,borderRadius:!isLine?(stacked?(si===seriesNames.length-1?(horizontal?[0,visual.format.barRadius??0,visual.format.barRadius??0,0]:[visual.format.barRadius??0,visual.format.barRadius??0,0,0]):0):[visual.format.barRadius??0,visual.format.barRadius??0,visual.format.barRadius??0,visual.format.barRadius??0]):0},
         emphasis:{focus:'series',itemStyle:{shadowBlur:10,shadowColor:`${palette[si%palette.length]}55`}},
         lineStyle:{color:palette[si%palette.length],width:lineWidth},areaStyle:visual.type==='area'?{opacity:.12}:undefined,markLine:si===0?referenceMarkLine(horizontal):undefined,
         symbol:marker,symbolSize:visual.format.dataPointSize||7,barMaxWidth:visual.format.barWidth||42,
-        label:{show:stacked&&categories.length<=10?true:visual.format.dataLabels,color:stacked?'#ffffff':labelColor,fontWeight:700,fontSize:Math.max(10,labelSize),position:stacked?'inside':horizontal?'right':'top',distance:4,formatter:(p:any)=>fmt(p.value)},labelLayout:{hideOverlap:true}
+        label:{show:!!visual.format.dataLabels,color:stacked?'#ffffff':labelColor,fontWeight:700,fontSize:Math.max(10,labelSize),position:stacked?'inside':horizontal?'right':'top',formatter:(p:any)=>Number(p.value)===0?'':fmt(p.value)},labelLayout:{hideOverlap:true},clip:true
       }))
     }}/>;
   }
@@ -1053,12 +1225,13 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
     visual.type === 'bar' || visual.type === 'stackedbar';
     
   const maxCatW = Math.max(0, ...names.map(c => String(fmtCategoryLabel(c)).length)) * (axisSize * 0.6);
-  const catGap = showYAxis || showXAxis ? maxCatW + 20 : 20;
-  const valGap = showYAxis || showXAxis ? 40 : 20;
-  const yNameGap = horizontal ? catGap : valGap;
-  const xNameGap = horizontal ? valGap : 35;
-  const yMargin = (legendVisible && legendPosition === 'left' ? 85 : 15) + (showYAxisTitle ? 25 : 0);
-  const xMargin = (legendVisible && legendPosition === 'bottom' ? 45 : 15) + (showXAxisTitle ? 25 : 0);
+  const maxValW = Math.max(0, ...values.map(v => String(fmt(parseFloat(Number(v||0).toFixed(3)))).length)) * (axisSize * 0.55);
+    const yMargin = (legendVisible && legendPosition === 'left' ? 85 : 15) + (showYAxisTitle ? 25 : 0);
+    const xMargin = (legendVisible && legendPosition === 'bottom' ? 45 : 15) + (showXAxisTitle ? 25 : 0);
+    const estLabelW = horizontal ? maxCatW : maxValW;
+    const estLabelH = horizontal ? 15 : (maxCatW > 40 ? maxCatW * 0.7 + 5 : 15);
+    const yNameGap = estLabelW + yMargin / 2;
+    const xNameGap = estLabelH + xMargin / 2;
 
   const categoryAxis: any = {
     show: horizontal ? (showYAxis || showYAxisTitle) : (showXAxis || showXAxisTitle),
@@ -1125,35 +1298,51 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
   const multiValuePalette = premiumPalette;
   const palette = multiValuePalette;
   const multiValue = activeValues.length > 1;
+  const stacked = (visual.type === 'stackedbar'||visual.type==='stackedcolumn')&&multiValue;
 
   // Build one Y-axis per value field when there are multiple (dual-axis like Power BI).
   // For a single value field keep the original single-axis behaviour.
-  if (multiValue && !horizontal) {
-    base.yAxis = activeValues.map((vf, si) => ({
-      show: showYAxis || showYAxisTitle,
-      type: 'value',
-      name: showYAxisTitle ? formatColumnHeader(vf) : '',
-      nameTextStyle: { ...axisTitleStyle, color: palette[si % palette.length] },
-      nameLocation: 'middle',
-      nameGap: 52,
-      position: si === 0 ? 'left' : 'right',
-      offset: si > 1 ? (si - 1) * 60 : 0,
-      axisLabel: { show: showYAxis, color: palette[si % palette.length], fontSize: axisSize, fontFamily, formatter: (x: number) => formatForField(x, vf, formats) },
-      axisLine: { show: showYAxis, lineStyle: { color: palette[si % palette.length] } },
-      splitLine: { show: si === 0 && visual.format.gridLines !== false, lineStyle: { color: gridLineColor, type: gridLineStyle } }
-    }));
-    // Adjust grid right margin to make room for the right axis
-    base.grid = { left: showYAxisTitle ? 78 : 58, right: activeValues.length > 1 ? (showYAxisTitle ? 80 : 60) : 24, top: 20, bottom: showXAxisTitle ? 65 : 28 };
-    base.legend = { show: true, data: activeValues.map(vf => formatColumnHeader(vf)), top: 4, textStyle: { color: axisColor, fontSize: axisSize, fontFamily } };
+  if (multiValue && !horizontal && !stacked) {
+    base.yAxis = activeValues.map((vf, si) => {
+      const c = si === 0 ? axisColor : palette[si % palette.length];
+      return {
+        show: showYAxis || showYAxisTitle,
+        type: 'value',
+        name: showYAxisTitle ? formatColumnHeader(vf) : '',
+        nameTextStyle: { ...axisTitleStyle, color: c },
+        nameLocation: 'middle',
+        nameGap: 52,
+        position: si === 0 ? 'left' : 'right',
+        offset: si > 1 ? (si - 1) * 60 : 0,
+        axisLabel: { show: showYAxis, color: c, fontSize: axisSize, fontFamily, formatter: (x: number) => formatForField(x, vf, formats) },
+        axisLine: { show: showYAxis, lineStyle: { color: c } },
+        splitLine: { show: si === 0 && visual.format.gridLines !== false, lineStyle: { color: gridLineColor, type: gridLineStyle } }
+      };
+    });
+    // Multi-value legend is ALWAYS shown at the top, independent of format pane settings.
+    // Without it the user cannot tell which bar/line corresponds to which measure.
+    base.grid = { left: showYAxisTitle ? 78 : 58, right: activeValues.length > 1 ? (showYAxisTitle ? 80 : 60) : 24, top: 30, bottom: showXAxisTitle ? 65 : 28 };
+    base.legend = {
+      show: true,
+      top: 0,
+      left: 'center',
+      data: activeValues.map(vf => formatColumnHeader(vf, false, (visual.format as any).fieldDisplayNames)),
+      textStyle: { color: axisColor, fontSize: axisSize, fontFamily }
+    };
+  }
+  if(multiValue&&stacked){
+    base.legend={...legend,show:legendVisible,data:activeValues.map(vf=>formatColumnHeader(vf))};
+    base.grid={...base.grid,top:legendVisible&&legendPosition==='top'?36:24,bottom:legendVisible&&legendPosition==='bottom'?48:base.grid.bottom};
   }
 
   base.series = activeValues.map((vf, si) => {
-    const seriesColor = multiValue ? palette[si % palette.length] : accent;
+    const seriesColor = configuredSeriesColor(vf,si,multiValue?palette[si%palette.length]:accent);
     const isBar = chartType === 'bar';
     return {
-      name: multiValue ? formatColumnHeader(vf) : vf,
+      name: multiValue ? formatColumnHeader(vf, false, (visual.format as any).fieldDisplayNames) : ((visual.format as any).fieldDisplayNames?.[vf] || vf),
       type: chartType,
-      yAxisIndex: multiValue && !horizontal ? si : 0,
+      clip:true,
+      yAxisIndex: multiValue && !horizontal && !stacked ? si : 0,
       data: rows.map((row) => {
         const v = row[vf];
         return {
@@ -1166,7 +1355,7 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
       areaStyle: visual.type === 'area' ? { opacity: (visual.format.areaOpacity??18)/100 } : undefined,
       itemStyle: {
         color: (p:any) => multiValue ? seriesColor : valueColor(p.value),
-        borderRadius: isBar ? ((visual.type === 'stackedbar' || visual.type === 'stackedcolumn') ? 0 : (horizontal?[0,visual.format.barRadius||9,visual.format.barRadius||9,0]:[visual.format.barRadius||9,visual.format.barRadius||9,0,0])) : 0,
+        borderRadius: isBar ? (stacked?(si===activeValues.length-1?(horizontal?[0,visual.format.barRadius??0,visual.format.barRadius??0,0]:[visual.format.barRadius??0,visual.format.barRadius??0,0,0]):0):(horizontal?[0,visual.format.barRadius??0,visual.format.barRadius??0,0]:[visual.format.barRadius??0,visual.format.barRadius??0,0,0])) : 0,
         opacity: chartOpacity,
         shadowBlur: isBar ? 4 : 0,
         shadowColor: isBar ? `${seriesColor}28` : 'transparent'
@@ -1179,15 +1368,14 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
       symbolSize: visual.format.dataPointSize || 7,
       label: {
         show: visual.format.dataLabels,
-        color: labelColor,
-        fontSize: Math.max(10, labelSize),
-        fontWeight: 700,
-        distance: 4,
-        position: horizontal ? 'right' : visual.format.labelPosition === 'inside' ? 'inside' : 'top',
-        formatter: (p: any) => fmt(p.value, vf)
+        color: stacked?'#ffffff':labelColor,
+        fontSize: labelSize,
+        position: stacked?'inside':horizontal?'right':'top',
+        distance:chartType==='line'&&multiValue?6+si*4:5,
+        formatter: (p: any) => Number(p.value)===0?'':fmt(p.value, vf)
       },
-      labelLayout: { hideOverlap: true },
-      stack: (visual.type === 'stackedbar'||visual.type==='stackedcolumn') ? 'total' : undefined
+      labelLayout:{hideOverlap:true},
+      stack: stacked ? 'total' : undefined
     };
   });
 
@@ -1202,5 +1390,81 @@ export default function Chart({ visual, rows, onPointClick }: { visual: Visual; 
 }
 
 
+function RadarChartWrapper({ visual, names, values, valueField, gridLineColor, accent, lineWidth, marker, labelColor, axisColor, fontFamily, fmt, labelSize, axisSize }: any) {
+  const radarNames = names.slice(0, 12).map((n: any) => String(n ?? ''));
+  const radarValues = values.slice(0, 12).map((v: any) => Number(v) || 0);
+  const count = Math.max(3, radarNames.length);
+  while (radarNames.length < count) radarNames.push('');
+  while (radarValues.length < count) radarValues.push(0);
 
+  const ref = useRef<HTMLDivElement>(null);
+  const [dim, setDim] = useState({ w: 320, h: 205 });
 
+  useEffect(() => {
+    if (!ref.current) return;
+    const ro = new ResizeObserver(entries => {
+      if (entries[0]) {
+        const { width, height } = entries[0].contentRect;
+        if (width > 0 && height > 0) setDim({ w: width, h: height });
+      }
+    });
+    ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+
+  const cx = dim.w / 2;
+  const cy = dim.h / 2;
+  const radius = Math.min(cx, cy) * 0.65;
+  const circumference = 2 * Math.PI * radius;
+  const maxPointSize = Math.max(2, (circumference / count) * 0.25);
+  const maxFontSize = Math.max(8, (circumference / count) * 0.45);
+
+  const size = Math.min(maxPointSize, Math.max(4, visual.format.dataPointSize || 6));
+  const finalLabelSize = Math.min(maxFontSize, labelSize);
+  const finalAxisSize = Math.min(maxFontSize, axisSize);
+
+  const max = Math.max(...radarValues.map((v: any) => Math.abs(v)), 1) * 1.1;
+  const point = (i: number, r: number) => {
+    const a = -Math.PI / 2 + i * Math.PI * 2 / count;
+    return [cx + Math.cos(a) * r, cy + Math.sin(a) * r] as const;
+  };
+  const polygon = (r: number) => Array.from({ length: count }, (_, i) => point(i, r).join(',')).join(' ');
+  const dataPoints = radarValues.map((v: any, i: number) => point(i, Math.max(0, Math.min(1, Math.abs(v) / max)) * radius).join(',')).join(' ');
+
+  return <div ref={ref} style={{ height: '100%', width: '100%', position: 'relative' }}>
+    {dim.w > 0 && <svg width={dim.w} height={dim.h} role="img" aria-label={`${valueField || 'Value'} radar chart`} style={{ position: 'absolute', top: 0, left: 0, overflow: 'visible', fontFamily }}>
+      {visual.format.radarGridVisible !== false && [.25, .5, .75, 1].map(level => <polygon key={level} points={polygon(radius * level)} fill={level % 1 === 0 ? '#f8fafc' : 'none'} stroke={gridLineColor} strokeWidth="1" />)}
+      {visual.format.radarGridVisible !== false && Array.from({ length: count }, (_, i) => { const [x, y] = point(i, radius); return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke={gridLineColor} strokeWidth="1" /> })}
+      <polygon points={dataPoints} fill={accent} fillOpacity={(visual.format.radarFillOpacity ?? 18) / 100} stroke={accent} strokeWidth={lineWidth} strokeLinejoin="round" />
+      {visual.format.showDataPoints !== false && radarValues.map((v: any, i: number) => {
+        const [x, y] = point(i, Math.max(0, Math.min(1, Math.abs(v) / max)) * radius);
+        const shape = marker === 'rect' ? <rect x={x - size} y={y - size} width={size * 2} height={size * 2} rx={0} fill="#fff" stroke={accent} strokeWidth="2" /> : marker === 'roundRect' ? <rect x={x - size} y={y - size} width={size * 2} height={size * 2} rx={size * .5} fill="#fff" stroke={accent} strokeWidth="2" /> : marker === 'diamond' ? <polygon points={`${x},${y - size * 1.4} ${x + size * 1.4},${y} ${x},${y + size * 1.4} ${x - size * 1.4},${y}`} fill="#fff" stroke={accent} strokeWidth="2" /> : marker === 'triangle' ? <polygon points={`${x},${y - size * 1.5} ${x + size * 1.4},${y + size} ${x - size * 1.4},${y + size}`} fill="#fff" stroke={accent} strokeWidth="2" /> : <circle cx={x} cy={y} r={size} fill="#fff" stroke={accent} strokeWidth="2" />;
+        return <g key={i}>{shape}<title>{radarNames[i]}: {fmt(v)}</title></g>
+      })}
+      {!!visual.format.dataLabels && radarValues.map((v: any, i: number) => {
+        const [x, y] = point(i, Math.max(0, Math.min(1, Math.abs(v) / max)) * radius);
+        const offset = visual.format.showDataPoints !== false ? (size + 5) : 4;
+        return <text key={`value-${i}`} x={x} y={y - offset} textAnchor="middle" fill={labelColor} fontSize={finalLabelSize}>{fmt(v)}</text>
+      })}
+      {visual.format.radarLabelVisible !== false && radarNames.map((name: any, i: number) => {
+        const [x, y] = point(i, radius + 17);
+        const anchor = x < cx - 8 ? 'end' : x > cx + 8 ? 'start' : 'middle';
+        return <text key={i} x={x} y={y} textAnchor={anchor} dominantBaseline="middle" fill={axisColor} fontSize={finalAxisSize}>{name}</text>
+      })}
+      <text x={cx} y={dim.h - 10} textAnchor="middle" fill={axisColor} fontSize="10" fontWeight="600">{valueField || 'Value'}</text>
+    </svg>}
+  </div>;
+}
+
+export default React.memo(Chart, (prev, next) => {
+  if (prev.rows !== next.rows) return false;
+  if (prev.visual.type !== next.visual.type) return false;
+  if (prev.visual.drillLevel !== next.visual.drillLevel) return false;
+  if (JSON.stringify(prev.visual.bindings) !== JSON.stringify(next.visual.bindings)) return false;
+  if (JSON.stringify(prev.visual.filters) !== JSON.stringify(next.visual.filters)) return false;
+  if (JSON.stringify(prev.visual.sort) !== JSON.stringify(next.visual.sort)) return false;
+  if (JSON.stringify(prev.visual.format) !== JSON.stringify(next.visual.format)) return false;
+  if (JSON.stringify(prev.visual.action) !== JSON.stringify(next.visual.action)) return false;
+  if (prev.visual.title !== next.visual.title) return false;
+  return true;
+});

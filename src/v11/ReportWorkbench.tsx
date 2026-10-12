@@ -24,14 +24,14 @@ const visualColor:Record<string,string>={
  stackedcolumn:'#06b6d4',line:'#34d399',area:'#10b981',combo:'#a78bfa',pie:'#f97316',donut:'#fb923c',
  treemap:'#84cc16',funnel:'#eab308',waterfall:'#14b8a6',scatter:'#8b5cf6',bubble:'#c084fc',
  radar:'#6366f1',heatmap:'#ef4444',histogram:'#64748b',boxplot:'#94a3b8',gauge:'#22c55e',
- progress:'#2dd4bf',table:'#60a5fa',matrix:'#818cf8',slicer:'#f43f5e',textbox:'#334155',button:'#2563eb'
+ progress:'#2dd4bf',table:'#60a5fa',matrix:'#818cf8',slicer:'#f43f5e',textbox:'#334155',button:'#2563eb',image:'#0ea5e9',shape:'#6366f1'
 };
 
 
 type VisualWellKey='axis'|'values'|'target'|'tooltips'|'legend';
 type VisualProfile={w:number,h:number,wells:Array<{key:VisualWellKey,title:string,accept:'field'|'measure'|'value'}>,dataLabels?:boolean,legend?:boolean,axes?:boolean,tooltips?:boolean,numberFormat?:boolean,dataColor?:boolean};
 const VISUAL_PROFILES:Record<VisualType,VisualProfile>={
-  textbox:{w:6,h:3,wells:[]},button:{w:3,h:2,wells:[]},
+  textbox:{w:6,h:3,wells:[]},button:{w:3,h:2,wells:[]},image:{w:5,h:4,wells:[]},shape:{w:4,h:3,wells:[]},
   kpi:{w:3,h:3,wells:[{key:'axis',title:'Trend / Category',accept:'field'},{key:'values',title:'Value',accept:'value'},{key:'target',title:'Comparison / Target',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],tooltips:true,numberFormat:true,dataColor:true},
   card:{w:3,h:3,wells:[{key:'values',title:'Value',accept:'value'}],numberFormat:true,dataColor:true},
   multirowcard:{w:6,h:4,wells:[{key:'values',title:'Values',accept:'value'}],numberFormat:true,dataColor:true},
@@ -103,7 +103,7 @@ const visualIcon=(t:VisualType)=>{
  const common={viewBox:'0 0 32 32',width:20,height:20,fill:'none',stroke:'currentColor',strokeWidth:1.75,strokeLinecap:'square' as const,strokeLinejoin:'miter' as const};
  const svg=(children:any)=><svg {...common}>{children}</svg>;
  const icons:Record<VisualType,any>={
-  textbox:<TextCursorInput size={20}/>,button:<MousePointerClick size={20}/>,
+  textbox:<TextCursorInput size={20}/>,button:<MousePointerClick size={20}/>,image:svg(<><rect x="4" y="6" width="24" height="20"/><circle cx="11" cy="13" r="2"/><path d="M6 23l7-7 5 5 3-3 5 5"/></>),shape:svg(<><rect x="5" y="6" width="22" height="20" rx="3"/><circle cx="16" cy="16" r="6"/></>),
   kpi:svg(<><path d="M5 7h22v18H5zM8 21l5-6 4 3 6-8"/><path d="M21 10h3v3"/></>),
   card:svg(<><rect x="5" y="7" width="22" height="18"/><path d="M9 12h7M9 17h14M9 21h9"/></>),
   multirowcard:svg(<><rect x="4" y="5" width="24" height="22"/><path d="M8 10h5M8 15h16M8 20h5M16 10h8M16 20h8"/></>),

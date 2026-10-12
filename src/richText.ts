@@ -1,5 +1,5 @@
-const ALLOWED_TAGS=new Set(['B','STRONG','I','EM','U','BR','P','DIV','SPAN','UL','OL','LI']);
-const ALLOWED_STYLES=new Set(['color','font-family','font-size','font-weight','font-style','text-decoration','text-align']);
+const ALLOWED_TAGS=new Set(['B','STRONG','I','EM','U','S','STRIKE','DIV','P','BR','UL','OL','LI','A','SPAN','FONT','SUP','SUB']);
+const ALLOWED_STYLES=new Set(['color','background-color','font-family','font-size','font-weight','font-style','text-decoration','text-align']);
 
 export function sanitizeRichText(value:string):string{
  if(!value)return'';
@@ -12,9 +12,17 @@ export function sanitizeRichText(value:string):string{
   const children=Array.from(element.childNodes).map(clean).join('');
   if(!ALLOWED_TAGS.has(element.tagName))return children;
   const styles=Array.from(element.style).filter(name=>ALLOWED_STYLES.has(name)).map(name=>`${name}:${element.style.getPropertyValue(name)}`).join(';');
-  const styleAttribute=styles?` style="${escapeAttribute(styles)}"`:'';
+  const attributes:string[]=[];
+  if(styles)attributes.push(`style="${escapeAttribute(styles)}"`);
+  if(element.tagName==='FONT')for(const name of ['color','face','size']){const value=element.getAttribute(name);if(value)attributes.push(`${name}="${escapeAttribute(value)}"`)}
+  if(element.tagName==='A'){
+   const href=element.getAttribute('href')||'';
+   if(/^(https?:|mailto:|#)/i.test(href))attributes.push(`href="${escapeAttribute(href)}"`);
+   attributes.push('rel="noopener noreferrer"','target="_blank"');
+  }
+  const attributeText=attributes.length?` ${attributes.join(' ')}`:'';
   const tag=element.tagName.toLowerCase();
-  return tag==='br'?'<br>':`<${tag}${styleAttribute}>${children}</${tag}>`;
+  return tag==='br'?'<br>':`<${tag}${attributeText}>${children}</${tag}>`;
  };
  return Array.from(documentNode.body.firstElementChild?.childNodes||[]).map(clean).join('');
 }

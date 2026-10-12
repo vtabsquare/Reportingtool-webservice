@@ -24,10 +24,47 @@ def fld(model,dotted):
     if p=='day':return f'CAST({d} AS DATE)'
     raise ValueError(f'Unsupported date hierarchy part: {part}')
 
+def _measure_name_key(value):
+    return re.sub(r'[\s_-]+','',str(value or '')).casefold()
+
+def resolve_measure_name(name,measures):
+    """Resolve Power BI-style case/space/underscore variants uniquely."""
+    if name in measures:return name
+    folded=str(name or '').casefold()
+    case_matches=[candidate for candidate in measures if str(candidate).casefold()==folded]
+    if len(case_matches)==1:return case_matches[0]
+    key=_measure_name_key(name)
+    alias_matches=[candidate for candidate in measures if _measure_name_key(candidate)==key]
+    if len(alias_matches)==1:return alias_matches[0]
+    if len(alias_matches)>1:
+        raise ValueError(f"Ambiguous measure reference [{name}]. Use the exact saved measure name.")
+    return None
+
+def _expression_references_table(expression,table):
+    text=str(expression or '')
+    escaped=re.escape(str(table))
+    quoted=re.escape("'"+str(table).replace("'","''")+"'")
+    return bool(re.search(r'(?i)(?:'+quoted+r'|(?<![A-Za-z0-9_])'+escaped+r')\s*\[',text))
+
+def _measure_dependency_names(model,requested):
+    measures=model.get('measures',{})
+    names=set()
+    for requested_name in requested:
+        resolved=resolve_measure_name(requested_name,measures)
+        if resolved is not None:names.add(resolved)
+    changed=True
+    while changed:
+        changed=False
+        for name in list(names):
+            expression=str(measures.get(name,'') or '')
+            for ref in re.findall(r'(?<![A-Za-z0-9_])\[([^]]+)\]',expression):
+                resolved=resolve_measure_name(ref,measures)
+                if resolved is not None and resolved not in names:
+                    names.add(resolved);changed=True
+    return names
+
 def measure(name,model,stack=None,context_filters=None,with_meta=False):
     stack=stack or []
-    if name in stack:
-        raise ValueError('Circular measure dependency: '+' -> '.join(stack+[name]))
 
     # Desktop serializes an implicit aggregation as
     # ``Table.Column::aggregation``.  Keep the suffix separate from date
@@ -55,7 +92,13 @@ def measure(name,model,stack=None,context_filters=None,with_meta=False):
             raw_name=candidate
             aggregate=aliases[normalized]
 
-    if raw_name not in model.get('measures',{}):
+    measures=model.get('measures',{})
+    resolved_name=resolve_measure_name(raw_name,measures)
+    if resolved_name is not None:raw_name=resolved_name
+    if raw_name in stack:
+        raise ValueError('Circular measure dependency: '+' -> '.join(stack+[raw_name]))
+
+    if resolved_name is None:
         # Auto-aggregate raw column references (e.g. "Finance Data.LOAN AMOUNT")
         # that were dragged from the numeric fields pane directly into Values.
         if '.' in raw_name:
@@ -83,12 +126,12 @@ def measure(name,model,stack=None,context_filters=None,with_meta=False):
     # An aggregation suffix only applies to implicit raw-column measures.
     # Preserve the original named-measure behavior for malformed bindings.
     name=raw_name
-    exp=model['measures'][name].strip()
+    exp=measures[name].strip()
 
     def resolve_measure(ref):
         return measure(ref,model,stack+[name],context_filters,False)
 
-    if re.search(r'[A-Za-z_][\w ]*\[[^\]]+\]',exp) or re.search(r"'[^']+'\s*\[",exp) or re.search(r'(?i)\b(VAR|RETURN|CALCULATE|EDATE|DATESBETWEEN)\b',exp):
+    if re.search(r'\[[^\]]+\]',exp) or re.search(r'(?i)\b(VAR|RETURN|CALCULATE|FILTER|EDATE|EOMONTH|DATEADD|DATESBETWEEN|DATESINPERIOD|DATESYTD|DATESMTD|DATESQTD|SAMEPERIODLASTYEAR|TOTALYTD|TOTALMTD|TOTALQTD|SWITCH|IF)\b',exp):
         c=compile_dax(exp,model,context_filters or [],resolve_measure)
         return (c.sql,c.override_fields) if with_meta else c.sql
 
@@ -157,18 +200,10 @@ def required(model,dims,measures,rls,filters=()):
             t=m.split('.',1)[0]
             if t in model.get('tables',{}):
                 req.add(t)
-    names=set(measures);changed=True
-    while changed:
-        changed=False
-        for n in list(names):
-            exp=model.get('measures',{}).get(n,'')
-            # Bracket refs not immediately preceded by a table identifier are measure refs.
-            for ref in re.findall(r'(?<![A-Za-z0-9_])\[([^]]+)\]',exp):
-                if ref in model.get('measures',{}) and ref not in names:
-                    names.add(ref);changed=True
+    names=_measure_dependency_names(model,measures)
     txt=' '.join(model.get('measures',{}).get(n,'') for n in names)
     for t in model['tables']:
-        if t+'.' in txt or re.search(r'(?i)\b' + re.escape(t) + r'[\'"]?\s*([\[\.])', txt):
+        if t+'.' in txt or _expression_references_table(txt,t):
             req.add(t)
     
     # Detect implicit column references in measures (e.g., SUM(Revenue))
@@ -194,13 +229,14 @@ def compile_query(model,req,rls=()):
     # Prefer the table that owns a measure, then a raw-value column, then a dimension.
     # This keeps fact-table aggregation stable while still allowing slicers/dimensions to
     # join through one or more bridge tables.
-    measure_text=' '.join(model.get('measures',{}).get(m,'') for m in meas)
+    dependency_names=_measure_dependency_names(model,meas)
+    measure_text=' '.join(str(model.get('measures',{}).get(m,'') or '') for m in dependency_names)
     preferred=[]
     dax_funcs = {'SUM','AVG','MIN','MAX','COUNT','DISTINCTCOUNT','DIVIDE','CALCULATE','VAR','RETURN','EDATE','DATESBETWEEN'}
     words = set(re.findall(r'[A-Za-z0-9_]+', measure_text))
     for table, t_def in model.get('tables',{}).items():
         if table in needed:
-            if table+'.' in measure_text or re.search(r'(?i)\b' + re.escape(table) + r'[\'"]?\s*([\[\.])', measure_text):
+            if table+'.' in measure_text or _expression_references_table(measure_text,table):
                 preferred.append(table)
                 continue
             for w in words:

@@ -1,0 +1,28 @@
+REPORTING TOOL SERVICES — PUBLISHED VISUAL PARITY UPDATE
+Date: 2026-10-12
+
+Copy the included src and api folders over the matching folders in your
+Reporting Tool Services project. This package contains updates only.
+
+Fixes included
+--------------
+- Applies measure-driven conditional formatting to the actual published card,
+  KPI, chart, table, and matrix content.
+- Passes field-value color measures into published tables and matrices.
+- Preserves the Desktop-authored multi-card column count instead of forcing a
+  two-column Services layout.
+- Preserves per-card value, label, background, border, padding, and size styles.
+- Preserves Desktop rich-text font sizes, colors, families, links, and supported
+  inline formatting in published text boxes.
+
+After copying
+-------------
+1. Rebuild/restart Reporting Tool Services.
+2. Republish the report from Desktop so the current report definition replaces
+   the old published snapshot.
+3. Hard-refresh the Services browser page (Ctrl+F5).
+
+Verification
+------------
+- Services production web build: passed.
+- Focused published-visual parity tests: 3 passed.

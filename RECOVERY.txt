@@ -1,0 +1,26 @@
+VTAB SERVICES METADATA DATABASE RECOVERY
+Date: 2026-10-12
+
+Finding
+-------
+The application source updates were copied correctly. The startup failure is
+caused by data\studio_meta.db being truncated: its SQLite header expects 99
+pages, but only 90 pages are present.
+
+The replacement studio_meta.db in this package passed SQLite quick_check and
+integrity_check. All application-data tables that remained readable in the
+damaged database match this replacement exactly (projects, saved reports,
+users, workspaces, memberships, settings, connections, published reports, and
+sessions). The damaged area was limited to audit-history pages.
+
+Apply
+-----
+1. Close the Services runner and all terminals using it.
+2. Open your Reporting Tool Services\data folder.
+3. Rename studio_meta.db to studio_meta.corrupt-20261012.db.
+4. If studio_meta.db-wal or studio_meta.db-shm exists, rename those files too.
+5. Copy this package's data\studio_meta.db into that folder.
+6. Run run_web_tool.py again.
+
+Do not delete the renamed corrupt files until the application has started and
+your projects/reports have been checked.

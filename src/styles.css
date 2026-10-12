@@ -4934,3 +4934,39 @@ main,.mainPanel,.workspace,.reportWorkspace,.modelWorkspace,.measuresWorkspace{p
 .workspaceLoadError button{margin-top:8px}
 @media(max-width:760px){.workspaceSkeleton{grid-template-columns:1fr}.workspaceSkeleton i:nth-child(n+2){display:none}.viewerPageLoadNotice>span:last-child{display:none}}
 
+/* Desktop 5.x published-visual compatibility. */
+#root .premiumDataTable .premiumTable table{font-family:var(--table-font)!important;font-size:var(--table-font-size)!important}
+#root .premiumDataTable .premiumTable th{color:var(--table-header-color)!important;background:var(--table-header-bg)!important;font-family:var(--table-header-font)!important;font-size:var(--table-header-size)!important;font-weight:var(--table-header-weight)!important;font-style:var(--table-header-style)!important;text-align:var(--table-header-align)!important;white-space:var(--table-header-wrap)!important;border-bottom:var(--table-grid-width) solid var(--table-grid)!important;border-right:var(--table-grid-width) solid var(--table-vgrid)!important;width:var(--table-col-width)}
+#root .premiumDataTable .premiumTable td{color:var(--cell-text,var(--table-text))!important;background-color:var(--cell-bg,var(--table-bg))!important;font-family:var(--table-font)!important;font-size:var(--table-font-size)!important;font-weight:var(--table-weight)!important;font-style:var(--table-style)!important;text-align:var(--table-align)!important;white-space:var(--table-wrap)!important;padding:var(--table-row-padding) 10px!important;border-bottom:var(--table-grid-width) solid var(--table-grid)!important;border-right:var(--table-grid-width) solid var(--table-vgrid)!important;width:var(--table-col-width)}
+#root .premiumDataTable .premiumTable tbody tr:nth-child(even) td{background-color:var(--cell-bg,var(--table-alt))!important}#root .premiumDataTable .premiumTable tfoot th,#root .premiumDataTable .premiumTable tfoot td,#root .premiumDataTable .premiumTable .matrixSubtotal th{background:var(--table-total-bg)!important;color:var(--table-total-color)!important}
+#root .premiumDataTable.hideTableHeader .premiumTable thead{display:none}#root .premiumDataTable.matrixMode .premiumTable td.matrixRowHeader{background:var(--cell-bg,var(--table-bg))!important;color:var(--cell-text,var(--table-text))!important}
+.viewerTextBox{box-sizing:border-box;width:100%;height:100%;min-width:0;min-height:0;overflow:auto;overflow-wrap:anywhere;word-break:break-word}
+.viewerVisual-image .viewerVisualBody,.viewerVisual-shape .viewerVisualBody{padding:0!important;overflow:hidden}.viewerImageVisual{display:block;width:100%;height:100%}.viewerShapeVisual{display:block;width:100%;height:100%;padding:4px;box-sizing:border-box}.shapeArtwork{display:block;width:100%;height:100%;overflow:visible}
+.viewerActionButton.actionSelected{box-shadow:0 0 0 2px color-mix(in srgb,currentColor 30%,transparent),0 8px 18px rgba(15,23,42,.18)}
+.viewerVisual .viewerVisualTitle{background:var(--viewer-title-background,#fff)!important}
+
+/* Published Desktop parity: preserve the authored multi-card grid and every
+   saved per-card style. The older Services theme forced two columns and
+   hard-coded black values, which clipped KPI strips and overrode formatting. */
+.pixelPublishedPage .premiumMultiCardGrid{
+  grid-template-columns:var(--multi-grid-columns,repeat(2,minmax(0,1fr)))!important;
+  align-content:start!important;
+}
+.pixelPublishedPage .premiumMultiCardItem{
+  min-height:var(--multi-min-height)!important;
+  padding:var(--multi-padding)!important;
+  border:var(--multi-border)!important;
+  border-radius:var(--multi-radius)!important;
+  background:var(--multi-bg)!important;
+}
+.pixelPublishedPage .premiumMultiLabel{
+  color:var(--multi-label-color)!important;
+  font-size:var(--multi-label-size)!important;
+  font-weight:var(--multi-label-weight)!important;
+}
+.pixelPublishedPage .premiumMultiCardItem b{
+  color:var(--multi-value-color)!important;
+  font-size:var(--multi-value-size)!important;
+  font-weight:var(--multi-value-weight)!important;
+}
+

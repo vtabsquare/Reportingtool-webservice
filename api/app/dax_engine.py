@@ -1,7 +1,6 @@
 from __future__ import annotations
 import re
 from dataclasses import dataclass
-from .gemini import generate_json
 
 class DaxError(ValueError): pass
 
@@ -25,36 +24,80 @@ def split_top(s:str):
     out.append(s[start:].strip())
     return [x for x in out if x]
 
+def _mapping_value(mapping,name):
+    """DAX identifiers are case-insensitive, including VAR names."""
+    if name in mapping:return mapping[name]
+    lowered=str(name).lower()
+    for key,value in mapping.items():
+        if str(key).lower()==lowered:return value
+    raise KeyError(name)
+
 def strip_assignment(expression:str):
     text=expression.strip()
-    m=re.match(r'^([A-Za-z_][A-Za-z0-9_ ]*)\s*=\s*(.*)$',text,re.S)
-    return m.group(2).strip() if m else text
+    # Measure display names may contain %, -, parentheses, and other printable
+    # characters. Strip only the leading definition assignment; comparison
+    # operators inside the DAX body are deliberately excluded.
+    m=re.match(r'^([A-Za-z_][^=\r\n]*?)\s*=\s*(?!=)',text)
+    if m:
+        candidate=m.group(1).strip()
+        if candidate and not re.search(r'\b(VAR|RETURN|CALCULATE)\b|[<>]',candidate,re.I):
+            return text[m.end():].strip()
+    return text
 
 def normalize(s):return re.sub(r'[^a-z0-9]','',s.lower())
 
-def _ci_table(model,name):
-    """Case-insensitive table name lookup; returns the canonical name or None.
-    Power BI / DAX is case-insensitive for identifiers. Measures authored in
-    Desktop may use different capitalisation than the semantic-model table key."""
-    tables=model.get('tables',{})
-    if name in tables:return name
-    nl=name.lower()
-    return next((t for t in tables if t.lower()==nl),None)
-
-def _ci_column(cols,name):
-    """Case-insensitive column name lookup; returns the canonical name or None."""
-    if name in cols:return name
-    nl=name.lower()
-    return next((c for c in cols if c.lower()==nl),None)
+def resolve_table(model, table, column=None):
+    """Resolve a DAX table name to a model table key.
+    Tries exact match first, then fuzzy normalized matching,
+    then column-based lookup, then single-table fallback.
+    """
+    tables = model.get('tables', {})
+    # 1. Exact match
+    if table in tables:
+        return table
+    # 2. Case-insensitive exact match
+    tl = table.lower()
+    for k in tables:
+        if k.lower() == tl:
+            return k
+    # 3. Normalized substring match — 'sales' matches 'sales_dataset_100_rows_multi_year_1_Copy'
+    norm_search = normalize(table)
+    candidates = [k for k in tables if norm_search in normalize(k)]
+    if len(candidates) == 1:
+        return candidates[0]
+    # 4. Normalized prefix match for ambiguous cases — pick longest match
+    if candidates:
+        return max(candidates, key=lambda k: len(normalize(k)))
+    # 5. Column-based fallback — when AI uses a generic name like 'Table',
+    #    find whichever table actually has the requested column
+    if column:
+        col_lower = column.strip().lower()
+        col_matches = [
+            k for k, t in tables.items()
+            if any(c.lower() == col_lower for c in t.get('columns', {}))
+        ]
+        if len(col_matches) == 1:
+            return col_matches[0]
+        if col_matches:
+            return col_matches[0]  # pick first match if ambiguous
+    # 6. Last resort: if there's only one table in the model, use it
+    if len(tables) == 1:
+        return next(iter(tables))
+    raise DaxError(f"Unknown table '{table}'")
 
 def resolve_field(model,table,column,alias=None):
     table=table.strip();column=column.strip()
-    actual_table=_ci_table(model,table)
-    if actual_table is None:raise DaxError(f"Unknown table '{table}'")
-    cols=model['tables'][actual_table].get('columns',{})
-    actual_col=_ci_column(cols,column)
-    if actual_col is None:raise DaxError(f"Unknown column '{actual_table}[{column}]'")
-    return f'{qi(alias or actual_table)}.{qi(cols[actual_col])}'
+    table=resolve_table(model,table,column)
+    cols=model['tables'][table].get('columns',{})
+    if column not in cols:
+        # Try case-insensitive column match
+        col_lower = column.lower()
+        matched = next((c for c in cols if c.lower() == col_lower), None)
+        if matched:
+            column = matched
+        else:
+            raise DaxError(f"Unknown column '{table}[{column}]'")
+    return f'{qi(alias or table)}.{qi(cols[column])}'
 
 def semantic_field(table,column):return f'{table.strip()}.{column.strip()}'
 
@@ -64,14 +107,12 @@ def parse_field(expr):
 
 def _context_predicate(model,table,filters,alias):
     parts=[]
-    actual_table=_ci_table(model,table) or table
-    cols=model.get('tables',{}).get(actual_table,{}).get('columns',{})
     for f in filters or []:
         sf=f.get('field','')
         if '.' not in sf:continue
         t,c=sf.split('.',1);c=c.split('::',1)[0]
-        if t.lower()!=actual_table.lower() or _ci_column(cols,c) is None:continue
-        col=resolve_field(model,actual_table,c,alias);op=f.get('operator','equals');val=f.get('value')
+        if t!=table or c not in model['tables'][table].get('columns',{}):continue
+        col=resolve_field(model,t,c,alias);op=f.get('operator','equals');val=f.get('value')
         if op=='equals':parts.append(f'{col}={sql_literal(val)}')
         elif op=='not_equals':parts.append(f'{col}<>{sql_literal(val)}')
         elif op=='gt':parts.append(f'{col}>{sql_literal(val)}')
@@ -84,13 +125,11 @@ def _context_predicate(model,table,filters,alias):
     return ' AND '.join(parts)
 
 def _selected_aggregate(model,func,table,column,filters):
-    actual_table=_ci_table(model,table) or table
-    alias='__ctx';physical=model['tables'][actual_table]['physical'];col=resolve_field(model,actual_table,column,alias)
-    pred=_context_predicate(model,actual_table,filters,alias)
+    alias='__ctx';physical=model['tables'][table]['physical'];col=resolve_field(model,table,column,alias)
+    pred=_context_predicate(model,table,filters,alias)
     sql=f'(SELECT {func}({col}) FROM {qi(physical)} {qi(alias)}'
     if pred:sql+=' WHERE '+pred
     return sql+')'
-
 
 def _selected_bounds(model,table,column,filters):
     return (
@@ -99,40 +138,94 @@ def _selected_bounds(model,table,column,filters):
     )
 
 def _parse_vars(text):
-    lines=text.replace('\r','').split('\n');variables={};ret=[];current=None;buf=[];in_return=False
-    def flush():
-        nonlocal current,buf
-        if current is not None:variables[current]=' '.join(x.strip() for x in buf).strip()
-        current=None;buf=[]
-    for line in lines:
-        st=line.strip()
-        if not st:continue
-        m=re.match(r'(?i)^VAR\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$',st)
-        if m and not in_return:flush();current=m.group(1);buf=[m.group(2)];continue
-        if re.match(r'(?i)^RETURN\b',st):
-            flush();in_return=True;tail=re.sub(r'(?i)^RETURN\b','',st,count=1).strip()
-            if tail:ret.append(tail)
-            continue
-        (ret if in_return else buf).append(st)
-    flush()
-    if not ret:raise DaxError('VAR expression requires RETURN')
-    return variables,' '.join(ret)
+    # Find VAR/RETURN keywords only at expression depth zero. This accepts both
+    # Power BI's usual multiline layout and compact `VAR A=... VAR B=... RETURN ...`.
+    source=text.replace('\r',' ');markers=[];depth=0;quote=None;i=0
+    while i<len(source):
+        ch=source[i]
+        if quote:
+            if ch==quote and (i==0 or source[i-1]!='\\'):quote=None
+            i+=1;continue
+        if ch in ("'",'"'):quote=ch;i+=1;continue
+        if ch=='(':depth+=1;i+=1;continue
+        if ch==')':depth=max(0,depth-1);i+=1;continue
+        if depth==0 and (i==0 or not re.match(r'[A-Za-z0-9_]',source[i-1])):
+            m=re.match(r'(?i)(VAR|RETURN)(?![A-Za-z0-9_])',source[i:])
+            if m:markers.append((i,m.group(1).upper(),i+len(m.group(1))));i+=len(m.group(1));continue
+        i+=1
+    variables={};return_text=None
+    for index,(start,kind,end) in enumerate(markers):
+        stop=markers[index+1][0] if index+1<len(markers) else len(source)
+        body=source[end:stop].strip()
+        if kind=='RETURN':
+            return_text=source[end:].strip();break
+        m=re.fullmatch(r'(?is)([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)',body)
+        if not m:raise DaxError(f'Invalid VAR declaration: {body or "missing name/value"}')
+        variables[m.group(1)]=m.group(2).strip()
+    if return_text is None or not return_text:raise DaxError('VAR expression requires RETURN')
+    return variables,return_text
 
 def _compile_var_value(expr,model,vars_sql,filters,measure_resolver=None):
     """Compile a VAR assignment value. Supports all aggregate functions, DIVIDE, arithmetic,
     and measure references. Variable references are resolved before compilation."""
     expr=expr.strip()
+    def var_aware_resolver(name):
+        try:return _mapping_value(vars_sql,name)
+        except KeyError:pass
+        if measure_resolver:return measure_resolver(name)
+        raise DaxError(f"Unknown measure or variable [{name}]")
     # Resolve variable references that appear directly as value
-    if expr in vars_sql:return vars_sql[expr]
-    # MAX/MIN with context filter (date range subqueries).
-    # Pattern now also accepts quoted table names like MAX('RS Puram'[Date]).
+    try:return _mapping_value(vars_sql,expr)
+    except KeyError:pass
+    # MAX/MIN with context filter (date range subqueries)
     m=re.fullmatch(r"(?is)(MAX|MIN)\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*\[\s*([^\]]+)\]\s*\)",expr)
-    if m:return _selected_aggregate(model,m.group(1).upper(),m.group(2).strip("' "),m.group(3).strip(),filters)
+    if m:return _selected_aggregate(model,m.group(1).upper(),m.group(2).strip(),m.group(3).strip(),filters)
+
+    # VAR dates commonly use IF(ISBLANK(MAX(...)), TODAY(), MAX(...)). Compile
+    # every branch through the VAR-aware path so aggregates from another table
+    # become scalar context subqueries instead of invalid cross-table columns.
+    m=re.fullmatch(r'(?is)IF\s*\((.*)\)',expr)
+    if m:
+        args=split_top(m.group(1))
+        if len(args)<2:raise DaxError('IF requires a condition and a true result.')
+        condition=args[0].strip()
+        blank_match=re.fullmatch(r'(?is)ISBLANK\s*\((.*)\)',condition)
+        not_blank_match=re.fullmatch(r'(?is)NOT\s+ISBLANK\s*\((.*)\)',condition)
+        if blank_match:
+            condition_sql=f'({_compile_var_value(blank_match.group(1),model,vars_sql,filters,measure_resolver)} IS NULL)'
+        elif not_blank_match:
+            condition_sql=f'({_compile_var_value(not_blank_match.group(1),model,vars_sql,filters,measure_resolver)} IS NOT NULL)'
+        else:
+            condition_sql=_condition(condition,model,var_aware_resolver,filters)
+        true_sql=_compile_var_value(args[1],model,vars_sql,filters,measure_resolver)
+        false_sql=_compile_var_value(args[2],model,vars_sql,filters,measure_resolver) if len(args)>2 else 'NULL'
+        return f'CASE WHEN {condition_sql} THEN {true_sql} ELSE {false_sql} END'
+    
+    # Add support for StartDate = DATE ( YEAR(LastDataDate), MONTH(LastDataDate), 1 )
+    m=re.fullmatch(r'(?is)DATE\s*\(\s*YEAR\s*\(\s*([A-Za-z_]\w*)\s*\)\s*,\s*MONTH\s*\(\s*([A-Za-z_]\w*)\s*\)\s*,\s*1\s*\)',expr)
+    if m and m.group(1)==m.group(2):
+        var=m.group(1)
+        try:base=_mapping_value(vars_sql,var)
+        except KeyError:base=var
+        return f"date_trunc('month', CAST({base} AS DATE))"
+  
+    # Add support for VAR x = CALCULATE(...) nested structures
+    m=re.fullmatch(r'(?is)CALCULATE\s*\((.*)\)',expr)
+    if m:
+        args=split_top(m.group(1))
+        if not args:raise DaxError('CALCULATE requires an expression.')
+        base=_compile_simple(args[0],model,var_aware_resolver,filters)
+        predicates=[]
+        for item in args[1:]:
+            pred,over=_compile_calculate_filter(item,model,vars_sql,filters,var_aware_resolver)
+            if pred:predicates.append(pred)
+        return _attach_filter(base,' AND '.join(f'({p})' for p in predicates))
     # EDATE
     m=re.fullmatch(r'(?is)EDATE\s*\(\s*([A-Za-z_]\w*)\s*,\s*(-?\d+)\s*\)\s*(?:\+\s*(\d+))?',expr)
     if m:
         var=m.group(1);months=int(m.group(2));days=int(m.group(3) or 0)
-        base=vars_sql[var] if var in vars_sql else var
+        try:base=_mapping_value(vars_sql,var)
+        except KeyError:base=var
         out=f"(CAST({base} AS DATE) + INTERVAL '{months} months')"
         if days:out=f"({out} + INTERVAL '{days} day')"
         return out
@@ -140,7 +233,8 @@ def _compile_var_value(expr,model,vars_sql,filters,measure_resolver=None):
     m=re.fullmatch(r'(?is)EOMONTH\s*\(\s*([A-Za-z_]\w*)\s*,\s*(-?\d+)\s*\)\s*(?:\+\s*(\d+))?',expr)
     if m:
         var=m.group(1);months=int(m.group(2));days=int(m.group(3) or 0)
-        base=vars_sql[var] if var in vars_sql else var
+        try:base=_mapping_value(vars_sql,var)
+        except KeyError:base=var
         out=f"last_day(CAST({base} AS DATE) + INTERVAL '{months} months')"
         if days:out=f"({out} + INTERVAL '{days} day')"
         return out
@@ -148,20 +242,10 @@ def _compile_var_value(expr,model,vars_sql,filters,measure_resolver=None):
     if re.fullmatch(r'-?\d+(?:\.\d+)?',expr):return expr
     
     # For all other expressions, use _compile_simple
-    def var_aware_resolver(name):
-        if name in vars_sql:return vars_sql[name]
-        if measure_resolver:return measure_resolver(name)
-        raise DaxError(f"Unknown measure or variable [{name}]")
-        
     try:
         return _compile_simple(expr,model,var_aware_resolver,filters)
-    except DaxError as e:
-        # Preserve the original specific error (e.g. "Unknown table") so it is
-        # visible in the published-report error card rather than the generic wrapper.
-        msg=str(e)
-        if msg.startswith('Unsupported') or msg.startswith('Unknown') or msg.startswith('Circular'):
-            raise
-        raise DaxError(f'Unsupported VAR expression [{expr}]: {msg}') from e
+    except DaxError:
+        raise DaxError(f'Unsupported VAR expression: {expr}')
 
 def _compile_row_expr(expr,model,table):
     out=expr.strip()
@@ -193,15 +277,19 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
     if re.fullmatch(r'(?i)BLANK\s*\(\s*\)',expr):return 'NULL'
     if re.fullmatch(r'(?i)TRUE\s*\(\s*\)|TRUE',expr):return 'TRUE'
     if re.fullmatch(r'(?i)FALSE\s*\(\s*\)|FALSE',expr):return 'FALSE'
+    if re.fullmatch(r'(?i)TODAY\s*\(\s*\)',expr):return 'current_date'
+    if re.fullmatch(r'(?i)NOW\s*\(\s*\)',expr):return 'current_timestamp'
     m=re.fullmatch(r'(-?\d+(?:\.\d+)?)\s*%',expr)
     if m:return str(float(m.group(1))/100.0)
     m=re.fullmatch(r'\[([^\]]+)\]',expr)
     if m and measure_resolver:return measure_resolver(m.group(1).strip())
+    field_ref=parse_field(expr)
+    if field_ref:return resolve_field(model,*field_ref)
     # Handle naked variables like _Occupied
     m=re.fullmatch(r'[A-Za-z_]\w*',expr)
     if m and measure_resolver:return measure_resolver(m.group(0))
 
-    m=re.fullmatch(r'(?is)(SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN)\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)',expr)
+    m=re.fullmatch(r"(?is)(SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN)\s*\(\s*('[^']+'|[A-Za-z_][\w ]*)\s*\[\s*([^\]]+)\]\s*\)",expr)
     if m:
         fn,t,c=m.groups();fn=fn.upper();field=resolve_field(model,t.strip("'"),c)
         if fn=='AVERAGE':fn='AVG'
@@ -242,6 +330,33 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
         part=m.group(1).lower();value=_compile_simple(m.group(2),model,measure_resolver,filters)
         return f'CAST(EXTRACT({part} FROM CAST({value} AS DATE)) AS INTEGER)'
 
+    m=re.fullmatch(r'(?is)DATEDIFF\s*\((.*)\)',expr)
+    if m:
+        args=split_top(m.group(1))
+        if len(args)!=3:raise DaxError('DATEDIFF requires start date, end date and interval.')
+        unit=args[2].strip().upper()
+        if unit not in {'DAY','WEEK','MONTH','QUARTER','YEAR'}:
+            raise DaxError('DATEDIFF interval must be DAY, WEEK, MONTH, QUARTER, or YEAR.')
+        start=_compile_simple(args[0],model,measure_resolver,filters)
+        end=_compile_simple(args[1],model,measure_resolver,filters)
+        return f"date_diff('{unit.lower()}',CAST({start} AS DATE),CAST({end} AS DATE))"
+
+    m=re.fullmatch(r'(?is)(EDATE|EOMONTH)\s*\((.*)\)',expr)
+    if m:
+        args=split_top(m.group(2))
+        if len(args)!=2:raise DaxError(f'{m.group(1).upper()} requires a date and month offset.')
+        base=_compile_simple(args[0],model,measure_resolver,filters)
+        try:months=int(args[1].strip())
+        except ValueError:raise DaxError(f'{m.group(1).upper()} month offset must be an integer.')
+        shifted=f"(CAST({base} AS DATE) + INTERVAL '{months} months')"
+        return f'last_day({shifted})' if m.group(1).upper()=='EOMONTH' else shifted
+
+    m=re.fullmatch(r'(?is)(STARTOFMONTH|ENDOFMONTH)\s*\((.*)\)',expr)
+    if m:
+        base=_compile_simple(m.group(2),model,measure_resolver,filters)
+        if m.group(1).upper()=='STARTOFMONTH':return f"date_trunc('month',CAST({base} AS DATE))"
+        return f'last_day(CAST({base} AS DATE))'
+
     m=re.fullmatch(r'(?is)(MIN|MAX)\s*\((.*)\)',expr)
     if m:
         args=split_top(m.group(2))
@@ -262,15 +377,28 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
         return f'COALESCE(({a})/NULLIF(({b}),0),{alt})'
     m=re.fullmatch(r'(?is)COALESCE\s*\((.*)\)',expr)
     if m:return 'COALESCE('+','.join(_compile_simple(x,model,measure_resolver,filters) for x in split_top(m.group(1)))+')'
-    m=re.fullmatch(r"(?is)SELECTEDVALUE\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*\[\s*([^\]]+)\]\s*(?:,\s*(.*))?\)",expr)
+    m=re.fullmatch(r'(?is)SELECTEDVALUE\s*\(\s*([A-Za-z_][\w ]*)\s*\[\s*([^\]]+)\]\s*(?:,\s*(.*))?\)',expr)
     if m:
-        t,c,alt=m.groups();actual_t=_ci_table(model,t.strip("' ")) or t.strip("' ")
-        physical=model['tables'][actual_t]['physical'];alias='__sel'
-        field=resolve_field(model,actual_t,c,alias);pred=_context_predicate(model,actual_t,filters or [],alias)
+        t,c,alt=m.groups();physical=model['tables'][t.strip()]['physical'];alias='__sel'
+        field=resolve_field(model,t,c,alias);pred=_context_predicate(model,t.strip(),filters or [],alias)
         alt_sql=_compile_simple(alt,model,measure_resolver,filters) if alt else 'NULL'
         sql=f'(SELECT CASE WHEN COUNT(DISTINCT {field})=1 THEN MAX({field}) ELSE {alt_sql} END FROM {qi(physical)} {qi(alias)}'
         if pred:sql+=' WHERE '+pred
         return sql+')'
+
+    # CALCULATE is an expression, not only a top-level measure form. Supporting it
+    # here is essential for SWITCH/IF branches and variables that return filtered
+    # measures (a very common Power BI pattern).
+    m=re.fullmatch(r'(?is)CALCULATE\s*\((.*)\)',expr)
+    if m:
+        args=split_top(m.group(1))
+        if not args:raise DaxError('CALCULATE requires an expression.')
+        base=_compile_simple(args[0],model,measure_resolver,filters)
+        predicates=[]
+        for item in args[1:]:
+            pred,_=_compile_calculate_filter(item,model,{},filters or [],measure_resolver)
+            if pred:predicates.append(pred)
+        return _attach_filter(base,' AND '.join(f'({p})' for p in predicates))
 
     m=re.fullmatch(r'(?is)IF\s*\((.*)\)',expr)
     if m:
@@ -315,14 +443,6 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
         if right: tokens.append(_compile_simple(right, model, measure_resolver, filters))
         return ' '.join(tokens)
 
-    # Standalone 'Table'[Column] or Table[Column] bare column reference.
-    # DAX allows these in FILTER/CALCULATE conditions and VAR expressions.
-    # e.g. 'RS Puram'[Date] used as a date field reference.
-    tf=parse_field(expr)
-    if tf:
-        try:return resolve_field(model,tf[0],tf[1])
-        except DaxError:pass
-
     raise DaxError(f'Unsupported expression: {expr}')
 
 def _split_logical(expr,operator):
@@ -353,6 +473,8 @@ def _condition(expr,model,measure_resolver=None,filters=None):
         if len(args)<2:raise DaxError(f'{m.group(1).upper()} requires at least two conditions.')
         return '('+f' {m.group(1).upper()} '.join(_condition(x,model,measure_resolver,filters) for x in args)+')'
     m=re.fullmatch(r'(?is)NOT\s*\((.*)\)',e)
+    if m:return f'(NOT ({_condition(m.group(1),model,measure_resolver,filters)}))'
+    m=re.fullmatch(r'(?is)NOT\s+(.+)',e)
     if m:return f'(NOT ({_condition(m.group(1),model,measure_resolver,filters)}))'
     m=re.fullmatch(r'(?is)ISBLANK\s*\((.*)\)',e)
     if m:return f'({_compile_simple(m.group(1),model,measure_resolver,filters)} IS NULL)'
@@ -386,50 +508,113 @@ def _comparison(expr,model,measure_resolver=None,filters=None):
                     return f'{lsql} {op} {rsql}'
     raise DaxError(f'Unsupported condition: {expr}')
 
-def _compile_calculate_filter(expr,model,vars_sql,filters):
+def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None):
     e=expr.strip()
-    # Table-only REMOVEFILTERS/ALL: e.g. REMOVEFILTERS('Calendar') or ALL(Calendar).
-    # This removes all filters on the entire table; we return no SQL predicate.
-    m=re.fullmatch(r"(?is)(REMOVEFILTERS|ALL)\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*\)",e)
-    if m:return None,set()
-    # Column-level REMOVEFILTERS/ALL: REMOVEFILTERS(Table[Column]).
-    m=re.fullmatch(r"(?is)(REMOVEFILTERS|ALL)\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*\[\s*([^\]]+)\s*\]\s*\)",e)
-    if m:return None,{semantic_field(m.group(2).strip("' "),m.group(3).strip())}
+    def resolve_filter_value(name):
+        try:return _mapping_value(vars_sql,name)
+        except KeyError:pass
+        if measure_resolver:return measure_resolver(name)
+        raise DaxError(f"Unknown variable [{name}] in CALCULATE filter")
+    m=re.fullmatch(r'(?is)(REMOVEFILTERS|ALL)\s*\(\s*([A-Za-z_][\w ]*)\s*\[\s*([^\]]+)\]\s*\)',e)
+    if m:return None,{semantic_field(m.group(2),m.group(3))}
+    
+    m=re.fullmatch(r'(?is)(REMOVEFILTERS|ALL)\s*\(\s*(\'?.*?\'?)\s*\)',e)
+    if m:
+        t=m.group(2).strip("'")
+        return None,{t+'.*'}
+        
+    m=re.fullmatch(r'(?is)FILTER\s*\(\s*(?:ALL\s*\(\s*(\'?.*?\'?)\s*\)|(\'?.*?\'?))\s*,\s*(.*)\)',e)
+    if m:
+        t = (m.group(1) or m.group(2)).strip("'")
+        cond = m.group(3).strip()
+        return _condition(cond,model,resolve_filter_value,filters), {t+'.*'} if m.group(1) else set()
+        
     m=re.fullmatch(r'(?is)KEEPFILTERS\s*\((.*)\)',e)
-    if m:return _condition(m.group(1),model,None,filters),set()
-    m=re.fullmatch(r'(?is)DATESBETWEEN\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*,\s*([A-Za-z_]\w*)\s*,\s*([A-Za-z_]\w*)\s*\)',e)
+    if m:return _condition(m.group(1),model,resolve_filter_value,filters),set()
+    m=re.fullmatch(r'(?is)DATESBETWEEN\s*\((.*)\)',e)
     if m:
-        t,c,s,en=m.groups(); t = t.strip("'")
-        if s not in vars_sql or en not in vars_sql:raise DaxError('DATESBETWEEN requires defined start/end variables.')
-        field=resolve_field(model,t,c)
-        return f'CAST({field} AS DATE) BETWEEN CAST({vars_sql[s]} AS DATE) AND CAST({vars_sql[en]} AS DATE)',{semantic_field(t,c)}
-    m=re.fullmatch(r'(?is)DATESINPERIOD\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*,\s*([A-Za-z_]\w*)\s*,\s*(-?\d+)\s*,\s*(DAY|MONTH|QUARTER|YEAR)\s*\)',e)
+        args=split_top(m.group(1))
+        if len(args)!=3:raise DaxError('DATESBETWEEN requires a date column, start date, and end date.')
+        field_ref=parse_field(args[0])
+        if not field_ref:raise DaxError('DATESBETWEEN first argument must be Table[DateColumn].')
+        t,c=field_ref;field=resolve_field(model,t,c)
+        start=_compile_simple(args[1],model,resolve_filter_value,filters)
+        end=_compile_simple(args[2],model,resolve_filter_value,filters)
+        predicate=f'(CAST({start} AS DATE) IS NULL OR CAST({field} AS DATE) >= CAST({start} AS DATE)) AND (CAST({end} AS DATE) IS NULL OR CAST({field} AS DATE) <= CAST({end} AS DATE))'
+        return predicate,{semantic_field(t,c)}
+    m=re.fullmatch(r'(?is)DATESINPERIOD\s*\((.*)\)',e)
     if m:
-        t,c,endvar,num,unit=m.groups(); t = t.strip("'")
-        if endvar not in vars_sql:raise DaxError('DATESINPERIOD anchor variable is not defined.')
-        field=resolve_field(model,t,c);num=int(num);unit=unit.lower()
-        start=f"(CAST({vars_sql[endvar]} AS DATE) + INTERVAL '{num} {unit}')"
-        return f'CAST({field} AS DATE) BETWEEN {start} AND CAST({vars_sql[endvar]} AS DATE)',{semantic_field(t,c)}
+        args=split_top(m.group(1))
+        if len(args)!=4:raise DaxError('DATESINPERIOD requires a date column, anchor date, interval count, and interval.')
+        field_ref=parse_field(args[0])
+        if not field_ref:raise DaxError('DATESINPERIOD first argument must be Table[DateColumn].')
+        try:num=int(args[2].strip())
+        except ValueError:raise DaxError('DATESINPERIOD interval count must be an integer.')
+        unit=args[3].strip().upper()
+        if unit not in {'DAY','MONTH','QUARTER','YEAR'}:raise DaxError('DATESINPERIOD interval must be DAY, MONTH, QUARTER, or YEAR.')
+        t,c=field_ref;field=resolve_field(model,t,c);anchor=_compile_simple(args[1],model,resolve_filter_value,filters)
+        sql_unit='month' if unit=='QUARTER' else unit.lower();sql_num=num*3 if unit=='QUARTER' else num
+        shifted=f"(CAST({anchor} AS DATE) + INTERVAL '{sql_num} {sql_unit}')"
+        lower,upper=(shifted,f'CAST({anchor} AS DATE)') if num<=0 else (f'CAST({anchor} AS DATE)',shifted)
+        return f'CAST({field} AS DATE) BETWEEN {lower} AND {upper}',{semantic_field(t,c)}
     m=re.fullmatch(r'(?is)SAMEPERIODLASTYEAR\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)',e)
     if m:
-        t,c=m.groups();t=t.strip("'");mn,mx=_selected_bounds(model,t,c.strip(),filters)
-        field=resolve_field(model,t,c.strip())
-        return f"CAST({field} AS DATE) BETWEEN (CAST({mn} AS DATE)-INTERVAL '1 year') AND (CAST({mx} AS DATE)-INTERVAL '1 year')",{semantic_field(t,c.strip())}
+        t,c=m.groups(); t = t.strip().strip("'"); c = c.strip()
+        mn,mx=_selected_bounds(model,t,c,filters)
+        field=resolve_field(model,t,c)
+        return f"CAST({field} AS DATE) BETWEEN (CAST({mn} AS DATE)-INTERVAL '1 year') AND (CAST({mx} AS DATE)-INTERVAL '1 year')",{semantic_field(t,c)}
+    m=re.fullmatch(r'(?is)DATEADD\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*,\s*(-?\d+)\s*,\s*(YEAR|QUARTER|MONTH|DAY)\s*\)',e)
+    if m:
+        t,c,num,unit=m.groups(); t = t.strip().strip("'"); c = c.strip(); num = int(num); unit = unit.lower()
+        mn,mx=_selected_bounds(model,t,c,filters)
+        field=resolve_field(model,t,c)
+        return f"CAST({field} AS DATE) BETWEEN (CAST({mn} AS DATE) + INTERVAL '{num} {unit}') AND (CAST({mx} AS DATE) + INTERVAL '{num} {unit}')",{semantic_field(t,c)}
+    m=re.fullmatch(r'(?is)(DATESYTD|DATESQTD|DATESMTD)\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)',e)
+    if m:
+        kind,t,c=m.groups(); t = t.strip().strip("'"); c = c.strip(); kind = kind.upper()
+        mx=_selected_aggregate(model,'MAX',t,c,filters)
+        field=resolve_field(model,t,c)
+        if kind=='DATESYTD':start=f"date_trunc('year',CAST({mx} AS DATE))"
+        elif kind=='DATESQTD':start=f"date_trunc('quarter',CAST({mx} AS DATE))"
+        else:start=f"date_trunc('month',CAST({mx} AS DATE))"
+        return f"CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({mx} AS DATE)",{semantic_field(t,c)}
     m=re.fullmatch(r"(?is)FILTER\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*,\s*(.*)\)",e)
     if m:
-        table=m.group(1).strip("' ");condition=m.group(2).strip()
-        actual_table=_ci_table(model,table)
-        if actual_table is None:raise DaxError(f"Unknown table '{table}'")
-        return _condition(condition,model,None,filters),set()
+        table=m.group(1).strip();condition=m.group(2).strip()
+        table=resolve_table(model,table)
+        return _condition(condition,model,resolve_filter_value,filters),set()
     # Direct Table[Column] comparison / logical condition.
-    return _condition(e,model,None,filters),set()
+    return _condition(e,model,resolve_filter_value,filters),set()
 
 def _attach_filter(base_sql,predicate):
     if not predicate:return base_sql
-    # DuckDB/Postgres-style aggregate FILTER works for all aggregate forms generated above.
-    if re.match(r'(?is)^(SUM|AVG|MIN|MAX|COUNT|MEDIAN)\s*\(',base_sql):
-        return f'{base_sql} FILTER (WHERE {predicate})'
-    raise DaxError('CALCULATE filter currently requires an aggregate base expression.')
+    # DuckDB/Postgres-style aggregate FILTER works for every aggregate generated by
+    # this engine. Apply it to every aggregate in a composite/CASE expression so
+    # CALCULATE([Measure], ...) and CALCULATE inside SWITCH/IF preserve filter context.
+    aggregate=re.compile(r'(?i)\b(SUM|AVG|MIN|MAX|COUNT|MEDIAN)\s*\(')
+    spans=[]
+    for match in aggregate.finditer(base_sql):
+        open_pos=base_sql.find('(',match.start());depth=0;quote=None;close_pos=None
+        for i in range(open_pos,len(base_sql)):
+            ch=base_sql[i]
+            if quote:
+                if ch==quote:quote=None
+                continue
+            if ch in ("'",'"'):quote=ch;continue
+            if ch=='(':depth+=1
+            elif ch==')':
+                depth-=1
+                if depth==0:close_pos=i;break
+        if close_pos is None:continue
+        tail=base_sql[close_pos+1:]
+        if re.match(r'(?is)^\s*FILTER\s*\(',tail):continue
+        spans.append(close_pos+1)
+    if not spans:
+        # Constants and already-scalar expressions are unaffected by row filters.
+        return base_sql
+    out=base_sql
+    for pos in reversed(spans):out=out[:pos]+f' FILTER (WHERE {predicate})'+out[pos:]
+    return out
 
 def _compile_total_period(kind,args,model,measure_resolver,filters):
     parts=split_top(args)
@@ -470,20 +655,23 @@ def compile_dax(expression,model,filters=None,measure_resolver=None):
         for name,expr in variables.items():vars_sql[name]=_compile_var_value(expr,model,vars_sql,filters,measure_resolver)
 
     m=re.fullmatch(r'(?is)CALCULATE\s*\((.*)\)',ret.strip())
+    
+    def var_aware_resolver(name):
+        try:return _mapping_value(vars_sql,name)
+        except KeyError:pass
+        if measure_resolver:return measure_resolver(name)
+        raise DaxError(f"Unknown measure or variable [{name}]")
+
     if not m:
         # RETURN can be a complex expression (IF, MIN, DIVIDE, etc.)
-        def var_aware_resolver(name):
-            if name in vars_sql:return vars_sql[name]
-            if measure_resolver:return measure_resolver(name)
-            raise DaxError(f"Unknown measure or variable [{name}]")
         return DaxCompilation(_compile_simple(ret.strip(),model,var_aware_resolver,filters),set())
         
     args=split_top(m.group(1))
     if not args:raise DaxError('CALCULATE requires an expression.')
-    base=_compile_simple(args[0],model,measure_resolver,filters)
+    base=_compile_simple(args[0],model,var_aware_resolver,filters)
     predicates=[];override=set()
     for item in args[1:]:
-        pred,over=_compile_calculate_filter(item,model,vars_sql,filters)
+        pred,over=_compile_calculate_filter(item,model,vars_sql,filters,var_aware_resolver)
         if pred:predicates.append(pred)
         override.update(over)
     return DaxCompilation(_attach_filter(base,' AND '.join(f'({p})' for p in predicates)),override)
@@ -679,27 +867,45 @@ def _deterministic_suggest_measure(prompt,model):
     return result
 
 
-def suggest_measure_from_prompt(prompt,model):
-    """Use verified rules first, then Gemini for genuinely unresolved prompts."""
+def suggest_measure_from_prompt(prompt,model,validation_feedback=None):
+    """Generate DAX grounded to the active semantic model and this engine's supported subset."""
     try:
-        result=_deterministic_suggest_measure(prompt,model)
-        low=(prompt or '').lower()
-        if not result['grounding'].get('filterFields') and any(word in low for word in (' where ',' excluding ',' exclude ',' only ',' with ','>', '<', '=')):
-            raise DaxError('The deterministic generator did not resolve the requested filter.')
-        return result
-    except Exception as deterministic_error:
-        try:
-            entries=_field_entries(model)
-            fields=', '.join(f"{x['table']}[{x['column']}]" for x in entries)
-            result=generate_json(prompt,(
-                'You create one valid DAX measure definition for VTAB Reporting Studio. '
-                'Available semantic fields: '+fields+'. '
-                'Use only those fields in Table[Column] form. Return JSON only: '
-                '{"name":"short_measure_name","expression":"MeasureName =\\nDAX expression","explanation":"brief explanation"}.'
-            ))
-            name=str(result.get('name','')).strip();expression=str(result.get('expression','')).strip()
-            if not name or not expression: raise DaxError('AI response was missing name or expression.')
-            # The measure endpoint compiles the result before it can be saved.
-            return {'name':re.sub(r'\s+','_',name)[:128],'expression':expression,'explanation':str(result.get('explanation','Generated by Gemini AI.')),'warnings':[],'confidence':0.9,'intent':'ai_fallback','semanticChecks':{},'grounding':{'valueField':None,'dateField':None,'filterFields':[]}}
-        except Exception as ai_error:
-            raise DaxError(f'I could not determine the requested DAX measure and AI generation failed ({ai_error}). Original error: {deterministic_error}')
+        # Import only for the explicit AI path. Manual parsing, validation, saving,
+        # and querying remain completely independent of Gemini configuration/network.
+        from .gemini import generate_json
+        entries=_field_entries(model)
+        fields='; '.join(f"{x['table']}[{x['column']}] ({x['dtype'] or 'unknown type'})" for x in entries)
+        relationships='; '.join(
+            f"{r.get('fromTable')}[{r.get('fromColumn')}] -> {r.get('toTable')}[{r.get('toColumn')}]"
+            for r in model.get('relationships',[]) if r.get('active',True)
+        ) or 'none'
+        measures='; '.join(f"[{name}] = {expression}" for name,expression in model.get('measures',{}).items()) or 'none'
+        retry_note=f"\nThe previous expression failed VTAB validation with: {validation_feedback}. Correct that failure." if validation_feedback else ''
+        result=generate_json(prompt+retry_note,(
+            'You create one valid DAX measure definition for VTAB Reporting Studio. '
+            'Use only the supplied active model; never invent a table, column, or measure. '
+            'Available semantic fields: '+fields+'. Active relationships: '+relationships+'. Existing measures: '+measures+'. '
+            'Supported scalar and aggregate functions include VAR, RETURN, CALCULATE, FILTER, SUM, AVERAGE, MIN, MAX, COUNT, COUNTROWS, DISTINCTCOUNT, MEDIAN, SUMX, AVERAGEX, MINX, MAXX, DIVIDE, SELECTEDVALUE, COALESCE, ABS, ROUND, INT, FLOOR, CEILING, LEN, IF, SWITCH, ISBLANK, BLANK, TODAY, NOW, DATE, YEAR, MONTH, DAY, EDATE, EOMONTH, STARTOFMONTH, ENDOFMONTH, DATEADD, DATESBETWEEN, DATESINPERIOD, DATESYTD, DATESMTD, DATESQTD, SAMEPERIODLASTYEAR, TOTALYTD, TOTALMTD, TOTALQTD, REMOVEFILTERS, ALL, KEEPFILTERS, IN, POWER, and SQRT. '
+            'Use exact Table[Column] references. Prefer straightforward expressions supported by this list. Return JSON only: '
+            '{"name":"short_measure_name","expression":"MeasureName =\\nDAX expression","explanation":"brief explanation"}.'
+        ))
+        name=str(result.get('name','')).strip();expression=str(result.get('expression','')).strip()
+        if not name or not expression: raise DaxError('AI response was missing name or expression.')
+        referenced=[]
+        for table,definition in model.get('tables',{}).items():
+            pattern=re.compile(r"'?"+re.escape(table)+r"'?\s*\[\s*([^\]]+)\s*\]",re.I)
+            for match in pattern.finditer(expression):
+                requested=match.group(1).strip()
+                actual=next((column for column in definition.get('columns',{}) if column.lower()==requested.lower()),None)
+                if actual is None:raise DaxError(f"Unknown column '{table}[{requested}]'")
+                referenced.append(f'{table}[{actual}]')
+        return {'name':re.sub(r'\s+','_',name)[:128],'expression':expression,'explanation':str(result.get('explanation','Generated by Gemini AI.')),'warnings':[],'confidence':0.95,'intent':'ai_generation','semanticChecks':{'modelGrounded':True,'referencedFields':referenced},'grounding':{'valueField':referenced[0] if referenced else None,'dateField':next((field for field in referenced if 'date' in field.lower()),None),'filterFields':referenced[1:]}}
+    except Exception as ai_error:
+        if not validation_feedback:
+            try:
+                fallback=_deterministic_suggest_measure(prompt,model)
+                fallback.setdefault('warnings',[]).append(f'AI generation was unavailable; the model-grounded generator was used. Details: {ai_error}')
+                return fallback
+            except Exception:
+                pass
+        raise DaxError(f"AI generation failed: {ai_error}")

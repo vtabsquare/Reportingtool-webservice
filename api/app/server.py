@@ -2176,6 +2176,23 @@ def _get_cloud_project(report_id: str):
             return None
 
 
+def _published_visual_definition(project:dict,visual_id:str):
+    return next((visual for page in ((project.get('report') or {}).get('pages') or []) for visual in (page.get('visuals') or []) if str(visual.get('id') or '') == visual_id), None)
+
+def _published_conditional_measures(visual:dict|None)->list[str]:
+    if not visual:return []
+    formatting=visual.get('format') or {}
+    values=[]
+    for rule in formatting.get('conditionalFormatRules') or []:
+        if isinstance(rule,dict) and rule.get('enabled',True) is not False and rule.get('measure'):
+            values.append(str(rule['measure']))
+    table_rules=formatting.get('tableConditionalRules') or {}
+    if isinstance(table_rules,dict):
+        for rule in table_rules.values():
+            if isinstance(rule,dict) and rule.get('enabled',True) is not False and rule.get('formatBy')=='fieldValue' and rule.get('colorMeasure'):
+                values.append(str(rule['colorMeasure']))
+    return list(dict.fromkeys(value for value in values if value))
+
 def _published_visual_payload(project: dict, request: QueryReq) -> dict:
     """Build a query from the stored visual definition, not browser bindings."""
     payload = request.model_dump()
@@ -2183,7 +2200,7 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
     if not visual_id:
         payload.pop('visualId', None)
         return payload
-    visual = next((visual for page in ((project.get('report') or {}).get('pages') or []) for visual in (page.get('visuals') or []) if str(visual.get('id') or '') == visual_id), None)
+    visual = _published_visual_definition(project,visual_id)
     if not visual:
         raise ValueError('Published visual was not found in this report definition.')
     bindings = visual.get('bindings') or {}
@@ -2244,7 +2261,17 @@ def published_query(report_id:str,req:QueryReq,authorization:str|None=Header(def
     p,resolved=_published_query_context(report_id,authorization)
     try:
         payload=_published_visual_payload(p,req)
-        rows,sql=execute(p['model'],payload,resolved['rules']);store.log('published.query.execute',{'reportId':report_id,'visualId':req.visualId,'dimensions':payload['dimensions'],'measures':payload['measures'],'rows':len(rows),'security':resolved['context']});return {'rows':rows,'sql':sql,'security':resolved['context']}
+        rows,sql=execute(p['model'],payload,resolved['rules'])
+        conditional_values={};conditional_error=None
+        conditional_measures=_published_conditional_measures(_published_visual_definition(p,str(req.visualId or '').strip()))
+        if conditional_measures:
+            try:
+                conditional_rows,_=execute(p['model'],{'dimensions':[],'measures':conditional_measures,'filters':payload['filters'],'sort':[],'limit':1},resolved['rules'])
+                conditional_values=conditional_rows[0] if conditional_rows else {}
+            except Exception as error:
+                conditional_error=str(error)
+        store.log('published.query.execute',{'reportId':report_id,'visualId':req.visualId,'dimensions':payload['dimensions'],'measures':payload['measures'],'rows':len(rows),'security':resolved['context']})
+        return {'rows':rows,'sql':sql,'conditionalValues':conditional_values,'conditionalError':conditional_error,'security':resolved['context']}
     except Exception as e:raise HTTPException(400,str(e))
 
 @app.post('/api/v1/published/{report_id}/query-batch')
@@ -2264,7 +2291,15 @@ def published_query_batch(report_id:str,req:PublishedBatchQueryReq,authorization
     def run_visual(visual_id:str):
         payload=_published_visual_payload(p,QueryReq(visualId=visual_id,filters=req.filters))
         rows,sql=execute(p['model'],payload,resolved['rules'])
-        return visual_id,{'rows':rows,'sql':sql}
+        result={'rows':rows,'sql':sql,'conditionalValues':{}}
+        conditional_measures=_published_conditional_measures(_published_visual_definition(p,visual_id))
+        if conditional_measures:
+            try:
+                conditional_rows,_=execute(p['model'],{'dimensions':[],'measures':conditional_measures,'filters':payload['filters'],'sort':[],'limit':1},resolved['rules'])
+                result['conditionalValues']=conditional_rows[0] if conditional_rows else {}
+            except Exception as error:
+                result['conditionalError']=str(error)
+        return visual_id,result
 
     configured=max(1,min(8,int(os.environ.get('VTAB_QUERY_BATCH_WORKERS','4') or 4)))
     workers=min(configured,len(visual_ids))

@@ -1,8 +1,9 @@
 import type {Page,Visual,VisualAction,VisualActionStep} from './types';
 
 export type ResolvedActionCommand={operation:'show'|'hide'|'toggle';targets:Visual[]};
+
 export function resolveActionCommands(action:VisualAction,page:Page):ResolvedActionCommand[]{
-  const resolve=(step:VisualActionStep):ResolvedActionCommand=>({operation:step.operation,targets:step.targetType==='group'?page.visuals.filter(item=>item.groupId===step.targetId):page.visuals.filter(item=>item.id===step.targetId)});
+  const resolve=(step:VisualActionStep):ResolvedActionCommand=>({operation:step.operation,targets:step.targetType==='group'?page.visuals.filter(item=>(item.groupId?.trim()||'')===(step.targetId?.trim()||'')&&item.groupId):page.visuals.filter(item=>item.id===step.targetId)});
   if(action.type==='custom')return(action.steps||[]).filter(step=>step.targetId).map(resolve);
   if(action.targetVisualId&&['showVisual','hideVisual','toggleVisual'].includes(action.type||''))return[resolve({operation:action.type==='showVisual'?'show':action.type==='hideVisual'?'hide':'toggle',targetType:'visual',targetId:action.targetVisualId})];
   if(action.targetGroupId&&['showGroup','hideGroup','toggleGroup'].includes(action.type||''))return[resolve({operation:action.type==='showGroup'?'show':action.type==='hideGroup'?'hide':'toggle',targetType:'group',targetId:action.targetGroupId})];
@@ -20,7 +21,7 @@ export function resolveActionButtonLabel(button:Visual,page:Page,pages:Page[],ov
   const target=page.visuals.find(item=>item.id===action.targetVisualId);
   const visualName=targetName(target,'visual');
   const groupName=action.targetGroupId?.trim()||'group';
-  const groupMembers=page.visuals.filter(item=>item.groupId===action.targetGroupId);
+  const groupMembers=page.visuals.filter(item=>(item.groupId?.trim()||'')===(action.targetGroupId?.trim()||'')&&item.groupId);
   const groupHidden=groupMembers.length>0&&groupMembers.every(item=>visualIsHidden(item,overrides));
   if(action.type==='navigate'){
     const targetPage=pages.find(item=>item.id===action.targetPageId);
