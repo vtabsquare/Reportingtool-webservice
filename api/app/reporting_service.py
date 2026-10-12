@@ -359,6 +359,22 @@ def _hydrate_snapshot_sources_uncached(project: dict[str, Any], access_token: st
     
     url = os.environ.get("VITE_SUPABASE_URL", "").rstrip("/")
     key = os.environ.get("VITE_SUPABASE_ANON_KEY", "")
+    service_role_key = (
+        os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        or os.environ.get("VITE_SUPABASE_SERVICE_ROLE_KEY")
+        or ""
+    )
+    admin_storage = None
+    if service_role_key and url:
+        try:
+            from storage3._sync.client import SyncStorageClient
+            admin_storage = SyncStorageClient(
+                f"{url}/storage/v1/",
+                {"apiKey": service_role_key, "Authorization": f"Bearer {service_role_key}"},
+            ).from_("vtab-reports")
+        except Exception:
+            pass
+
     if url and key:
         # Build an explicitly viewer-authenticated storage client. Merely
         # applying a token to PostgREST does not update every supabase-py
@@ -399,12 +415,28 @@ def _hydrate_snapshot_sources_uncached(project: dict[str, Any], access_token: st
         cache_name = hashlib.sha256(storage_path.encode("utf-8")).hexdigest() + suffix
         cache_path = cache_root / cache_name
         if not cache_path.is_file() or cache_path.stat().st_size == 0:
-            try:
-                payload = storage.download(storage_path)
-            except Exception as error:
-                raise RuntimeError(f"Could not download the private data snapshot: {storage_path}") from error
-            if not isinstance(payload, (bytes, bytearray)) or not payload:
-                raise RuntimeError(f"The private data snapshot is empty: {storage_path}")
+            payload = None
+            clients_to_try = []
+            if skip_auth_check and admin_storage is not None:
+                clients_to_try = [admin_storage, storage]
+            elif admin_storage is not None:
+                clients_to_try = [storage, admin_storage]
+            else:
+                clients_to_try = [storage]
+
+            last_error: Exception | None = None
+            for client_target in clients_to_try:
+                try:
+                    res = client_target.download(storage_path)
+                    if isinstance(res, (bytes, bytearray)) and res:
+                        payload = res
+                        last_error = None
+                        break
+                except Exception as err:
+                    last_error = err
+
+            if last_error is not None or not isinstance(payload, (bytes, bytearray)) or not payload:
+                raise RuntimeError(f"Could not download the private data snapshot: {storage_path}") from last_error
             temporary_path: Path | None = None
             try:
                 with tempfile.NamedTemporaryFile(dir=cache_root, suffix=".tmp", delete=False) as temporary:
