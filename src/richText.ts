@@ -21,7 +21,7 @@ export function sanitizeRichText(value:string){
           const safe=Array.from(node.style).filter(key=>ALLOWED_STYLES.has(key)).map(key=>`${key}:${node.style.getPropertyValue(key)}`).join(';');
           safe?node.setAttribute('style',safe):node.removeAttribute('style');continue;
         }
-        const allowed=name==='color'||name==='face'||name==='size'||(node.tagName==='A'&&(name==='href'||name==='target'||name==='rel'));
+        const allowed=['color','face','size'].includes(name)||(node.tagName==='A'&&(name==='href'||name==='target'||name==='rel'));
         if(!allowed)node.removeAttribute(attribute.name);
       }
       if(node.tagName==='A'){
