@@ -34,3 +34,9 @@ npm-debug.log*
 data/*.db
 data/*.db-*
 data/*.duckdb
+
+# Python & Screenshots
+__pycache__/
+*.pyc
+*.png
+

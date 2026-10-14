@@ -100,6 +100,12 @@ class Store:
                     CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY,value_json TEXT);
                     CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id TEXT NOT NULL,expires_at INTEGER NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
                     CREATE TABLE IF NOT EXISTS audit(id TEXT PRIMARY KEY,action TEXT,details_json TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+                    CREATE TABLE IF NOT EXISTS support_requests(
+                        id TEXT PRIMARY KEY,request_number TEXT NOT NULL UNIQUE,issue_title TEXT NOT NULL,description TEXT NOT NULL,
+                        service TEXT DEFAULT 'Reporting Services',severity TEXT DEFAULT 'Medium',status TEXT DEFAULT 'Open',
+                        owner_email TEXT NOT NULL,owner_id TEXT,workspace_id TEXT,workspace_name TEXT,report_id TEXT,report_name TEXT,
+                        admin_email TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    );
                     """)
                     cols=[r[1] for r in c.execute("PRAGMA table_info(saved_reports)").fetchall()]
                     if 'project_json' not in cols: c.execute("ALTER TABLE saved_reports ADD COLUMN project_json TEXT")
@@ -296,3 +302,71 @@ class Store:
             if not r or r['expires_at']<int(time.time()) or r['status']!='active':return None
             memberships=c.execute('SELECT m.workspace_id,m.role,w.name workspace_name FROM workspace_memberships m LEFT JOIN workspaces w ON w.id=m.workspace_id WHERE m.user_id=?',(r['id'],)).fetchall()
             return {'id':r['id'],'email':r['email'],'displayName':r['display_name'],'memberships':[dict(x) for x in memberships]}
+
+    def create_support_request(self, data: dict) -> dict:
+        req_id = data.get('id') or str(uuid.uuid4())
+        from datetime import datetime, timezone
+        prefix = datetime.now(timezone.utc).strftime("SR-%Y%m%d")
+        req_num = data.get('request_number')
+        with self.conn() as c:
+            if not req_num:
+                count = c.execute("SELECT COUNT(*) FROM support_requests WHERE request_number LIKE ?", (f"{prefix}%",)).fetchone()[0]
+                req_num = f"{prefix}-{count + 1:04d}"
+            c.execute("""
+                INSERT INTO support_requests(
+                    id, request_number, issue_title, description, service, severity, status,
+                    owner_email, owner_id, workspace_id, workspace_name, report_id, report_name,
+                    admin_email, created_at, updated_at
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """, (
+                req_id, req_num,
+                str(data.get('issue_title') or '').strip()[:300],
+                str(data.get('description') or '').strip(),
+                str(data.get('service') or 'Reporting Services'),
+                str(data.get('severity') or 'Medium'),
+                str(data.get('status') or 'Open'),
+                str(data.get('owner_email') or '').strip().lower(),
+                data.get('owner_id'),
+                data.get('workspace_id'),
+                data.get('workspace_name'),
+                data.get('report_id'),
+                data.get('report_name'),
+                str(data.get('admin_email') or '').strip().lower()
+            ))
+        return self.get_support_request(req_id)
+
+    def get_support_request(self, req_id: str) -> dict | None:
+        with self.conn() as c:
+            r = c.execute("SELECT * FROM support_requests WHERE id = ? OR request_number = ?", (req_id, req_id)).fetchone()
+            return dict(r) if r else None
+
+    def list_support_requests(self, owner_email: str | None = None, status: str | None = None) -> list[dict]:
+        query = "SELECT * FROM support_requests WHERE 1=1"
+        params = []
+        if owner_email:
+            query += " AND lower(owner_email) = lower(?)"
+            params.append(owner_email.strip())
+        if status:
+            if status.lower() == 'open':
+                query += " AND lower(status) in ('open', 'in progress', 'pending')"
+            elif status.lower() == 'closed':
+                query += " AND lower(status) in ('closed', 'resolved')"
+            else:
+                query += " AND lower(status) = lower(?)"
+                params.append(status.strip())
+        query += " ORDER BY created_at DESC"
+        with self.conn() as c:
+            return [dict(r) for r in c.execute(query, params).fetchall()]
+
+    def update_support_request_status(self, req_id: str, status: str, admin_notes: str | None = None) -> dict | None:
+        with self.conn() as c:
+            existing = c.execute("SELECT id FROM support_requests WHERE id = ? OR request_number = ?", (req_id, req_id)).fetchone()
+            if not existing:
+                return None
+            actual_id = existing[0]
+            c.execute(
+                "UPDATE support_requests SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status.strip(), actual_id)
+            )
+        return self.get_support_request(actual_id)
+

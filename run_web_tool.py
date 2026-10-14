@@ -27,6 +27,7 @@ RUNTIME_ROOT = Path(os.environ.get("LOCALAPPDATA", str(ROOT))) / "VTAB Reporting
 VENV_ROOT = RUNTIME_ROOT / "python"
 VENV_PYTHON = VENV_ROOT / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 DEPS_MARKER = RUNTIME_ROOT / "requirements.sha256"
+FRONTEND_DEPS_MARKER = ROOT / "node_modules" / ".vtab-package-lock.sha256"
 REQUIRED_API_PATHS = {
     "/api/v1/service/publish-context",
     "/api/v1/service/workspaces/{workspace_id}/reports",
@@ -137,10 +138,31 @@ def run_checked(args: list[str], *, cwd: Path, env: dict[str, str]) -> None:
 
 def prepare_frontend(env: dict[str, str]) -> None:
     npm = command("npm")
+    package_lock = ROOT / "package-lock.json"
+    if not package_lock.is_file():
+        raise SetupError("package-lock.json is missing. Copy the complete Services source package and try again.")
+    fingerprint = hashlib.sha256(package_lock.read_bytes()).hexdigest()
     vite = ROOT / "node_modules" / ".bin" / ("vite.cmd" if os.name == "nt" else "vite")
-    if not vite.is_file():
-        print("Installing website packages (first run only)...")
+    required_packages = [
+        ROOT / "node_modules" / name / "package.json"
+        for name in ("maplibre-gl", "pmtiles", "proj4", "shpjs", "topojson-client")
+    ]
+    marker_current = (
+        FRONTEND_DEPS_MARKER.read_text(encoding="utf-8").strip()
+        if FRONTEND_DEPS_MARKER.is_file() else ""
+    )
+    dependencies_ready = (
+        vite.is_file()
+        and all(path.is_file() for path in required_packages)
+        and marker_current == fingerprint
+    )
+    if not dependencies_ready:
+        print("Installing or updating website packages (package definition changed)...")
         run_checked([npm, "ci", "--no-audit", "--no-fund"], cwd=ROOT, env=env)
+        missing = [path.parent.name for path in required_packages if not path.is_file()]
+        if missing:
+            raise SetupError("Website package installation is incomplete. Missing: " + ", ".join(missing))
+        FRONTEND_DEPS_MARKER.write_text(fingerprint, encoding="utf-8")
     print("Building the Services website...")
     run_checked([npm, "run", "build:web"], cwd=ROOT, env=env)
     if not (DIST_WEB / "index.html").is_file():

@@ -36,7 +36,21 @@ def _admin_client():
     from supabase import create_client
     return create_client(url, key)
 
-BUCKET = "vtab-reports"
+def _supabase_user_id_from_token_nothrow(authorization: str | None) -> str | None:
+    """Decode a Supabase JWT and return the user UUID, or None on any failure."""
+    import base64, json as _json
+    try:
+        if not authorization or not authorization.startswith("Bearer "):
+            return None
+        token = authorization.split(" ", 1)[1]
+        payload_b64 = token.split(".")[1]
+        padding = 4 - len(payload_b64) % 4
+        payload = _json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+        return payload.get("sub") or None
+    except Exception:
+        return None
+
+
 WORKSPACE_PERMISSIONS = {
     'Admin': {'view', 'create', 'edit', 'publish', 'manage_users', 'delete_workspace', 'settings'},
     'Member': {'view', 'create', 'edit', 'publish', 'limited_manage_users', 'limited_settings'},
@@ -209,6 +223,25 @@ def grant_access(report_id: str, email: str, role: str, granter_user_id: str, ac
         if "Only Co-Owners" in res.data["error"]:
             raise PermissionError(res.data["error"])
         raise ValueError(res.data["error"])
+
+    # Collaboration notifications are best-effort and must not undo a valid
+    # access grant if the optional automation migration is not installed yet.
+    try:
+        target_rows = admin.table('vtab_users').select('id').ilike('email', email.strip()).limit(1).execute().data or []
+        report_rows = admin.table('published_reports').select('name,organization_id,workspace_id').eq('id', report_id).limit(1).execute().data or []
+        if target_rows:
+            from .notification_service import create_notification
+            report_info = report_rows[0] if report_rows else {}
+            create_notification(
+                user_id=target_rows[0]['id'], event_type='report.shared', category='collaboration',
+                title='Report shared with you',
+                message=f"{report_info.get('name') or report_id} was shared with {role} access.",
+                organization_id=report_info.get('organization_id'), workspace_id=report_info.get('workspace_id'),
+                report_id=report_id, object_type='report', object_id=report_id,
+                action_url=f'/?viewer={report_id}', dedupe_key=f'report.shared:{report_id}:{target_rows[0]["id"]}:{role}',
+            )
+    except Exception as notification_error:
+        print(f"VTAB share notification failed: {notification_error}", flush=True)
 
     return {"ok": True, "email": email, "role": role}
 
@@ -659,6 +692,39 @@ def add_workspace_member(workspace_id: str, email: str, role: str, granter_id: s
 
     return {'ok': True, 'email': email, 'role': role, 'user_id': target_uid}
 
+
+def remove_workspace_member(workspace_id: str, target_user_id: str, requester_id: str) -> dict:
+    """Remove a member from a workspace, revoking workspace report grants and active subscriptions."""
+    sb = _admin_client()
+    workspace = sb.table('workspaces').select('created_by,is_personal').eq('id', workspace_id).limit(1).execute()
+    if not workspace.data:
+        raise ValueError('Workspace not found.')
+    ws = workspace.data[0]
+    
+    if not is_admin_user(requester_id) and ws.get('created_by') != requester_id:
+        req_mem = sb.table('workspace_members').select('role').eq('workspace_id', workspace_id).eq('user_id', requester_id).limit(1).execute()
+        if not req_mem.data or req_mem.data[0].get('role') != 'Admin':
+            raise PermissionError('Only workspace Admins can remove members.')
+
+    if ws.get('created_by') == target_user_id:
+        raise ValueError('Cannot remove the workspace creator.')
+
+    # Remove from workspace_members
+    sb.table('workspace_members').delete().eq('workspace_id', workspace_id).eq('user_id', target_user_id).execute()
+
+    # Revoke report access grants for reports in this workspace
+    ws_reports = sb.table('published_reports').select('id').eq('workspace_id', workspace_id).execute()
+    for wr in (ws_reports.data or []):
+        sb.table('report_access_grants').delete().eq('report_id', wr['id']).eq('user_id', target_user_id).execute()
+
+    # Prune from subscription_recipients for subscriptions belonging to this workspace
+    ws_subs = sb.table('report_subscriptions').select('id').eq('workspace_id', workspace_id).execute()
+    for s in (ws_subs.data or []):
+        sb.table('subscription_recipients').delete().eq('subscription_id', s['id']).eq('user_id', target_user_id).execute()
+
+    return {'ok': True, 'workspace_id': workspace_id, 'user_id': target_user_id}
+
+
 def share_report_to_workspace(report_id: str, workspace_id: str, granter_id: str) -> dict:
     """Share a report into a workspace, granting access to all current members."""
     sb = _admin_client()
@@ -819,7 +885,7 @@ def get_semantic_model_runtime(semantic_model_id: str, user_id: str) -> dict:
     _ensure_managed_file_connections(sb, model, user_id)
     connections = sb.table('semantic_model_connections').select('id,name,source_type,connection_config,table_mappings,gateway_id,authentication_method,privacy_level,encrypted_transport,status,last_tested_at,last_error,updated_at').eq('semantic_model_id', semantic_model_id).order('created_at').execute().data or []
     gateways = sb.table('vtab_gateways').select('id,name,status,last_heartbeat,version,execution_mode,description,region,allow_cloud_sources').eq('workspace_id', model['workspace_id']).order('name').execute().data or []
-    jobs = sb.table('scheduled_jobs').select('id,report_id,semantic_model_id,cron_expr,interval_label,timezone,status,last_run,next_run,last_run_status,error_message,retry_count,retry_interval_minutes,timeout_minutes,source_config').eq('semantic_model_id', semantic_model_id).order('created_at', desc=True).execute().data or []
+    jobs = sb.table('scheduled_jobs').select('id,report_id,semantic_model_id,cron_expr,interval_label,timezone,status,last_run,next_run,last_run_status,error_message,retry_count,retry_interval_minutes,timeout_minutes,source_config,notify_on_failure,notify_on_success,notification_channels').eq('semantic_model_id', semantic_model_id).order('created_at', desc=True).execute().data or []
     stored = sb.table('semantic_model_parameters').select('name,data_type,current_value,default_value,allowed_values,updated_at').eq('semantic_model_id', semantic_model_id).order('name').execute().data or []
     definition = model.get('definition') or {}
     if isinstance(definition, str):
@@ -1076,7 +1142,10 @@ def save_semantic_model_schedule(semantic_model_id: str, payload: dict, user_id:
         'report_id': report_id, 'semantic_model_id': semantic_model_id, 'created_by': user_id,
         'source_type': 'semantic_model', 'cron_expr': cron_expr,
         'interval_label': str(payload.get('interval_label') or ''), 'timezone': timezone_name,
-        'source_config': {'semantic_model_id': semantic_model_id}, 'notify_on_failure': True,
+        'source_config': {'semantic_model_id': semantic_model_id},
+        'notify_on_failure': bool(payload.get('notify_on_failure', True)),
+        'notify_on_success': bool(payload.get('notify_on_success', False)),
+        'notification_channels': [channel for channel in (payload.get('notification_channels') or ['in_app','email']) if channel in ('in_app','email')],
         'status': 'active' if payload.get('enabled', True) else 'paused',
         'retry_count': max(0, min(int(payload.get('retry_count', 3)), 10)),
         'retry_interval_minutes': max(1, min(int(payload.get('retry_interval_minutes', 5)), 120)),
@@ -1108,7 +1177,8 @@ def semantic_model_refresh_now(semantic_model_id: str, user_id: str) -> dict:
         'created_by': user_id, 'source_type': 'semantic_model',
         'cron_expr': '0 0 1 1 *', 'interval_label': 'Manual only',
         'timezone': 'UTC', 'source_config': {'semantic_model_id': semantic_model_id, 'manual_only': True},
-        'notify_on_failure': True, 'status': 'active', 'run_requested_at': now,
+        'notify_on_failure': True, 'notify_on_success': False,
+        'notification_channels': ['in_app','email'], 'status': 'active', 'run_requested_at': now,
         'next_run': now, 'credentials_enc': encrypt_credentials({}),
         'retry_count': 0, 'retry_interval_minutes': 5, 'timeout_minutes': 30,
     }).execute().data or []
@@ -1206,6 +1276,7 @@ def upsert_scheduled_job(
     timezone_name: str = 'UTC',
     source_config: dict = None,
     notify_on_failure: bool = True,
+    notify_on_success: bool = False,
 ) -> dict:
     """
     Create or update a scheduled refresh job.
@@ -1232,6 +1303,7 @@ def upsert_scheduled_job(
         'timezone': timezone_name or 'UTC',
         'source_config': source_config or {},
         'notify_on_failure': bool(notify_on_failure),
+        'notify_on_success': bool(notify_on_success),
         'next_run': _compute_next_run(cron_expr, timezone_name),
         'error_message': None,
     }
@@ -1256,7 +1328,7 @@ def list_scheduled_jobs(report_id: str, user_id: str) -> list:
     sb = _admin_client()
     _report_manager(sb, report_id, user_id)
     res = sb.table('scheduled_jobs') \
-        .select('id, report_id, semantic_model_id, source_type, cron_expr, interval_label, timezone, source_config, notify_on_failure, status, last_run, next_run, last_run_status, error_message, consecutive_failures, created_at, updated_at') \
+        .select('id, report_id, semantic_model_id, source_type, cron_expr, interval_label, timezone, source_config, notify_on_failure, notify_on_success, notification_channels, status, last_run, next_run, last_run_status, error_message, consecutive_failures, created_at, updated_at') \
         .eq('report_id', report_id) \
         .order('created_at', desc=True) \
         .execute()
@@ -1344,7 +1416,7 @@ def refresh_preflight(user_id: str) -> dict:
     return {'ok': all(item['ok'] for item in checks), 'checks': checks, 'user_id': user_id}
 
 
-def complete_refresh_job(job: dict, success: bool, error_message: str = None, client=None) -> None:
+def complete_refresh_job(job: dict, success: bool, error_message: str = None, client=None, details: dict = None) -> None:
     """Finish a claimed run, schedule the next one, and preserve failure health."""
     from datetime import datetime, timezone, timedelta
     sb = client or _admin_client()
@@ -1377,14 +1449,15 @@ def complete_refresh_job(job: dict, success: bool, error_message: str = None, cl
         'source_config': source_config,
     }
     sb.table('scheduled_jobs').update(patch).eq('id', job['id']).execute()
-    if not success and job.get('notify_on_failure', True):
-        report_rows = sb.table('published_reports').select('name,organization_id').eq('id', job['report_id']).limit(1).execute().data or []
-        report = report_rows[0] if report_rows else {}
-        sb.table('notifications').insert({
-            'organization_id': report.get('organization_id'), 'user_id': job['created_by'],
-            'event_type': 'refresh.failed', 'title': f"Refresh failed: {report.get('name') or job['report_id']}",
-            'message': (error_message or 'The scheduled refresh failed.')[:1000],
-        }).execute()
+    should_notify = (success and job.get('notify_on_success', False)) or (not success and job.get('notify_on_failure', True))
+    if should_notify:
+        try:
+            from .notification_service import publish_refresh_event
+            publish_refresh_event(job, success=success, error_message=error_message, details=details, disabled=(not success and status == 'error'))
+        except Exception as notification_error:
+            # Refresh completion must never be rolled back because the optional
+            # notification infrastructure is temporarily unavailable.
+            print(f"VTAB refresh notification failed: {notification_error}", flush=True)
 
 def delete_published_report_cloud(report_id: str, user_id: str) -> dict:
     """Delete a published report if the user is the owner or an admin of the workspace it belongs to."""

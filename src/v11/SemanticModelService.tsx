@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
+import { BarChart2, Database, FileText, MoreHorizontal, Plus, FolderPlus, Upload, Search, RefreshCw, Share2, Users } from 'lucide-react';
 import { api } from '../api';
 import SimpleSemanticModelSettings from './SimpleSemanticModelSettings';
 import RlsSecurityPanel from './RlsSecurityPanel';
+import FabricModelView from './FabricModelView';
 
 export type WorkspaceReport={id:string;itemKey?:string;itemType?:string;paginatedId?:string;name:string;published_at?:string;updated_at?:string;semantic_model_id?:string};
 export type SemanticModelAsset={id:string;workspace_id:string;report_id?:string;name:string;description?:string;status?:string;updated_at?:string;reports?:WorkspaceReport[];definition?:any};
@@ -10,22 +12,232 @@ type Connection={id:string;name:string;source_type:string;connection_config?:any
 type Gateway={id:string;name:string;status:string;last_heartbeat?:string;version?:string;execution_mode?:'service_network'|'on_premises_agent';description?:string;region?:string;allow_cloud_sources?:boolean};
 type Parameter={name:string;data_type?:string;current_value?:any;default_value?:any;allowed_values?:any[]};
 type Runtime={workspace_id:string;source_manifest?:any;connections:Connection[];gateways:Gateway[];schedule?:any;parameters:Parameter[];readiness?:{refresh_ready:boolean;required_tables:string[];mapped_tables:string[];missing_tables:string[];tested_connection_count:number;blockers:string[]}};
-type Props={workspace:Workspace;reports:WorkspaceReport[];onOpenReport:(r:WorkspaceReport)=>void;onReportSettings:(r:WorkspaceReport)=>void;onShareReport:(r:WorkspaceReport)=>void;onDeleteReport:(r:WorkspaceReport)=>void;onRefresh:(m:SemanticModelAsset)=>void};
+type Props={workspace:Workspace;reports:WorkspaceReport[];onOpenReport:(r:WorkspaceReport)=>void;onReportSettings:(r:WorkspaceReport)=>void;onShareReport:(r:WorkspaceReport)=>void;onDeleteReport:(r:WorkspaceReport)=>void;onRefresh:(m:SemanticModelAsset)=>void;onNewItem?:()=>void;otherWorkspaces?:Array<{id:string;name:string;report_count?:number}>;onSelectWorkspace?:(id:string)=>void};
 type View='model'|'settings'|'security'|'history';
 type Content={id:string;name:string;type:'Report'|'Paginated report'|'Semantic model';updated_at?:string;report?:WorkspaceReport;model?:SemanticModelAsset};
 const canManage=(role?:string)=>['Admin','Member','Contributor','Owner','Co-Owner'].includes(String(role||''));
 const when=(value?:string)=>value?new Date(value).toLocaleString():'—';
 
-export default function SemanticModelService({workspace,reports,onOpenReport,onReportSettings,onShareReport,onDeleteReport}:Props){
+export default function SemanticModelService({workspace,reports,onOpenReport,onReportSettings,onShareReport,onDeleteReport,onNewItem,otherWorkspaces,onSelectWorkspace}:Props){
   const[models,setModels]=useState<SemanticModelAsset[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[selected,setSelected]=useState<SemanticModelAsset|null>(null),[view,setView]=useState<View>('model'),[search,setSearch]=useState(''),[menu,setMenu]=useState<string|null>(null),[readiness,setReadiness]=useState<Record<string,Runtime['readiness']>>({}),[pendingJobId,setPendingJobId]=useState('');
   const load=async()=>{setBusy(true);setError('');try{const next=await api<SemanticModelAsset[]>(`/service/workspaces/${encodeURIComponent(workspace.id)}/semantic-models`);setModels(next);const runtimeRows=await Promise.all(next.map(async model=>{try{const[rt,binding]=await Promise.all([api<Runtime>(`/service/semantic-models/${model.id}/runtime`),api<any>(`/service/semantic-models/${model.id}/data-bridge`)]);const sources=(rt.source_manifest?.sources||[]).filter((s:any)=>!['managed_file','published_data','snapshot','file'].includes(String(s.type||'').toLowerCase()));const bridgeReady=!!sources.length&&binding?.bridge?.status==='online';const bridgeReadiness:NonNullable<Runtime['readiness']>={refresh_ready:bridgeReady,required_tables:rt.readiness?.required_tables||[],mapped_tables:rt.readiness?.mapped_tables||[],missing_tables:rt.readiness?.missing_tables||[],tested_connection_count:rt.readiness?.tested_connection_count||0,blockers:bridgeReady?[]:!sources.length?['Republish from the updated Desktop to include source identity.']:['Connect an online Desktop Data Bridge.']};return[model.id,bridgeReadiness]as const}catch{return[model.id,undefined]as const}}));setReadiness(Object.fromEntries(runtimeRows))}catch(e:any){setError(e?.message||String(e))}finally{setBusy(false)}};
   useEffect(()=>{setSelected(null);setMenu(null);void load()},[workspace.id]);
   useEffect(()=>{if(!menu)return;const dismiss=()=>setMenu(null);document.addEventListener('pointerdown',dismiss);return()=>document.removeEventListener('pointerdown',dismiss)},[menu]);
   const items=useMemo(()=>{const reportMap=new Map<string,WorkspaceReport>();reports.forEach(r=>reportMap.set(r.itemKey||r.id,r));models.forEach(m=>(m.reports||[]).forEach(r=>{if(![...reportMap.values()].some(item=>item.id===r.id&&!item.paginatedId))reportMap.set(r.id,{...r,semantic_model_id:m.id})}));const modelById=new Map(models.map(m=>[m.id,m])),groups=new Map<string,WorkspaceReport[]>(),used=new Set<string>(),all:Content[]=[];[...reportMap.values()].forEach(report=>groups.set(report.id,[...(groups.get(report.id)||[]),report]));[...groups.values()].sort((a,b)=>(a.find(item=>!item.paginatedId)?.name||a[0]?.name||'').localeCompare(b.find(item=>!item.paginatedId)?.name||b[0]?.name||'')).forEach(group=>{const primary=group.find(item=>item.itemType!=='Paginated report'&&!item.paginatedId)||group[0];const ordered=[...group.filter(item=>item===primary),...group.filter(item=>item!==primary).sort((a,b)=>a.name.localeCompare(b.name))];ordered.forEach(report=>{const paginated=report.itemType==='Paginated report'||!!report.paginatedId;all.push({id:`report:${report.itemKey||report.id}`,name:report.name,type:paginated?'Paginated report':'Report',updated_at:report.updated_at||report.published_at,report})});const model=(primary.semantic_model_id&&modelById.get(primary.semantic_model_id))||models.find(m=>m.report_id===primary.id||(m.reports||[]).some(r=>r.id===primary.id));if(model&&!used.has(model.id)){all.push({id:`model:${model.id}`,name:model.name,type:'Semantic model',updated_at:model.updated_at,model});used.add(model.id)}});models.filter(m=>!used.has(m.id)).sort((a,b)=>a.name.localeCompare(b.name)).forEach(model=>all.push({id:`model:${model.id}`,name:model.name,type:'Semantic model',updated_at:model.updated_at,model}));const term=search.trim().toLowerCase();if(!term)return all;const matchingModelIds=new Set(models.filter(m=>m.name.toLowerCase().includes(term)||(m.reports||[]).some(r=>r.name.toLowerCase().includes(term))).map(m=>m.id));return all.filter(item=>item.name.toLowerCase().includes(term)||(item.report?.semantic_model_id&&matchingModelIds.has(item.report.semantic_model_id))||(item.model&&matchingModelIds.has(item.model.id)))},[reports,models,search]);
-  const open=async(m:SemanticModelAsset,next:View)=>{setMenu(null);setView(next);try{setSelected(await api(`/service/semantic-models/${encodeURIComponent(m.id)}`))}catch(e:any){setError(e.message||String(e))}};
+  const open=async(m:SemanticModelAsset,next:View)=>{
+    setMenu(null);
+    setView(next);
+    try{
+      let full=await api<SemanticModelAsset>(`/service/semantic-models/${encodeURIComponent(m.id)}`);
+      if(!full.definition?.tables||Object.keys(full.definition.tables).length===0){
+        const repId=full.report_id||full.reports?.[0]?.id||m.report_id||m.reports?.[0]?.id;
+        if(repId){
+          try{
+            const rep=await api<any>(`/published/${repId}`);
+            if(rep?.project?.model?.tables){
+              full={
+                ...full,
+                definition:{
+                  ...(full.definition||{}),
+                  tables:rep.project.model.tables,
+                  relationships:rep.project.model.relationships||[],
+                  measures:rep.project.model.measures||{},
+                  hierarchies:rep.project.model.hierarchies||[],
+                  columnTypes:rep.project.model.columnTypes||{}
+                }
+              };
+            }
+          }catch{}
+        }
+      }
+      setSelected(full);
+    }catch(e:any){setError(e.message||String(e))}
+  };
   const refreshNow=async(m:SemanticModelAsset)=>{setMenu(null);const state=readiness[m.id];if(!state?.refresh_ready){setView('settings');setSelected(await api(`/service/semantic-models/${encodeURIComponent(m.id)}`));return}try{const result=await api<any>(`/service/semantic-models/${m.id}/bridge-refresh`,{method:'POST'});setPendingJobId(result.job_id||'');setView('history');setSelected(await api(`/service/semantic-models/${encodeURIComponent(m.id)}`))}catch(e:any){alert(e.message||String(e))}};
   const removeModel=async(m:SemanticModelAsset)=>{setMenu(null);if(!confirm(`Delete semantic model "${m.name}"? Connected reports keep their last published snapshot, but refresh will stop.`))return;try{await api(`/service/semantic-models/${m.id}`,{method:'DELETE'});await load()}catch(e:any){alert(e.message||String(e))}};
-  return <div><div style={{display:'flex',alignItems:'center',gap:12,marginBottom:16}}><div style={{flex:1}}><h2 style={{margin:'0 0 3px',fontSize:18}}>Workspace content</h2><p style={hint}>Reports and their connected semantic models are listed together.</p></div><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filter by keyword" style={{...control,width:240}}/><button onClick={load} disabled={busy} style={secondary}>{busy?'Refreshing…':'Refresh'}</button></div>{error&&<div style={errorStyle}>{error}</div>}<div style={{background:'#fff',border:'1px solid #e2e8f0',borderRadius:10,overflow:'visible'}}><div style={gridHeader}><span>Name</span><span>Status</span><span>Type</span><span>Access</span><span>Refreshed</span><span/></div>{items.map(item=>{const paginated=item.type==='Paginated report';return <div key={item.id} style={gridRow}><button onClick={()=>item.report?onOpenReport(item.report):item.model&&void open(item.model,'model')} style={nameButton}><span style={item.type==='Report'?reportIcon:paginated?paginatedIcon:modelIcon}>{item.type==='Report'?'▥':paginated?'▤':'⠿'}</span><b>{item.name}</b></button><span style={{color:item.model&&readiness[item.model.id]?.refresh_ready?'#166534':item.model?'#b45309':'#166534',fontWeight:650}}>{item.model?(readiness[item.model.id]?.refresh_ready?'Ready':'Setup required'):'Active'}</span><span>{item.type}</span><span>{workspace.role}</span><span>{when(item.updated_at)}</span><div style={{position:'relative',justifySelf:'end'}} onPointerDown={e=>e.stopPropagation()}><button aria-label={`More options for ${item.name}`} onClick={()=>setMenu(menu===item.id?null:item.id)} style={moreButton}>⋯</button>{menu===item.id&&item.report&&<div style={menuStyle}><Menu label={paginated?'Open paginated report':'Open report'} onClick={()=>{setMenu(null);onOpenReport(item.report!)}}/>{!paginated&&<><Menu label="Report settings" onClick={()=>{setMenu(null);onReportSettings(item.report!)}}/><Menu label="Manage permissions" onClick={()=>{setMenu(null);onShareReport(item.report!)}}/>{canManage(workspace.role)&&<><Divider/><Menu danger label="Delete" onClick={()=>{setMenu(null);onDeleteReport(item.report!)}}/></>}</>}</div>}{menu===item.id&&item.model&&<div style={menuStyle}><Menu label="Open" onClick={()=>void open(item.model!,'model')}/><Menu label="Refresh Now" disabled={!readiness[item.model.id]?.refresh_ready} title={readiness[item.model.id]?.blockers?.join(' ')||''} onClick={()=>void refreshNow(item.model!)}/><Menu label="Refresh History" onClick={()=>void open(item.model!,'history')}/><Menu label="Settings" onClick={()=>void open(item.model!,'settings')}/>{canManage(workspace.role)&&<><Divider/><Menu danger label="Delete" onClick={()=>void removeModel(item.model!)}/></>}</div>}</div></div>})}{!busy&&!items.length&&<div style={{padding:48,textAlign:'center',color:'#64748b'}}><b>No content in this workspace</b><p>Publish from Desktop; the report and semantic model will appear here together.</p></div>}</div>{selected&&<SemanticModelDialog model={selected} initialView={view} role={workspace.role} workspaceName={workspace.name} pendingJobId={pendingJobId} onPendingCleared={()=>{setPendingJobId('');void load()}} onClose={()=>{setSelected(null);setPendingJobId('')}}/>}</div>;
+  return (
+    <div>
+      {/* Power BI Workspace Action Toolbar (Reference Images 1 & 5) */}
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'10px 28px',background:'#ffffff',borderBottom:'1px solid #e1e1e1',flexWrap:'wrap'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          {onNewItem && (
+            <button onClick={onNewItem} className="pbi-btn-tool" style={{fontWeight:600}}>
+              <Plus size={15} color="#0d6257"/> New item
+            </button>
+          )}
+          {onNewItem && (
+            <button onClick={onNewItem} className="pbi-btn-tool" style={{borderColor:'transparent'}}>
+              <Upload size={14} color="#616161"/> Import
+            </button>
+          )}
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <div className="pbi-table-search">
+            <Search size={14}/>
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filter by keyword"/>
+          </div>
+          <button onClick={load} disabled={busy} className="pbi-btn-tool">
+            <RefreshCw size={14}/> {busy?'Refreshing…':'Refresh'}
+          </button>
+        </div>
+      </div>
+
+      {error&&<div style={{...errorStyle,margin:'16px 28px'}}>{error}</div>}
+
+      <div className="pbi-table-container" style={{borderTop:'none'}}>
+        <table className="pbi-table">
+          <thead>
+            <tr>
+              <th style={{width:36,paddingLeft:28}}><input type="checkbox" style={{cursor:'pointer'}}/></th>
+              <th>Name</th>
+              <th>Status</th>
+              <th>Type</th>
+              <th>Owner</th>
+              <th>Refreshed</th>
+              <th>Access</th>
+              <th style={{width:48}}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(item=>{
+              const paginated=item.type==='Paginated report';
+              const isReady=item.model?readiness[item.model.id]?.refresh_ready:true;
+              return (
+                <tr key={item.id} style={{cursor:'pointer'}} onClick={()=>item.report?onOpenReport(item.report):item.model&&void open(item.model,'model')}>
+                  <td style={{paddingLeft:28}} onClick={e=>e.stopPropagation()}>
+                    <input type="checkbox" style={{cursor:'pointer'}}/>
+                  </td>
+                  <td>
+                    <div style={{display:'flex',alignItems:'center',gap:10}}>
+                      <span style={item.type==='Report'?reportIcon:paginated?paginatedIcon:modelIcon}>
+                        {item.type==='Report'?<BarChart2 size={15}/>:paginated?<FileText size={15}/>:<Database size={15}/>}
+                      </span>
+                      <b style={{color:'#242424',fontWeight:600}}>{item.name}</b>
+                      {item.report && !paginated && (
+                        <button
+                          title="Share / Manage permissions"
+                          onClick={e=>{e.stopPropagation();onShareReport(item.report!)}}
+                          style={{border:'none',background:'transparent',cursor:'pointer',color:'#616161',padding:2,display:'grid',placeItems:'center',marginLeft:4}}
+                        >
+                          <Share2 size={13}/>
+                        </button>
+                      )}
+                      {item.model && (
+                        <button
+                          title="Refresh Now"
+                          onClick={e=>{e.stopPropagation();void refreshNow(item.model!)}}
+                          style={{border:'none',background:'transparent',cursor:'pointer',color:'#616161',padding:2,display:'grid',placeItems:'center',marginLeft:4}}
+                        >
+                          <RefreshCw size={13}/>
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                  <td>
+                    <span style={{color:isReady?'#166534':'#b45309',fontWeight:600,fontSize:12}}>
+                      {item.model?(isReady?'Ready':'Setup required'):'Active'}
+                    </span>
+                  </td>
+                  <td style={{color:'#616161'}}>{item.type}</td>
+                  <td style={{color:'#616161'}}>{workspace.name}</td>
+                  <td style={{color:'#616161'}}>{when(item.updated_at)}</td>
+                  <td style={{color:'#616161'}}>{workspace.role}</td>
+                  <td style={{position:'relative'}} onClick={e=>e.stopPropagation()} onPointerDown={e=>e.stopPropagation()}>
+                    <button aria-label={`More options for ${item.name}`} onClick={()=>setMenu(menu===item.id?null:item.id)} style={moreButton}>
+                      <MoreHorizontal size={16}/>
+                    </button>
+                    {menu===item.id&&item.report&&(
+                      <div style={menuStyle}>
+                        <Menu label={paginated?'Open paginated report':'Open report'} onClick={()=>{setMenu(null);onOpenReport(item.report!)}}/>
+                        {!paginated&&(
+                          <>
+                            <Menu label="Settings" onClick={()=>{setMenu(null);onReportSettings(item.report!)}}/>
+                            <Menu label="Manage permissions" onClick={()=>{setMenu(null);onShareReport(item.report!)}}/>
+                            {canManage(workspace.role)&&(
+                              <>
+                                <Divider/>
+                                <Menu danger label="Delete" onClick={()=>{setMenu(null);onDeleteReport(item.report!)}}/>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {menu===item.id&&item.model&&(
+                      <div style={menuStyle}>
+                        <Menu label="Open semantic model" onClick={()=>void open(item.model!,'model')}/>
+                        <Menu label="Refresh now" disabled={!readiness[item.model.id]?.refresh_ready} title={readiness[item.model.id]?.blockers?.join(' ')||''} onClick={()=>void refreshNow(item.model!)}/>
+                        <Menu label="Refresh history" onClick={()=>void open(item.model!,'history')}/>
+                        <Menu label="Security" onClick={()=>void open(item.model!,'security')}/>
+                        <Menu label="Settings" onClick={()=>void open(item.model!,'settings')}/>
+                        {canManage(workspace.role)&&(
+                          <>
+                            <Divider/>
+                            <Menu danger label="Delete" onClick={()=>void removeModel(item.model!)}/>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+            {!busy&&!items.length&&(
+              <tr>
+                <td colSpan={8} style={{padding:'56px 24px',textAlign:'center',color:'#616161'}}>
+                  <b style={{display:'block',fontSize:15,color:'#242424',marginBottom:6}}>No content in {workspace.name}</b>
+                  <p style={{margin:'0 0 16px',fontSize:13,color:'#616161'}}>Publish from Desktop or click <b>+ New item</b> to import a package into this workspace.</p>
+                  {otherWorkspaces && otherWorkspaces.length > 0 && onSelectWorkspace && (
+                    <div style={{marginTop:20,display:'inline-flex',flexDirection:'column',alignItems:'center',gap:10,padding:'14px 20px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8}}>
+                      <span style={{fontSize:12,fontWeight:600,color:'#475569'}}>Switch to another workspace:</span>
+                      <div style={{display:'flex',gap:8,flexWrap:'wrap',justifyContent:'center'}}>
+                        {otherWorkspaces.map(w=>(
+                          <button
+                            key={w.id}
+                            onClick={()=>onSelectWorkspace(w.id)}
+                            className="pbi-btn-tool"
+                            style={{color:'#0d6257',borderColor:'#0d6257',background:'#f0fdf4',fontWeight:600}}
+                          >
+                            <Users size={14}/> {w.name} {typeof w.report_count==='number'?`(${w.report_count})`:''}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {selected&&(
+        view==='model' ? (
+          <FabricModelView
+            model={selected}
+            onClose={()=>{setSelected(null);setPendingJobId('')}}
+            onOpenSettings={()=>setView('settings')}
+            onOpenSecurity={()=>setView('security')}
+            onOpenHistory={()=>setView('history')}
+            onShare={()=>{
+              const rep=reports.find(r=>r.id===selected.report_id||(selected.reports||[]).some(sr=>sr.id===r.id));
+              if(rep)onShareReport(rep);
+              else alert('Share this model via workspace access settings.');
+            }}
+          />
+        ) : (
+          <SemanticModelDialog
+            model={selected}
+            initialView={view}
+            role={workspace.role}
+            workspaceName={workspace.name}
+            pendingJobId={pendingJobId}
+            onPendingCleared={()=>{setPendingJobId('');void load()}}
+            onClose={()=>{setSelected(null);setPendingJobId('')}}
+          />
+        )
+      )}
+    </div>
+  );
 }
 
 function SemanticModelDialog({model,initialView,role,workspaceName,pendingJobId,onPendingCleared,onClose}:{model:SemanticModelAsset;initialView:View;role:string;workspaceName:string;pendingJobId:string;onPendingCleared:()=>void;onClose:()=>void}){
@@ -42,7 +254,7 @@ function Settings({model,runtime,role,onReload}:{model:SemanticModelAsset;runtim
 }
 
 function LegacySettings({model,runtime,role,tables,onReload}:{model:SemanticModelAsset;runtime:Runtime;role:string;tables:string[];onReload:()=>Promise<void>}){
-  const refreshReady=runtime.readiness?.refresh_ready===true,[editing,setEditing]=useState<Connection|null|undefined>(undefined),[requireGateway,setRequireGateway]=useState(false),[gatewayEditing,setGatewayEditing]=useState<Gateway|null|undefined>(undefined),[message,setMessage]=useState(''),[schedule,setSchedule]=useState<any>({enabled:false,cron_expr:'0 6 * * *',interval_label:'Daily at 06:00',timezone:'Asia/Kolkata',retry_count:3,retry_interval_minutes:5,timeout_minutes:30,...(runtime.schedule||{})}),[parameters,setParameters]=useState<Parameter[]>(runtime.parameters||[]);
+  const refreshReady=runtime.readiness?.refresh_ready===true,[editing,setEditing]=useState<Connection|null|undefined>(undefined),[requireGateway,setRequireGateway]=useState(false),[gatewayEditing,setGatewayEditing]=useState<Gateway|null|undefined>(undefined),[message,setMessage]=useState(''),[schedule,setSchedule]=useState<any>({enabled:false,cron_expr:'0 6 * * *',interval_label:'Daily at 06:00',timezone:'Asia/Kolkata',retry_count:3,retry_interval_minutes:5,timeout_minutes:30,notify_on_failure:true,notify_on_success:false,notification_channels:['in_app','email'],...(runtime.schedule||{})}),[parameters,setParameters]=useState<Parameter[]>(runtime.parameters||[]);
   const saveSchedule=async()=>{if(!refreshReady){setMessage(`Error: ${runtime.readiness?.blockers?.join(' ')||'Configure and test every data source first.'}`);return}try{await api(`/service/semantic-models/${model.id}/schedule`,{method:'PUT',body:JSON.stringify(schedule)});setMessage('Refresh schedule saved.');await onReload()}catch(e:any){setMessage(`Error: ${e.message||String(e)}`)}};const saveParameters=async(refresh=false)=>{if(refresh&&!refreshReady){setMessage(`Error: ${runtime.readiness?.blockers?.join(' ')||'Configure and test every data source first.'}`);return}try{await api(`/service/semantic-models/${model.id}/parameters`,{method:'PUT',body:JSON.stringify({parameters})});if(refresh)await api(`/service/semantic-models/${model.id}/refresh-now`,{method:'POST'});setMessage(refresh?'Parameters saved and refresh queued.':'Parameters saved for the next refresh.');await onReload()}catch(e:any){setMessage(`Error: ${e.message||String(e)}`)}};const remove=async(c:Connection)=>{if(!confirm(`Remove connection "${c.name}"?`))return;try{await api(`/service/semantic-models/${model.id}/connections/${c.id}`,{method:'DELETE'});await onReload()}catch(e:any){setMessage(`Error: ${e.message||String(e)}`)}};
   const expected=runtime.source_manifest?.sources||[],covered=new Set(runtime.connections.flatMap(c=>(c.table_mappings||[]).map((m:any)=>m.table))),virtual:Connection[]=expected.map((source:any)=>({id:'',name:source.name||source.id,source_type:source.type||'unknown',connection_config:source.configuration||{},status:'not_configured',table_mappings:(source.tables||[]).filter((t:any)=>!covered.has(t.modelTable)).map((t:any)=>({table:t.modelTable,query:t.query||'',url:t.url||'',storage_path:t.managedStoragePath||''}))})).filter((c:Connection)=>(c.table_mappings||[]).length>0),sourceRows=[...runtime.connections,...virtual];
   const editDirect=(c:Connection|null)=>{setRequireGateway(false);setEditing(c)};
@@ -50,7 +262,7 @@ function LegacySettings({model,runtime,role,tables,onReload}:{model:SemanticMode
   return <div style={{maxWidth:940}}><h2 style={{marginTop:0}}>Semantic Model Settings</h2>{message&&<div style={message.toLowerCase().includes('error')?errorStyle:successStyle}>{message}</div>}
     <SettingsSection title="1. Data Source Configuration" open><p style={hint}>A published snapshot lets users open the report, but it does not prove that Services can reach the original database. Configure and test every live source before refresh is enabled.</p>{!refreshReady&&<div style={warningStyle}><b>Refresh setup required.</b><ul style={{margin:'6px 0 0',paddingLeft:18}}>{(runtime.readiness?.blockers||[]).map(x=><li key={x}>{x}</li>)}</ul></div>}{sourceRows.length?<div style={sourceTable}><b>Source Name</b><b>Type</b><b>Access</b><b>Status</b><span/>{sourceRows.map((c,index)=><Row key={c.id||`published-${index}`} values={[c.name,sourceLabel(c.source_type),sourceAccess(c),c.source_type==='managed_file'?'Published Snapshot':statusLabel(c.status)]}><span>{c.source_type==='managed_file'&&c.id?<span style={{color:'#92400e'}}>View-only snapshot</span>:<button style={linkButton} onClick={()=>editDirect(c)}>{c.id?'View / Edit':'Configure'}</button>}{c.id&&c.source_type!=='managed_file'&&<> · <button style={{...linkButton,color:'#b91c1c'}} onClick={()=>void remove(c)}>Remove</button></>}</span></Row>)}</div>:<Empty text="No source definitions were found in this published semantic model. Add the live source and map every model table before enabling refresh."/>}<button disabled={!canManage(role)} onClick={()=>editDirect(null)} style={{...primary,marginTop:14}}>+ Add cloud/direct connection</button></SettingsSection>
     <SettingsSection title="2. Gateway and Cloud Connections" open><div style={guideStyle}><b>Choose the connection path</b><ol style={{margin:'7px 0 0',paddingLeft:20}}><li><b>Cloud/direct:</b> use when the deployed Services backend can reach the database host.</li><li><b>Services network gateway:</b> the backend itself connects; on Render, use the database's externally reachable hostname—not your PC's localhost.</li><li><b>On-premises gateway:</b> use only for a private office/network database after its gateway agent is installed and online.</li><li>Enter credentials, map every table, run <b>Test Connection</b>, then save.</li></ol></div><div style={{display:'flex',gap:8,marginBottom:12}}><button disabled={!canManage(role)} onClick={()=>setGatewayEditing(null)} style={secondary}>+ Register gateway cluster</button><button disabled={!canManage(role)||!runtime.gateways.some(g=>g.status==='online')} onClick={()=>editGatewayConnection(null)} style={primary}>+ New gateway connection</button></div>{runtime.gateways.length?<div style={gatewayTable}><b>Gateway cluster</b><b>Mode</b><b>Status</b><b>Last heartbeat</b><span/>{runtime.gateways.map(g=><Row key={g.id} values={[g.name,g.execution_mode==='on_premises_agent'?'On-premises agent':'Services network',statusLabel(g.status),when(g.last_heartbeat)]}><button style={linkButton} onClick={()=>setGatewayEditing(g)}>Settings</button></Row>)}</div>:<Empty text="No gateway cluster is registered. For a database reachable from the deployed Services server, direct/cloud is simplest. A private network requires a connected on-premises agent."/>}{gatewayEditing!==undefined&&<GatewayEditor workspaceId={runtime.workspace_id} current={gatewayEditing} onCancel={()=>setGatewayEditing(undefined)} onSaved={async()=>{setGatewayEditing(undefined);await onReload()}}/>}<h4>Semantic model data source mapping</h4>{sourceRows.map((c,index)=><div key={c.id||`mapping-${index}`} style={mappingRow}><span>{c.name}</span><span>→</span><b>{c.source_type==='managed_file'?'Published snapshot only':c.gateway_id?(runtime.gateways.find(g=>g.id===c.gateway_id)?.name||'Unavailable gateway'):c.id?'Cloud / Direct':'Not Configured'}</b></div>)}{editing!==undefined&&<ConnectionEditor modelId={model.id} current={editing} tables={tables} gateways={runtime.gateways} requireGateway={requireGateway} onCancel={()=>setEditing(undefined)} onSaved={async()=>{setEditing(undefined);await onReload()}}/>}</SettingsSection>
-    <SettingsSection title="3. Refresh Schedule"><fieldset disabled={!refreshReady} style={{border:0,padding:0,margin:0,opacity:refreshReady?1:.55}}><div style={formGrid}><Check caption="Enable scheduled refresh" checked={schedule.enabled!==false} onChange={v=>setSchedule({...schedule,enabled:v})}/><Field caption="Cron schedule" value={schedule.cron_expr||''} onChange={v=>setSchedule({...schedule,cron_expr:v})}/><Field caption="Time zone" value={schedule.timezone||''} onChange={v=>setSchedule({...schedule,timezone:v})}/><Field caption="Retry count" type="number" value={schedule.retry_count} onChange={v=>setSchedule({...schedule,retry_count:Number(v)})}/><Field caption="Retry interval (minutes)" type="number" value={schedule.retry_interval_minutes} onChange={v=>setSchedule({...schedule,retry_interval_minutes:Number(v)})}/><Field caption="Timeout (minutes)" type="number" value={schedule.timeout_minutes} onChange={v=>setSchedule({...schedule,timeout_minutes:Number(v)})}/></div><p style={hint}>{refreshReady?'The model is ready. Refresh Now works without a schedule; this schedule controls automatic refresh only.':'Refresh controls are locked until every model table is mapped to a successfully tested live connection.'}</p><button onClick={()=>void saveSchedule()} style={primary}>Save Schedule</button></fieldset></SettingsSection>{!!parameters.length&&<SettingsSection title="4. Parameters"><p style={hint}>Values apply on the next refresh and do not immediately change the report.</p>{parameters.map((p,i)=><div key={p.name} style={parameterRow}><div><b>{p.name}</b><small style={{display:'block'}}>{p.data_type||'Text'}</small></div><input value={p.current_value??''} onChange={e=>setParameters(parameters.map((x,n)=>n===i?{...x,current_value:e.target.value}:x))} style={control}/></div>)}<div style={{display:'flex',gap:8,justifyContent:'flex-end'}}><button onClick={()=>void saveParameters()} style={secondary}>Apply</button><button disabled={!refreshReady} onClick={()=>void saveParameters(true)} style={{...primary,opacity:refreshReady?1:.55}}>Apply & Refresh Now</button></div></SettingsSection>}</div>;
+    <SettingsSection title="3. Refresh Schedule"><fieldset disabled={!refreshReady} style={{border:0,padding:0,margin:0,opacity:refreshReady?1:.55}}><div style={formGrid}><Check caption="Enable scheduled refresh" checked={schedule.enabled!==false} onChange={v=>setSchedule({...schedule,enabled:v})}/><Field caption="Cron schedule" value={schedule.cron_expr||''} onChange={v=>setSchedule({...schedule,cron_expr:v})}/><Field caption="Time zone" value={schedule.timezone||''} onChange={v=>setSchedule({...schedule,timezone:v})}/><Field caption="Retry count" type="number" value={schedule.retry_count} onChange={v=>setSchedule({...schedule,retry_count:Number(v)})}/><Field caption="Retry interval (minutes)" type="number" value={schedule.retry_interval_minutes} onChange={v=>setSchedule({...schedule,retry_interval_minutes:Number(v)})}/><Field caption="Timeout (minutes)" type="number" value={schedule.timeout_minutes} onChange={v=>setSchedule({...schedule,timeout_minutes:Number(v)})}/><Check caption="Notify me when refresh fails" checked={schedule.notify_on_failure!==false} onChange={v=>setSchedule({...schedule,notify_on_failure:v})}/><Check caption="Notify me after successful refresh" checked={schedule.notify_on_success===true} onChange={v=>setSchedule({...schedule,notify_on_success:v})}/></div><p style={hint}>{refreshReady?'The model is ready. Refresh notifications follow your global in-app and email preferences. Success messages are opt-in to avoid unnecessary email.':'Refresh controls are locked until every model table is mapped to a successfully tested live connection.'}</p><button onClick={()=>void saveSchedule()} style={primary}>Save Schedule</button></fieldset></SettingsSection>{!!parameters.length&&<SettingsSection title="4. Parameters"><p style={hint}>Values apply on the next refresh and do not immediately change the report.</p>{parameters.map((p,i)=><div key={p.name} style={parameterRow}><div><b>{p.name}</b><small style={{display:'block'}}>{p.data_type||'Text'}</small></div><input value={p.current_value??''} onChange={e=>setParameters(parameters.map((x,n)=>n===i?{...x,current_value:e.target.value}:x))} style={control}/></div>)}<div style={{display:'flex',gap:8,justifyContent:'flex-end'}}><button onClick={()=>void saveParameters()} style={secondary}>Apply</button><button disabled={!refreshReady} onClick={()=>void saveParameters(true)} style={{...primary,opacity:refreshReady?1:.55}}>Apply & Refresh Now</button></div></SettingsSection>}</div>;
 }
 
 function ConnectionEditor({modelId,current,tables,gateways,requireGateway=false,onCancel,onSaved}:{modelId:string;current:Connection|null;tables:string[];gateways:Gateway[];requireGateway?:boolean;onCancel:()=>void;onSaved:()=>void}){

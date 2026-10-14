@@ -1,0 +1,8 @@
+.vtabMapLegend{position:absolute;display:flex;flex-direction:column;gap:4px;max-width:170px;max-height:45%;overflow:auto;padding:7px 8px;border:1px solid rgba(148,163,184,.65);border-radius:7px;background:rgba(255,255,255,.92);box-shadow:0 3px 12px rgba(15,23,42,.12);color:#334155;font-size:9px}
+.vtabMapLegend.position-top{top:8px;left:50%;transform:translateX(-50%)}
+.vtabMapLegend.position-bottom{bottom:8px;right:8px}
+.vtabMapLegend.position-left{left:8px;top:50%;transform:translateY(-50%)}
+.vtabMapLegend.position-right{right:8px;top:50%;transform:translateY(-50%)}
+.vtabMapLegend>b{margin-bottom:2px;color:#0f172a}
+.vtabMapLegend>span{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.vtabMapLegend i{width:8px;height:8px;flex:0 0 8px;border-radius:2px}

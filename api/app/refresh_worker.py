@@ -250,7 +250,12 @@ class RefreshWorker:
                     "tables_refreshed": len(result["tables"]),
                     "rows_processed": result["rows"], "details": result,
                 }).eq("id", run_row["id"]).execute()
-                complete_refresh_job(job, True, None, client)
+                complete_refresh_job(job, True, None, client, {**result, "runId": run_row["id"], "durationMs": int((time.time()-started)*1000)})
+                try:
+                    from .automation_service import queue_after_refresh
+                    queue_after_refresh(job["report_id"])
+                except Exception as automation_error:
+                    print(f"VTAB after-refresh automation queue failed: {automation_error}", flush=True)
             except Exception as error:
                 message = str(error)[:2000]
                 lowered = message.lower()
@@ -264,7 +269,7 @@ class RefreshWorker:
                         "suggestedDiagnostic": "Check gateway status and data-source credentials." if stage == "Gateway" else "Test the affected connection and verify its credentials, endpoint, and table mapping.",
                     },
                 }).eq("id", run_row["id"]).execute()
-                complete_refresh_job(job, False, message, client)
+                complete_refresh_job(job, False, message, client, {"runId": run_row["id"], "durationMs": int((time.time()-started)*1000), "stage": stage})
 
 
 _worker: RefreshWorker | None = None

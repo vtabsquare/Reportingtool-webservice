@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-type Report = { id:string; itemKey?:string; itemType?:string; paginatedId?:string; name:string; published_at:string; updated_at?:string; pages:number; role:string; sourceType?:string; workspace_is_personal?:boolean; workspace_name?:string };
+type Report = { id:string; itemKey?:string; itemType?:string; paginatedId?:string; name:string; published_at:string; updated_at?:string; pages?:number|null; role:string; sourceType?:string; workspace_is_personal?:boolean; workspace_name?:string };
 type Props = { report:Report; onClose:()=>void; onShare:()=>void; onRefresh:()=>void; onDelete:()=>void };
 const canEdit=(role:string)=>["Owner","Co-Owner","Admin","Member","Contributor"].includes(role);
 const canShare=(report:Report)=>canEdit(report.role)&&!report.workspace_is_personal&&report.workspace_name?.trim().toLowerCase()!=="my workspace";

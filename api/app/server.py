@@ -24,7 +24,7 @@ from .storage import Store, META, DEMO
 from .demo import seed, default_project, blank_project
 from .transform_engine import preview, materialize, join_profile, ai_suggestions, suggest_calculated_column
 from .semantic_engine import execute, measure, cache_stats, clear_cache
-from .dax_engine import suggest_measure_from_prompt
+from .dax_engine import dax_engine_health, diagnose_dax_definition, parse_measure_definition, repair_dax_definition, suggest_measure_from_prompt
 from .measure_registry import merge_measure_registry
 from .measure_catalog import generate_measure_catalog
 from .gemini import generate
@@ -117,7 +117,7 @@ async def secure_authoring_api(request, call_next):
         return await call_next(request)
     enforce=os.environ.get('VTAB_ENFORCE_API_AUTH','0')=='1'
     public=path in ('/api/v1/health','/api/v1/auth/status','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/password-reset/request','/api/v1/auth/password-reset/confirm','/api/v1/auth/register/request','/api/v1/auth/register/confirm')
-    consumer=path.startswith('/api/v1/published')
+    consumer=path.startswith('/api/v1/published') or path.startswith('/api/v1/service/')
     if enforce and path.startswith('/api/v1/') and not public and not consumer:
         token=(request.headers.get('authorization') or '').replace('Bearer ','',1).strip()
         user=store.session_user(token)
@@ -150,10 +150,10 @@ class PaginatedPdfReq(BaseModel):
     project:dict|None=None; definitionId:str; filters:list[dict]=[]; parameters:dict={}; roleId:str|None=None
 class TransformReq(BaseModel):source:str;steps:list[dict];limit:int=200
 class JoinProfileReq(BaseModel):source:str;steps:list[dict];otherTable:str;keys:list[dict]
-class MeasureReq(BaseModel):name:str;expression:str
-class MeasurePromptReq(BaseModel):prompt:str
+class MeasureReq(BaseModel):name:str='';expression:str;project:dict|None=None
+class MeasurePromptReq(BaseModel):prompt:str;project:dict|None=None
 class AssistReq(BaseModel):prompt:str;context:dict
-class SaveMeasureReq(BaseModel):name:str;expression:str;originalName:str|None=None
+class SaveMeasureReq(BaseModel):name:str='';expression:str;originalName:str|None=None;project:dict|None=None
 class MeasureCatalogReq(BaseModel):limit:int=360
 class BulkMeasureItem(BaseModel):name:str;expression:str;originalName:str|None=None
 class BulkMeasureReq(BaseModel):measures:list[BulkMeasureItem]
@@ -992,6 +992,22 @@ def cloud_add_workspace_member(workspace_id:str, payload:dict, authorization:str
     except ValueError as e: raise HTTPException(404,str(e))
     except Exception as e: raise HTTPException(400,str(e))
 
+
+@app.delete('/api/v1/cloud/workspaces/{workspace_id}/members/{target_user_id}')
+def cloud_remove_workspace_member(workspace_id:str, target_user_id:str, authorization:str|None=Header(default=None)):
+    """Remove a member from a workspace."""
+    try:
+        from .supabase_store import remove_workspace_member as _remove
+    except ImportError:
+        raise HTTPException(503,'supabase package not installed')
+    user_id=_supabase_user_id_from_token(authorization)
+    try:
+        return _remove(workspace_id, target_user_id, user_id)
+    except PermissionError as e: raise HTTPException(403,str(e))
+    except ValueError as e: raise HTTPException(400,str(e))
+    except Exception as e: raise HTTPException(400,str(e))
+
+
 @app.post('/api/v1/cloud/workspaces/{workspace_id}/reports')
 def cloud_share_report_to_workspace(workspace_id:str, payload:dict, authorization:str|None=Header(default=None)):
     """Share a report into a workspace."""
@@ -1260,6 +1276,69 @@ def semantic_model_run_status(semantic_model_id: str, job_id: str, authorization
         _service_error(error)
 
 
+@app.post('/api/v1/service/semantic-models/{semantic_model_id}/test-refresh-notification')
+def semantic_model_test_notification(semantic_model_id: str, payload: dict | None = None, authorization: str | None = Header(default=None)):
+    user_id = _supabase_user_id_from_token(authorization)
+    from .supabase_store import _admin_client, _semantic_model_manager
+    from .notification_service import create_notification
+    try:
+        sb = _admin_client()
+        model = _semantic_model_manager(sb, semantic_model_id, user_id)
+        report_id = str(model.get('report_id') or '')
+        body = payload or {}
+        mode = str(body.get('mode') or 'success')
+        model_name = str(model.get('name') or 'Semantic Model')
+
+        if mode == 'failure':
+            title = f"Refresh failed: {model_name}"
+            message = "Test notification: The data refresh could not connect to the remote source (simulated test failure)."
+            severity = "error"
+            event_type = "refresh.failed"
+        else:
+            title = f"Refresh completed: {model_name}"
+            message = "Test notification: The data refresh completed successfully. All mapped tables refreshed."
+            severity = "success"
+            event_type = "refresh.succeeded"
+
+        ws_id = model.get('workspace_id')
+        if ws_id:
+            from .notification_service import notify_workspace_members
+            member_results = notify_workspace_members(
+                workspace_id=ws_id,
+                event_type=event_type,
+                title=title,
+                message=message,
+                category="refresh",
+                severity=severity,
+                report_id=report_id,
+                object_type="semantic_model",
+                object_id=semantic_model_id,
+                action_url=f"/?viewer={report_id}" if report_id else "/",
+                override_channels=["in_app", "email"],
+                fallback_user_id=user_id,
+            )
+            return {"ok": True, "title": title, "result": member_results}
+
+        res = create_notification(
+            user_id=user_id,
+            event_type=event_type,
+            category="refresh",
+            severity=severity,
+            title=title,
+            message=message,
+            organization_id=model.get('organization_id'),
+            workspace_id=model.get('workspace_id'),
+            report_id=report_id,
+            object_type="semantic_model",
+            object_id=semantic_model_id,
+            action_url=f"/?viewer={report_id}" if report_id else "/",
+            override_channels=["in_app", "email"],
+        )
+        return {"ok": True, "title": title, "result": res}
+    except Exception as error:
+        _service_error(error)
+
+
 @app.delete('/api/v1/service/semantic-models/{semantic_model_id}')
 def semantic_model_delete(semantic_model_id: str, authorization: str | None = Header(default=None)):
     from .supabase_store import delete_semantic_model
@@ -1351,13 +1430,14 @@ def scheduler_create_job(payload: dict, authorization: str | None = Header(defau
     timezone_name = payload.get('timezone', 'UTC')
     source_config = payload.get('source_config') or {}
     notify_on_failure = payload.get('notify_on_failure', True)
+    notify_on_success = payload.get('notify_on_success', False)
     if not report_id or not source_type or not cron_expr:
         raise HTTPException(400, 'report_id, source_type, and cron_expr are required')
     allowed = ('google_sheets', 'postgresql', 'postgres', 'redshift', 'sqlserver', 'synapse', 'fabric_warehouse', 'mysql', 'mariadb')
     if source_type not in allowed:
         raise HTTPException(400, f"source_type must be one of: {', '.join(allowed)}")
     try:
-        return _upsert(report_id, source_type, cron_expr, interval_label, credentials, user_id, job_id, timezone_name, source_config, notify_on_failure)
+        return _upsert(report_id, source_type, cron_expr, interval_label, credentials, user_id, job_id, timezone_name, source_config, notify_on_failure, notify_on_success)
     except Exception as e:
         raise HTTPException(400, str(e))
 
@@ -1506,6 +1586,411 @@ def _supabase_user_id_from_token(authorization:str|None)->str:
         return uid
     except Exception:
         raise HTTPException(401,'Invalid Supabase JWT')
+
+
+# ── Notification and email automation foundation ───────────────────────────
+
+@app.get('/api/v1/service/notifications')
+def service_notifications(limit:int=30,cursor:str|None=None,unread_only:bool=False,authorization:str|None=Header(default=None)):
+    from .notification_service import list_notifications
+    try:
+        return list_notifications(_supabase_user_id_from_token(authorization),limit=limit,cursor=cursor,unread_only=unread_only)
+    except RuntimeError as error: raise HTTPException(503,str(error))
+
+
+@app.patch('/api/v1/service/notifications/{notification_id}')
+def service_update_notification(notification_id:str,payload:dict,authorization:str|None=Header(default=None)):
+    from .notification_service import update_notification
+    try:
+        return update_notification(_supabase_user_id_from_token(authorization),notification_id,read=payload.get('read'),dismissed=payload.get('dismissed'))
+    except ValueError as error: raise HTTPException(404,str(error))
+    except RuntimeError as error: raise HTTPException(503,str(error))
+
+
+@app.post('/api/v1/service/notifications/read-all')
+def service_read_all_notifications(authorization:str|None=Header(default=None)):
+    from .notification_service import mark_all_read
+    try:return mark_all_read(_supabase_user_id_from_token(authorization))
+    except RuntimeError as error:raise HTTPException(503,str(error))
+
+
+@app.get('/api/v1/service/notification-preferences')
+def service_notification_preferences(authorization:str|None=Header(default=None)):
+    from .notification_service import get_preferences
+    try:return get_preferences(_supabase_user_id_from_token(authorization))
+    except RuntimeError as error:raise HTTPException(503,str(error))
+
+
+@app.put('/api/v1/service/notification-preferences')
+def service_save_notification_preferences(payload:dict,authorization:str|None=Header(default=None)):
+    from .notification_service import save_preferences
+    try:return save_preferences(_supabase_user_id_from_token(authorization),payload)
+    except RuntimeError as error:raise HTTPException(503,str(error))
+
+
+@app.get('/api/v1/service/admin/automation-health')
+def service_automation_health(authorization:str|None=Header(default=None)):
+    from .supabase_store import _admin_client,is_admin_user
+    user_id=_supabase_user_id_from_token(authorization)
+    if not is_admin_user(user_id):raise HTTPException(403,'System administrator access is required.')
+    sb=_admin_client()
+    try:
+        queued=sb.table('email_delivery_jobs').select('id',count='exact').in_('status',['queued','retrying']).execute().count or 0
+        failed=sb.table('email_delivery_jobs').select('id',count='exact').eq('status','failed').execute().count or 0
+        latest=sb.table('email_delivery_jobs').select('created_at,updated_at,status,last_error').order('updated_at',desc=True).limit(1).execute().data or []
+        return {'emailWorkerEnabled':os.environ.get('VTAB_EMAIL_WORKER_ENABLED','1')!='0','refreshWorkerEnabled':os.environ.get('VTAB_REFRESH_WORKER_ENABLED','1')!='0','queuedEmails':queued,'failedEmails':failed,'latestEmailJob':latest[0] if latest else None}
+    except Exception as error:raise HTTPException(503,'Apply migration 017_notification_email_foundation.sql. '+str(error))
+
+
+@app.post('/api/v1/service/admin/email-provider/send-test')
+def service_send_test_email(payload:dict,authorization:str|None=Header(default=None)):
+    from .supabase_store import is_admin_user,_admin_client
+    from .notification_service import enqueue_email
+    user_id=_supabase_user_id_from_token(authorization)
+    if not is_admin_user(user_id):raise HTTPException(403,'System administrator access is required.')
+    recipient=str(payload.get('recipient') or '').strip()
+    if not recipient:
+        rows=_admin_client().table('vtab_users').select('email').eq('id',user_id).limit(1).execute().data or []
+        recipient=str(rows[0].get('email') or '') if rows else ''
+    try:
+        job=enqueue_email(user_id=user_id,recipient_email=recipient,subject='VTAB Services email delivery test',text_body='VTAB Services queued and processed this test through the configured email provider.',html_body='<h2>VTAB Services</h2><p>Email delivery is configured and the durable queue accepted this test.</p>',idempotency_key=f'admin-test:{user_id}:{uuid.uuid4()}',category='system')
+        return {'ok':True,'queued':True,'jobId':job.get('id'),'message':'Test email queued. Provider acceptance will appear in delivery logs.'}
+    except ValueError as error:raise HTTPException(400,str(error))
+    except RuntimeError as error:raise HTTPException(503,str(error))
+
+
+def _automation_error(error:Exception):
+    if isinstance(error,PermissionError):raise HTTPException(403,str(error))
+    if isinstance(error,ValueError):raise HTTPException(400,str(error))
+    message=str(error)
+    if 'does not exist' in message or 'schema cache' in message.lower():raise HTTPException(503,'Apply Supabase migration 018_subscriptions_and_alerts.sql. '+message)
+    raise HTTPException(500,message)
+
+
+@app.get('/api/v1/service/subscriptions')
+def service_list_subscriptions(authorization:str|None=Header(default=None)):
+    from .automation_service import list_subscriptions
+    try:return list_subscriptions(_supabase_user_id_from_token(authorization))
+    except Exception as error:_automation_error(error)
+
+
+@app.post('/api/v1/service/subscriptions')
+def service_create_subscription(payload:dict,authorization:str|None=Header(default=None)):
+    from .automation_service import save_subscription
+    try:return save_subscription(payload,_supabase_user_id_from_token(authorization))
+    except Exception as error:_automation_error(error)
+
+
+@app.put('/api/v1/service/subscriptions/{subscription_id}')
+def service_update_subscription(subscription_id:str,payload:dict,authorization:str|None=Header(default=None)):
+    from .automation_service import save_subscription
+    try:return save_subscription(payload,_supabase_user_id_from_token(authorization),subscription_id)
+    except Exception as error:_automation_error(error)
+
+
+@app.delete('/api/v1/service/subscriptions/{subscription_id}')
+def service_delete_subscription(subscription_id:str,authorization:str|None=Header(default=None)):
+    from .automation_service import delete_subscription
+    try:return delete_subscription(subscription_id,_supabase_user_id_from_token(authorization))
+    except Exception as error:_automation_error(error)
+
+
+@app.post('/api/v1/service/subscriptions/{subscription_id}/status')
+def service_subscription_status(subscription_id:str,payload:dict,authorization:str|None=Header(default=None)):
+    from .automation_service import set_subscription_status
+    try:return set_subscription_status(subscription_id,str(payload.get('status') or ''),_supabase_user_id_from_token(authorization))
+    except Exception as error:_automation_error(error)
+
+
+@app.post('/api/v1/service/subscriptions/{subscription_id}/test')
+def service_test_subscription(subscription_id:str,authorization:str|None=Header(default=None)):
+    from .automation_service import test_subscription
+    try:return test_subscription(subscription_id,_supabase_user_id_from_token(authorization))
+    except Exception as error:_automation_error(error)
+
+
+@app.get('/api/v1/service/subscriptions/{subscription_id}/executions')
+def service_subscription_executions(subscription_id:str,authorization:str|None=Header(default=None)):
+    from .automation_service import _managed_row
+    from .supabase_store import _admin_client
+    try:
+        user_id=_supabase_user_id_from_token(authorization);sb=_admin_client();_managed_row(sb,'report_subscriptions',subscription_id,user_id)
+        return sb.table('subscription_executions').select('*').eq('subscription_id',subscription_id).order('created_at',desc=True).limit(100).execute().data or []
+    except Exception as error:_automation_error(error)
+
+
+@app.get('/api/v1/service/reports/{report_id}/workspace-members')
+def service_get_report_workspace_members(report_id:str,authorization:str|None=Header(default=None)):
+    from .supabase_store import _admin_client
+    from .notification_service import get_workspace_member_users
+    try:
+        sb = _admin_client()
+        rep = sb.table("published_reports").select("workspace_id").eq("id", report_id).limit(1).execute().data or []
+        if not rep or not rep[0].get("workspace_id"):
+            return {"workspace_id": None, "members": []}
+        ws_id = rep[0]["workspace_id"]
+        members = get_workspace_member_users(ws_id)
+        return {"workspace_id": ws_id, "members": members}
+    except Exception as error:_automation_error(error)
+
+
+@app.get('/api/v1/service/workspaces/{workspace_id}/notification-policy')
+def service_get_workspace_notification_policy(workspace_id: str):
+    from .notification_service import get_workspace_notification_policy, get_workspace_owner_info
+    from .supabase_store import _admin_client
+    try:
+        sb = _admin_client()
+        ws_row = sb.table("workspaces").select("id, name").eq("id", workspace_id).limit(1).execute().data or []
+        ws_name = ws_row[0].get("name") if ws_row else "Workspace"
+        policy = get_workspace_notification_policy(workspace_id)
+        owner = get_workspace_owner_info(workspace_id)
+        return {
+            "workspace_id": workspace_id,
+            "workspace_name": ws_name,
+            "owner": owner,
+            "policy": policy
+        }
+    except Exception as error:
+        raise HTTPException(500, str(error))
+
+
+@app.put('/api/v1/service/workspaces/{workspace_id}/notification-policy')
+@app.patch('/api/v1/service/workspaces/{workspace_id}/notification-policy')
+def service_update_workspace_notification_policy(workspace_id: str, payload: dict):
+    from .notification_service import save_workspace_notification_policy, get_workspace_owner_info
+    from .supabase_store import _admin_client
+    try:
+        updated = save_workspace_notification_policy(workspace_id, payload)
+        sb = _admin_client()
+        ws_row = sb.table("workspaces").select("id, name").eq("id", workspace_id).limit(1).execute().data or []
+        ws_name = ws_row[0].get("name") if ws_row else "Workspace"
+        owner = get_workspace_owner_info(workspace_id)
+        return {
+            "ok": True,
+            "workspace_id": workspace_id,
+            "workspace_name": ws_name,
+            "owner": owner,
+            "policy": updated
+        }
+    except Exception as error:
+        raise HTTPException(500, str(error))
+
+
+
+@app.get('/api/v1/service/alerts')
+def service_list_alerts(authorization:str|None=Header(default=None)):
+    from .automation_service import list_alerts
+    try:return list_alerts(_supabase_user_id_from_token(authorization))
+    except Exception as error:_automation_error(error)
+
+
+@app.post('/api/v1/service/alerts')
+def service_create_alert(payload:dict,authorization:str|None=Header(default=None)):
+    from .automation_service import save_alert
+    try:return save_alert(payload,_supabase_user_id_from_token(authorization))
+    except Exception as error:_automation_error(error)
+
+
+@app.put('/api/v1/service/alerts/{alert_id}')
+def service_update_alert(alert_id:str,payload:dict,authorization:str|None=Header(default=None)):
+    from .automation_service import save_alert
+    try:return save_alert(payload,_supabase_user_id_from_token(authorization),alert_id)
+    except Exception as error:_automation_error(error)
+
+
+@app.delete('/api/v1/service/alerts/{alert_id}')
+def service_delete_alert(alert_id:str,authorization:str|None=Header(default=None)):
+    from .automation_service import delete_alert
+    try:return delete_alert(alert_id,_supabase_user_id_from_token(authorization))
+    except Exception as error:_automation_error(error)
+
+
+@app.post('/api/v1/service/alerts/{alert_id}/status')
+def service_alert_status(alert_id:str,payload:dict,authorization:str|None=Header(default=None)):
+    from .automation_service import set_alert_status
+    try:return set_alert_status(alert_id,str(payload.get('status') or ''),_supabase_user_id_from_token(authorization))
+    except Exception as error:_automation_error(error)
+
+
+@app.post('/api/v1/service/alerts/{alert_id}/test')
+def service_test_alert(alert_id:str,authorization:str|None=Header(default=None)):
+    from .automation_service import _managed_row,evaluate_alert
+    from .supabase_store import _admin_client
+    try:
+        user_id=_supabase_user_id_from_token(authorization);rule=_managed_row(_admin_client(),'alert_rules',alert_id,user_id)
+        return evaluate_alert(rule,'test')
+    except Exception as error:_automation_error(error)
+
+
+@app.get('/api/v1/service/alerts/{alert_id}/history')
+def service_alert_history(alert_id:str,authorization:str|None=Header(default=None)):
+    from .automation_service import alert_history
+    try:return alert_history(alert_id,_supabase_user_id_from_token(authorization))
+    except Exception as error:_automation_error(error)
+
+
+@app.get('/api/v1/service/support-config')
+def service_get_support_config():
+    default_admin = os.environ.get("ADMIN_EMAIL") or "harishkadhi18022001@gmail.com"
+    return {
+        "admin_email": default_admin,
+        "services": [
+            "Reporting Services",
+            "Data Refresh / Bridge",
+            "Semantic Models",
+            "Workspaces & Access",
+            "PDF / Export",
+            "General"
+        ],
+        "severities": ["Low", "Medium", "High", "Critical"]
+    }
+
+
+@app.post('/api/v1/service/support-requests')
+def service_create_support_request(payload: dict, authorization: str | None = Header(default=None)):
+    title = str(payload.get('issue_title') or '').strip()
+    desc = str(payload.get('description') or '').strip()
+    if not title:
+        raise HTTPException(400, "Issue title / brief description is required.")
+    if not desc:
+        raise HTTPException(400, "Problem description is required.")
+
+    user_email = ""
+    user_id = None
+    try:
+        user_id = _supabase_user_id_from_token(authorization)
+    except Exception:
+        pass
+    if user_id:
+        try:
+            from .supabase_store import _admin_client
+            sb = _admin_client()
+            u_row = sb.table("vtab_users").select("email").eq("id", user_id).limit(1).execute().data or []
+            if u_row:
+                user_email = u_row[0].get("email") or ""
+        except Exception:
+            pass
+    if not user_email:
+        user_email = str(payload.get('owner_email') or '').strip() or "user@vtab.local"
+
+    default_admin = os.environ.get("ADMIN_EMAIL") or "harishkadhi18022001@gmail.com"
+    admin_recipient = str(payload.get('admin_email') or default_admin).strip()
+
+    req_data = {
+        'issue_title': title,
+        'description': desc,
+        'service': payload.get('service') or 'Reporting Services',
+        'severity': payload.get('severity') or 'Medium',
+        'status': 'Open',
+        'owner_email': user_email,
+        'owner_id': user_id,
+        'workspace_id': payload.get('workspace_id'),
+        'workspace_name': payload.get('workspace_name'),
+        'report_id': payload.get('report_id'),
+        'report_name': payload.get('report_name'),
+        'admin_email': admin_recipient,
+    }
+
+    created = store.create_support_request(req_data)
+
+    try:
+        from .notification_service import enqueue_email
+        subject = f"[Support Request {created['request_number']}] {created['issue_title']}"
+        body_text = f"""New Support Request Submitted:
+Request ID: {created['request_number']}
+Title: {created['issue_title']}
+Service: {created['service']}
+Severity: {created['severity']}
+Submitted By: {created['owner_email']}
+Workspace: {created.get('workspace_name') or 'N/A'}
+
+Description:
+{created['description']}
+"""
+        body_html = f"""<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; color: #1e293b;">
+<h2 style="color: #0f6cbd; margin-top: 0;">New Support Request: {created['issue_title']}</h2>
+<table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
+  <tr><td style="padding: 6px 0; color: #64748b; width: 140px;"><b>Request ID:</b></td><td><b>{created['request_number']}</b></td></tr>
+  <tr><td style="padding: 6px 0; color: #64748b;"><b>Submitted By:</b></td><td>{created['owner_email']}</td></tr>
+  <tr><td style="padding: 6px 0; color: #64748b;"><b>Service:</b></td><td>{created['service']}</td></tr>
+  <tr><td style="padding: 6px 0; color: #64748b;"><b>Severity:</b></td><td><span style="display:inline-block; padding: 2px 8px; border-radius: 4px; background: #fef3c7; color: #92400e; font-weight: 600;">{created['severity']}</span></td></tr>
+  <tr><td style="padding: 6px 0; color: #64748b;"><b>Workspace:</b></td><td>{created.get('workspace_name') or 'N/A'}</td></tr>
+  <tr><td style="padding: 6px 0; color: #64748b;"><b>Status:</b></td><td><span style="color: #16a34a; font-weight: 600;">Open</span></td></tr>
+</table>
+<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px; margin-top: 14px;">
+  <h4 style="margin-top: 0; color: #334155;">Problem Description</h4>
+  <p style="white-space: pre-wrap; margin-bottom: 0; line-height: 1.5;">{created['description']}</p>
+</div>
+<p style="color: #94a3b8; font-size: 12px; margin-top: 24px;">Sent automatically by VTAB Reporting Studio Help & Support System.</p>
+</div>"""
+        enqueue_email(
+            user_id=user_id,
+            recipient_email=admin_recipient,
+            subject=subject,
+            text_body=body_text,
+            html_body=body_html,
+            idempotency_key=f"support_request:{created['id']}",
+            category="support",
+            workspace_id=created.get('workspace_id')
+        )
+    except Exception as e:
+        print(f"Warning: Failed to enqueue support email: {e}")
+
+    try:
+        store.log('support.create', {'request_number': created['request_number'], 'title': created['issue_title'], 'owner': user_email})
+    except Exception:
+        pass
+
+    return {'ok': True, 'request': created}
+
+
+@app.get('/api/v1/service/support-requests')
+def service_list_support_requests(tab: str = 'my', status: str | None = None, user_email: str | None = None, authorization: str | None = Header(default=None)):
+    email = user_email
+    if not email:
+        try:
+            user_id = _supabase_user_id_from_token(authorization)
+            from .supabase_store import _admin_client
+            sb = _admin_client()
+            u_row = sb.table("vtab_users").select("email").eq("id", user_id).limit(1).execute().data or []
+            if u_row:
+                email = u_row[0].get("email")
+        except Exception:
+            pass
+
+    owner_filter = email if (tab == 'my' and email) else None
+    status_filter = status or ('open' if tab == 'open' else ('closed' if tab == 'closed' else None))
+
+    requests = store.list_support_requests(owner_email=owner_filter, status=status_filter)
+    return {'requests': requests, 'total': len(requests)}
+
+
+@app.get('/api/v1/service/support-requests/{request_id}')
+def service_get_support_request(request_id: str):
+    item = store.get_support_request(request_id)
+    if not item:
+        raise HTTPException(404, "Support request not found.")
+    return {'request': item}
+
+
+@app.patch('/api/v1/service/support-requests/{request_id}')
+@app.put('/api/v1/service/support-requests/{request_id}')
+def service_update_support_request(request_id: str, payload: dict):
+    status = str(payload.get('status') or '').strip()
+    if not status:
+        raise HTTPException(400, "Status is required.")
+    notes = str(payload.get('admin_notes') or payload.get('notes') or '').strip()
+    updated = store.update_support_request_status(request_id, status, notes)
+    if not updated:
+        raise HTTPException(404, "Support request not found.")
+    store.log('support.request.status_updated', {
+        'id': updated['id'],
+        'request_number': updated['request_number'],
+        'new_status': updated['status'],
+        'notes': notes
+    })
+    return {'ok': True, 'request': updated}
+
 
 
 @app.get('/api/v1/admin/users')
@@ -2026,9 +2511,10 @@ def bulk_save_measures(req:BulkMeasureReq):
     p=project();model=p.setdefault('model',{});current=dict(model.setdefault('measures',{}));working=dict(current)
     saved=[];errors=[]
     for item in req.measures[:360]:
-        name=(item.name or '').strip().replace(' ','_')
-        if not name or not item.expression.strip():
-            errors.append({'name':name or '(blank)','error':'Name and expression are required.'});continue
+        definition=parse_measure_definition(item.expression)
+        name=definition[0] if definition else ''
+        if not definition:
+            errors.append({'name':(item.name or '').strip() or '(blank)','error':'Start the formula with a measure name followed by =.'});continue
         try:
             candidate,_=merge_measure_registry(working,name,item.expression,item.originalName)
             test_model={**model,'measures':candidate}
@@ -2040,22 +2526,48 @@ def bulk_save_measures(req:BulkMeasureReq):
     store.save_project(p);clear_cache();store.log('measure.bulk-save',{'saved':len(saved),'errors':len(errors),'totalMeasures':len(working)})
     return {'ok':len(errors)==0,'saved':saved,'errors':errors,'measureCount':len(working),'project':p}
 
-@app.post('/api/v1/measures/validate')
-def validate_measure(req:MeasureReq):
-    p=project();m=p['model'];old=m['measures'].get(req.name);m['measures'][req.name]=req.expression
+def _validate_dax_measure(name:str,expression:str,model:dict)->dict:
+    health=dax_engine_health()
+    if not health['healthy']:
+        return {'valid':False,'error':'The DAX engine self-test failed. Saving is disabled to protect the report.',
+                'engine':'VTAB DAX','health':health}
+    diagnostic=diagnose_dax_definition(expression)
+    expression=diagnostic['expression']
+    if diagnostic['issues']:
+        suggestion=''
+        if diagnostic['suggestions']:
+            suggestion=' Suggestions: '+', '.join(f"{function_name} → {' / '.join(items)}" for function_name,items in diagnostic['suggestions'].items())+'.'
+        return {'valid':False,'error':' '.join(diagnostic['issues'])+suggestion,'engine':'VTAB DAX',
+                'expression':expression,'autoRepaired':diagnostic['changed'],'repairs':diagnostic['repairs'],'diagnostics':diagnostic}
+    definition=parse_measure_definition(expression)
+    if not definition:
+        return {'valid':False,'error':'Start the formula with a measure name followed by =, for example: Total Sales = SUM ( Sales[Amount] ).','engine':'VTAB DAX'}
+    name=definition[0]
+    old=model['measures'].get(name);model['measures'][name]=expression
     try:
-        compiled=measure(req.name,m,context_filters=[])
-        return {'valid':True,'compiled':compiled,'engine':'VTAB DAX'}
+        compiled=measure(name,model,context_filters=[])
+        return {'valid':True,'compiled':compiled,'engine':'VTAB DAX','name':name,
+                'expression':expression,'autoRepaired':diagnostic['changed'],'repairs':diagnostic['repairs']}
     except Exception as e:
         err_msg = str(e)
-        if 'not found' in err_msg.lower() or 'does not exist' in err_msg.lower() or 'circular measure' in err_msg.lower() or 'circular dependency' in err_msg.lower():
-            # If the syntax is valid but the table/column is missing from the physical DB (or not loaded yet),
-            # or it's a circular dep during authoring, let them save it.
-            return {'valid':True, 'message': 'Syntax appears valid, but could not be fully compiled: ' + err_msg, 'engine':'VTAB DAX'}
-        return {'valid':False,'error':err_msg,'engine':'VTAB DAX'}
+        err_lower=err_msg.lower()
+        if 'not found' in err_lower or 'does not exist' in err_lower:
+            return {'valid':True, 'message': 'Syntax appears valid, but could not be fully compiled: ' + err_msg, 'engine':'VTAB DAX',
+                    'expression':expression,'autoRepaired':diagnostic['changed'],'repairs':diagnostic['repairs'],'fullyCompiled':False}
+        return {'valid':False,'error':err_msg,'engine':'VTAB DAX',
+                'expression':expression,'autoRepaired':diagnostic['changed'],'repairs':diagnostic['repairs']}
     finally:
-        if old is None:m['measures'].pop(req.name,None)
-        else:m['measures'][req.name]=old
+        if old is None:model['measures'].pop(name,None)
+        else:model['measures'][name]=old
+
+@app.post('/api/v1/measures/validate')
+def validate_measure(req:MeasureReq):
+    p=req.project if req.project is not None else project()
+    return _validate_dax_measure(req.name,req.expression,p['model'])
+
+@app.get('/api/v1/measures/health')
+def measure_engine_health():
+    return dax_engine_health()
 
 @app.post('/api/v1/assist/chat')
 def assist_chat(req:AssistReq):
@@ -2071,30 +2583,34 @@ def assist_chat(req:AssistReq):
 @app.post('/api/v1/measures/ai-generate')
 def ai_generate_measure(req:MeasurePromptReq):
     try:
-        p=project()
-        result=suggest_measure_from_prompt(req.prompt,p['model'])
-        m=p['model'];old=m['measures'].get(result['name']);m['measures'][result['name']]=result['expression']
-        try:
-            result['compiled']=measure(result['name'],m,context_filters=[])
-            result['valid']=True
-        except Exception as e:
-            result['valid']=False
-            result['validationError']=str(e)
-        finally:
-            if old is None:m['measures'].pop(result['name'],None)
-            else:m['measures'][result['name']]=old
+        p=req.project if req.project is not None else project();m=p['model'];feedback=None;result=None
+        for attempt in range(3):
+            result=suggest_measure_from_prompt(req.prompt,m,feedback)
+            validation=_validate_dax_measure(result['name'],result['expression'],m)
+            if validation.get('valid') and 'error' not in validation:
+                result['compiled']=validation.get('compiled','');result['valid']=True;result['generationAttempts']=attempt+1
+                return result
+            feedback=validation.get('error',validation.get('message','Validation failed'))
+        result['valid']=False;result['validationError']=feedback or 'The generated expression could not be validated.';result['generationAttempts']=3
         return result
     except Exception as e:
         raise HTTPException(400,str(e))
 
 @app.post('/api/v1/measures/save')
 def save_measure(req:SaveMeasureReq):
-    p=project();name=req.name.strip();original=(req.originalName or '').strip() or None
-    if not name:
-        raise HTTPException(400,'Measure name is required')
+    p=req.project if req.project is not None else project();original=(req.originalName or '').strip() or None
+    health=dax_engine_health()
+    if not health['healthy']:raise HTTPException(503,'The DAX engine self-test failed. Saving is disabled to protect the report.')
+    repair=diagnose_dax_definition(req.expression);expression=repair['expression']
+    if repair['issues']:
+        raise HTTPException(400,' '.join(repair['issues']))
+    definition=parse_measure_definition(expression)
+    if not definition:
+        raise HTTPException(400,'Start the formula with a measure name followed by =, for example: Total Sales = SUM ( Sales[Amount] ).')
+    name=definition[0]
     measures=p['model'].setdefault('measures',{})
     try:
-        working,renamed=merge_measure_registry(measures,name,req.expression,original)
+        working,renamed=merge_measure_registry(measures,name,expression,original)
     except ValueError as e:
         raise HTTPException(400,str(e))
 
@@ -2114,9 +2630,16 @@ def save_measure(req:SaveMeasureReq):
         for page in p.get('report',{}).get('pages',[]):
             for visual in page.get('visuals',[]):
                 bindings=visual.get('bindings',{}) or {}
-                for key in ('values','target','tooltips'):
+                for key in ('axis','values','target','tooltips','legend','x','size','min','max','location','latitude','longitude','geometry','detail','color','label','path','country','region','postalCode'):
                     if isinstance(bindings.get(key),list):
                         bindings[key]=[name if x==original else x for x in bindings[key]]
+                for current_filter in visual.get('filters',[]):
+                    if current_filter.get('field')==original:current_filter['field']=name
+                for current_sort in visual.get('sort',[]):
+                    if current_sort.get('field')==original:current_sort['field']=name
+                fmt=visual.get('format',{})
+                for collection in ('fieldFormats','cardStyles','conditionalFormatting','dataColors','fieldDisplayNames'):
+                    if collection in fmt and original in fmt[collection]:fmt[collection][name]=fmt[collection].pop(original)
 
     store.save_project(p)
     action='measure.update' if original else 'measure.create'
@@ -2176,6 +2699,23 @@ def _get_cloud_project(report_id: str):
             return None
 
 
+def _published_visual_definition(project:dict,visual_id:str):
+    return next((visual for page in ((project.get('report') or {}).get('pages') or []) for visual in (page.get('visuals') or []) if str(visual.get('id') or '') == visual_id), None)
+
+def _published_conditional_measures(visual:dict|None)->list[str]:
+    if not visual:return []
+    formatting=visual.get('format') or {}
+    values=[]
+    for rule in formatting.get('conditionalFormatRules') or []:
+        if isinstance(rule,dict) and rule.get('enabled',True) is not False and rule.get('measure'):
+            values.append(str(rule['measure']))
+    table_rules=formatting.get('tableConditionalRules') or {}
+    if isinstance(table_rules,dict):
+        for rule in table_rules.values():
+            if isinstance(rule,dict) and rule.get('enabled',True) is not False and rule.get('formatBy')=='fieldValue' and rule.get('colorMeasure'):
+                values.append(str(rule['colorMeasure']))
+    return list(dict.fromkeys(value for value in values if value))
+
 def _published_visual_payload(project: dict, request: QueryReq) -> dict:
     """Build a query from the stored visual definition, not browser bindings."""
     payload = request.model_dump()
@@ -2183,7 +2723,7 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
     if not visual_id:
         payload.pop('visualId', None)
         return payload
-    visual = next((visual for page in ((project.get('report') or {}).get('pages') or []) for visual in (page.get('visuals') or []) if str(visual.get('id') or '') == visual_id), None)
+    visual = _published_visual_definition(project,visual_id)
     if not visual:
         raise ValueError('Published visual was not found in this report definition.')
     bindings = visual.get('bindings') or {}
@@ -2197,6 +2737,20 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
         *(bindings.get('x') or []),
         *(bindings.get('size') or [])
     ]))
+    if visual.get('type') == 'map':
+        map_fields = list(dict.fromkeys([
+            *(bindings.get('location') or []), *(bindings.get('latitude') or []),
+            *(bindings.get('longitude') or []), *(bindings.get('geometry') or []),
+            *(bindings.get('detail') or []), *(bindings.get('color') or []),
+            *(bindings.get('label') or []), *(bindings.get('path') or []),
+            *(bindings.get('country') or []), *(bindings.get('region') or []),
+            *(bindings.get('postalCode') or [])
+        ]))
+        known_measures = set(((project.get('model') or {}).get('measures') or {}).keys())
+        for field in map_fields:
+            clean_field = str(field).removeprefix('measure:')
+            target = measures if clean_field in known_measures or str(field).startswith('measure:') else dimensions
+            if field not in target:target.append(field)
 
     configured_filters = [*(visual.get('filters') or []), *(request.filters or [])]
     top_filter = next((f for f in configured_filters if isinstance(f, dict) and f.get('operator') == 'top_n'), None)
@@ -2244,7 +2798,17 @@ def published_query(report_id:str,req:QueryReq,authorization:str|None=Header(def
     p,resolved=_published_query_context(report_id,authorization)
     try:
         payload=_published_visual_payload(p,req)
-        rows,sql=execute(p['model'],payload,resolved['rules']);store.log('published.query.execute',{'reportId':report_id,'visualId':req.visualId,'dimensions':payload['dimensions'],'measures':payload['measures'],'rows':len(rows),'security':resolved['context']});return {'rows':rows,'sql':sql,'security':resolved['context']}
+        rows,sql=execute(p['model'],payload,resolved['rules'])
+        conditional_values={};conditional_error=None
+        conditional_measures=_published_conditional_measures(_published_visual_definition(p,str(req.visualId or '').strip()))
+        if conditional_measures:
+            try:
+                conditional_rows,_=execute(p['model'],{'dimensions':[],'measures':conditional_measures,'filters':payload['filters'],'sort':[],'limit':1},resolved['rules'])
+                conditional_values=conditional_rows[0] if conditional_rows else {}
+            except Exception as error:
+                conditional_error=str(error)
+        store.log('published.query.execute',{'reportId':report_id,'visualId':req.visualId,'dimensions':payload['dimensions'],'measures':payload['measures'],'rows':len(rows),'security':resolved['context']})
+        return {'rows':rows,'sql':sql,'conditionalValues':conditional_values,'conditionalError':conditional_error,'security':resolved['context']}
     except Exception as e:raise HTTPException(400,str(e))
 
 @app.post('/api/v1/published/{report_id}/query-batch')
@@ -2264,7 +2828,15 @@ def published_query_batch(report_id:str,req:PublishedBatchQueryReq,authorization
     def run_visual(visual_id:str):
         payload=_published_visual_payload(p,QueryReq(visualId=visual_id,filters=req.filters))
         rows,sql=execute(p['model'],payload,resolved['rules'])
-        return visual_id,{'rows':rows,'sql':sql}
+        result={'rows':rows,'sql':sql,'conditionalValues':{}}
+        conditional_measures=_published_conditional_measures(_published_visual_definition(p,visual_id))
+        if conditional_measures:
+            try:
+                conditional_rows,_=execute(p['model'],{'dimensions':[],'measures':conditional_measures,'filters':payload['filters'],'sort':[],'limit':1},resolved['rules'])
+                result['conditionalValues']=conditional_rows[0] if conditional_rows else {}
+            except Exception as error:
+                result['conditionalError']=str(error)
+        return visual_id,result
 
     configured=max(1,min(8,int(os.environ.get('VTAB_QUERY_BATCH_WORKERS','4') or 4)))
     workers=min(configured,len(visual_ids))

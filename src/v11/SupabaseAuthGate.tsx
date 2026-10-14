@@ -143,6 +143,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
     "register-setpass": "Set your password",
     forgot: "Reset password",
     reset: "Set Your Password",
+    "first-setup": "First-time setup",
   };
   const subtitle: Record<Mode, string> = {
     login: "Sign in to your workspace",
@@ -151,6 +152,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
     "register-setpass": "Choose a secure password for your new account",
     forgot: "We'll send a 6-digit code to your email",
     reset: "Enter your email, 6-digit OTP, and new password",
+    "first-setup": "Enter the OTP sent by your administrator and choose a password",
   };
   const buttonLabel: Record<Mode, string> = {
     login: "Sign In",
@@ -159,6 +161,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
     "register-setpass": "Create Account",
     forgot: "Send 6-digit OTP",
     reset: "Reset Password",
+    "first-setup": "Set Password & Login",
   };
   const busyLabel: Record<Mode, string> = {
     login: "Signing in…",
@@ -167,6 +170,7 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
     "register-setpass": "Creating account…",
     forgot: "Sending OTP…",
     reset: "Resetting password…",
+    "first-setup": "Processing…",
   };
 
   const isDisabled =
@@ -290,19 +294,20 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
         <form onSubmit={async (e) => {
           e.preventDefault();
           if (busy) return;
-          if (form.newPassword.length < 8) return setError("Password must be at least 8 characters.");
-          setBusy(true); setError("");
+          if (form.newPassword.length < 8) return setErr("Password must be at least 8 characters.");
+          setBusy(true); setErr("");
           try {
             await api("/admin-app/auth/first-login-setup", {
               method: "POST",
               body: JSON.stringify({ email: form.email, otp: form.otp, password: form.newPassword })
             });
             // Auto login after setup
-            const { error: sbErr } = await supabase.auth.signInWithPassword({ email: form.email, password: form.newPassword });
+            if (!supabase) throw new Error("Cloud authentication is not configured.");
+            const { data, error: sbErr } = await supabase.auth.signInWithPassword({ email: form.email, password: form.newPassword });
             if (sbErr) throw new Error(sbErr.message);
-            onSignedIn();
+            onSignedIn(data.session);
           } catch (err: any) {
-            setError(err.message || "Invalid OTP or failed to set password.");
+            setErr(err.message || "Invalid OTP or failed to set password.");
           } finally {
             setBusy(false);
           }
@@ -312,17 +317,17 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
           
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email Address</label>
-            <input required type="email" value={form.email} onChange={(e) => update({ email: e.target.value })} className="w-full px-3 py-2 border rounded-md" />
+            <input required type="email" value={form.email} onChange={f("email")} className="w-full px-3 py-2 border rounded-md" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">OTP</label>
-            <input required type="text" placeholder="123456" value={form.otp} onChange={(e) => update({ otp: e.target.value })} className="w-full px-3 py-2 border rounded-md" />
+            <input required type="text" placeholder="123456" value={form.otp} onChange={f("otp")} className="w-full px-3 py-2 border rounded-md" />
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">New Password</label>
-            <input required type="password" value={form.newPassword} onChange={(e) => update({ newPassword: e.target.value })} className="w-full px-3 py-2 border rounded-md" />
+            <input required type="password" value={form.newPassword} onChange={f("newPassword")} className="w-full px-3 py-2 border rounded-md" />
           </div>
-          {error && <div className="text-red-600 text-sm">{error}</div>}
+          {err && <div className="text-red-600 text-sm">{err}</div>}
           <button disabled={busy} type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded-md transition-colors disabled:opacity-50">
             {busy ? "Processing..." : "Set Password & Login"}
           </button>
@@ -464,6 +469,16 @@ export default function SupabaseAuthGate({ onSignedIn }: Props) {
                   {mode === "reset" && <button onClick={() => switchMode("forgot")} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12, padding: 0 }}>Resend OTP</button>}
                 </>
               )}
+              <div style={{ marginTop: 8, paddingTop: 10, borderTop: "1px solid #f1f5f9" }}>
+                <a
+                  href="http://admin-reporting.139.59.32.39.nip.io/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#0f6cbd", textDecoration: "none", fontSize: 12, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 5 }}
+                >
+                  Admin Portal ↗
+                </a>
+              </div>
             </div>
           </div>
         </div>

@@ -1,55 +1,71 @@
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useRef,useState,useCallback} from 'react';
+import type {MouseEvent as ReactMouseEvent,SyntheticEvent} from 'react';
 import {createPortal} from 'react-dom';
-import GridLayout,{Layout} from 'react-grid-layout';
 import {
   Plus,Trash2,Copy,Filter,BarChart3,LineChart,Table2,Gauge,PanelRight,Type,Palette,Hash,Settings2,
-  Layers3,Sparkles,ChevronLeft,ChevronRight,ChevronDown,Eraser,Heading1,PaintBucket,ArrowUpDown,SlidersHorizontal,Image as ImageIcon,Upload,RotateCcw,MoreHorizontal,Download,ArrowUpAZ,ArrowDownAZ,PanelLeftClose,PanelLeftOpen,PanelRightClose,PanelRightOpen,Move,Maximize2,GitBranch,ArrowDownCircle,ArrowUpCircle,MessageSquareText,Eye,FileJson,FileSpreadsheet,Clipboard,LayoutDashboard,TextCursorInput,MousePointerClick,Navigation,EyeOff,CalendarDays,GripVertical
+  Layers3,Sparkles,ChevronLeft,ChevronRight,ChevronDown,Eraser,Heading1,PaintBucket,ArrowUpDown,SlidersHorizontal,Image as ImageIcon,Upload,RotateCcw,MoreHorizontal,Download,ArrowUpAZ,ArrowDownAZ,PanelLeftClose,PanelLeftOpen,PanelRightClose,PanelRightOpen,Move,Maximize2,GitBranch,ArrowDownCircle,ArrowUpCircle,ArrowDown,ChevronsDown,MessageSquareText,Eye,FileJson,FileSpreadsheet,Clipboard,LayoutDashboard,TextCursorInput,MousePointerClick,Navigation,EyeOff,CalendarDays,GripVertical,X,Info,Search,MapPinned,LocateFixed
 } from 'lucide-react';
 import Chart from '../components/Chart';
+import FormattingWorkspace from '../components/FormattingWorkspace';
+import CanvasObjectInteractionManager from '../components/CanvasObjectInteractionManager';
 import {useStudio} from '../store';
 import {api} from '../api';
 import {CURRENCIES,DEFAULT_NUMBER_FORMAT} from '../formatting';
-import type {NumberFormat,Page,PageSettings,Visual,VisualFilter,VisualFormat,VisualType} from '../types';
+import {extractRichTextRuns,richTextHtml,sanitizeRichText} from '../richText';
+import {resolveActionButtonLabel,resolveActionCommands} from '../buttonActions';
+import {createPaginatedReport,ensurePaginatedReports} from '../paginated';
+import {resolveConditionalFormat} from '../conditionalFormatting';
+import {removeReportPage} from '../pageManagement';
+import {parseSpatialFile} from '../mapSpatial';
+import type {NumberFormat,Page,PageSettings,Visual,VisualActionStep,VisualFilter,VisualFormat,VisualType} from '../types';
 
-const visualTypes:VisualType[]=['textbox','button','kpi','card','multirowcard','bar','column','stackedbar','stackedcolumn','line','area','combo','pie','donut','treemap','funnel','waterfall','scatter','bubble','radar','heatmap','histogram','boxplot','gauge','progress','table','matrix','slicer'];
+const visualTypes:VisualType[]=['textbox','image','shape','button','kpi','card','multirowcard','bar','column','stackedbar','stackedcolumn','line','area','combo','pie','donut','treemap','funnel','waterfall','scatter','bubble','radar','heatmap','histogram','boxplot','gauge','progress','map','table','matrix','slicer'];
 const visualLabels:Record<string,string>={
  kpi:'KPI',card:'Card',multirowcard:'Multi Card',bar:'Bar',column:'Column',stackedbar:'Stacked Bar',
  stackedcolumn:'Stacked Col',line:'Line',area:'Area',combo:'Combo',pie:'Pie',donut:'Donut',
  treemap:'Treemap',funnel:'Funnel',waterfall:'Waterfall',scatter:'Scatter',bubble:'Bubble',
  radar:'Radar',heatmap:'Heatmap',histogram:'Histogram',boxplot:'Box Plot',gauge:'Gauge',
- progress:'Progress',table:'Table',matrix:'Matrix',slicer:'Slicer',textbox:'Text Box',button:'Button'
+ progress:'Progress',map:'Map',table:'Table',matrix:'Matrix',slicer:'Slicer',textbox:'Text Box',button:'Button',image:'Image',shape:'Shape'
 };
 const visualColor:Record<string,string>={
  kpi:'#f59e0b',card:'#fb7185',multirowcard:'#f472b6',bar:'#38bdf8',column:'#22d3ee',stackedbar:'#0ea5e9',
  stackedcolumn:'#06b6d4',line:'#34d399',area:'#10b981',combo:'#a78bfa',pie:'#f97316',donut:'#fb923c',
  treemap:'#84cc16',funnel:'#eab308',waterfall:'#14b8a6',scatter:'#8b5cf6',bubble:'#c084fc',
  radar:'#6366f1',heatmap:'#ef4444',histogram:'#64748b',boxplot:'#94a3b8',gauge:'#22c55e',
- progress:'#2dd4bf',table:'#60a5fa',matrix:'#818cf8',slicer:'#f43f5e',textbox:'#334155',button:'#2563eb'
+ progress:'#2dd4bf',map:'#0ea5e9',table:'#60a5fa',matrix:'#818cf8',slicer:'#f43f5e',textbox:'#334155',button:'#2563eb',image:'#0ea5e9',shape:'#7c3aed'
 };
 
+const COMMON_FORMAT_PAINTER_KEYS:Array<keyof VisualFormat>=[
+  'accent','fontSize','showTitle','background','fontFamily','titleFontSize','titleColor','titleFontWeight','titleAlignment','titleFontStyle','titleUnderline','titleWrap',
+  'subtitle','subtitleVisible','subtitleColor','subtitleFontSize','subtitleFontWeight','subtitleAlignment','subtitleFontStyle','subtitleUnderline','subtitleWrap',
+  'labelFontSize','labelColor','borderVisible','borderColor','borderWidth','borderStyle','borderEdges','cornerRadius','cornerRadii','cornerLinked','shadow','shadowColor','shadowOffset',
+  'backgroundTransparency','padding','paddingTop','paddingRight','paddingBottom','paddingLeft','responsive','visualHeader'
+];
 
-type VisualWellKey='axis'|'values'|'target'|'tooltips'|'legend';
+
+type VisualWellKey='axis'|'values'|'target'|'tooltips'|'legend'|'x'|'size'|'min'|'max'|'location'|'latitude'|'longitude'|'geometry'|'detail'|'color'|'label'|'path'|'country'|'region'|'postalCode';
 type VisualProfile={w:number,h:number,wells:Array<{key:VisualWellKey,title:string,accept:'field'|'measure'|'value'}>,dataLabels?:boolean,legend?:boolean,axes?:boolean,tooltips?:boolean,numberFormat?:boolean,dataColor?:boolean};
 const VISUAL_PROFILES:Record<VisualType,VisualProfile>={
-  textbox:{w:6,h:3,wells:[]},button:{w:3,h:2,wells:[]},
+  textbox:{w:6,h:3,wells:[]},button:{w:3,h:2,wells:[]},image:{w:4,h:4,wells:[]},shape:{w:3,h:3,wells:[]},
   kpi:{w:3,h:3,wells:[{key:'axis',title:'Trend / Category',accept:'field'},{key:'values',title:'Value',accept:'value'},{key:'target',title:'Comparison / Target',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],tooltips:true,numberFormat:true,dataColor:true},
-  card:{w:3,h:3,wells:[{key:'values',title:'Value',accept:'value'}],numberFormat:true,dataColor:true},
+  card:{w:3,h:3,wells:[{key:'values',title:'Values',accept:'value'},{key:'target',title:'Comparison / Reference label',accept:'value'}],numberFormat:true,dataColor:true},
   multirowcard:{w:6,h:4,wells:[{key:'values',title:'Values',accept:'value'}],numberFormat:true,dataColor:true},
-  progress:{w:4,h:3,wells:[{key:'values',title:'Value',accept:'value'},{key:'target',title:'Target',accept:'value'}],numberFormat:true,dataColor:true},
-  gauge:{w:4,h:4,wells:[{key:'values',title:'Value',accept:'value'}],numberFormat:true,dataColor:true},
+  progress:{w:4,h:3,wells:[{key:'values',title:'Value',accept:'value'},{key:'min',title:'Minimum value',accept:'value'},{key:'max',title:'Maximum value',accept:'value'},{key:'target',title:'Target value',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],numberFormat:true,dataColor:true,tooltips:true},
+  gauge:{w:4,h:4,wells:[{key:'values',title:'Value',accept:'value'},{key:'min',title:'Minimum value',accept:'value'},{key:'max',title:'Maximum value',accept:'value'},{key:'target',title:'Target value',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],numberFormat:true,dataColor:true,tooltips:true},
   slicer:{w:3,h:5,wells:[{key:'axis',title:'Field',accept:'field'}]},
+  map:{w:7,h:6,wells:[{key:'location',title:'Location',accept:'field'},{key:'latitude',title:'Latitude',accept:'field'},{key:'longitude',title:'Longitude',accept:'field'},{key:'geometry',title:'Geometry (GeoJSON)',accept:'field'},{key:'detail',title:'Detail',accept:'field'},{key:'color',title:'Color / Category',accept:'field'},{key:'size',title:'Size',accept:'value'},{key:'label',title:'Label',accept:'field'},{key:'path',title:'Path / Route',accept:'field'},{key:'tooltips',title:'Tooltips',accept:'value'},{key:'country',title:'Country (geocoding)',accept:'field'},{key:'region',title:'Region (geocoding)',accept:'field'},{key:'postalCode',title:'Postal code (geocoding)',accept:'field'}],legend:true,tooltips:true,numberFormat:true,dataColor:true},
   table:{w:8,h:6,wells:[{key:'axis',title:'Columns / Categories',accept:'field'},{key:'values',title:'Values',accept:'value'},{key:'tooltips',title:'Additional values',accept:'value'}],numberFormat:true},
   matrix:{w:9,h:6,wells:[{key:'axis',title:'Rows',accept:'field'},{key:'legend',title:'Columns / Series',accept:'field'},{key:'values',title:'Values',accept:'value'}],numberFormat:true},
   pie:{w:5,h:5,wells:[{key:'axis',title:'Legend / Category',accept:'field'},{key:'values',title:'Values',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,legend:true,tooltips:true,numberFormat:true,dataColor:true},
   donut:{w:5,h:5,wells:[{key:'axis',title:'Legend / Category',accept:'field'},{key:'values',title:'Values',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,legend:true,tooltips:true,numberFormat:true,dataColor:true},
   treemap:{w:6,h:5,wells:[{key:'axis',title:'Group / Category',accept:'field'},{key:'values',title:'Values',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,tooltips:true,numberFormat:true,dataColor:true},
   funnel:{w:5,h:5,wells:[{key:'axis',title:'Stage / Category',accept:'field'},{key:'values',title:'Values',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,tooltips:true,numberFormat:true,dataColor:true},
-  waterfall:{w:6,h:5,wells:[{key:'axis',title:'Category',accept:'field'},{key:'values',title:'Values',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,axes:true,tooltips:true,numberFormat:true,dataColor:true},
-  histogram:{w:6,h:5,wells:[{key:'values',title:'Numeric field',accept:'value'}],dataLabels:true,axes:true,numberFormat:true,dataColor:true},
+  waterfall:{w:6,h:5,wells:[{key:'axis',title:'Category',accept:'field'},{key:'legend',title:'Breakdown',accept:'field'},{key:'values',title:'Y-axis',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,axes:true,legend:true,tooltips:true,numberFormat:true,dataColor:true},
+  histogram:{w:6,h:5,wells:[{key:'axis',title:'Values',accept:'field'},{key:'values',title:'Frequency',accept:'value'}],dataLabels:true,axes:true,numberFormat:true,dataColor:true},
   boxplot:{w:6,h:5,wells:[{key:'axis',title:'Category',accept:'field'},{key:'values',title:'Numeric field',accept:'value'}],axes:true,numberFormat:true,dataColor:true},
-  scatter:{w:6,h:5,wells:[{key:'axis',title:'Category / X',accept:'field'},{key:'values',title:'Y Value',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,axes:true,tooltips:true,numberFormat:true,dataColor:true},
+  scatter:{w:6,h:5,wells:[{key:'axis',title:'Values',accept:'field'},{key:'x',title:'X Axis',accept:'value'},{key:'values',title:'Y Axis',accept:'value'},{key:'legend',title:'Legend',accept:'field'},{key:'size',title:'Size',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,axes:true,legend:true,tooltips:true,numberFormat:true,dataColor:true},
   bubble:{w:6,h:5,wells:[{key:'axis',title:'Category / X',accept:'field'},{key:'values',title:'Y Value',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,axes:true,tooltips:true,numberFormat:true,dataColor:true},
-  heatmap:{w:6,h:5,wells:[{key:'axis',title:'Category',accept:'field'},{key:'legend',title:'Series',accept:'field'},{key:'values',title:'Intensity',accept:'value'}],axes:true,legend:true,numberFormat:true,dataColor:true},
+  heatmap:{w:6,h:5,wells:[{key:'axis',title:'Columns',accept:'field'},{key:'legend',title:'Rows',accept:'field'},{key:'values',title:'Values',accept:'value'}],axes:true,legend:true,numberFormat:true,dataColor:true},
   radar:{w:6,h:5,wells:[{key:'axis',title:'Category',accept:'field'},{key:'values',title:'Values',accept:'value'}],legend:true,numberFormat:true,dataColor:true},
   combo:{w:7,h:5,wells:[{key:'axis',title:'X Axis',accept:'field'},{key:'values',title:'Values',accept:'value'},{key:'target',title:'Secondary value',accept:'value'},{key:'legend',title:'Legend / Series',accept:'field'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,legend:true,axes:true,tooltips:true,numberFormat:true,dataColor:true},
   bar:{w:6,h:5,wells:[{key:'axis',title:'Y Axis / Category',accept:'field'},{key:'values',title:'X Axis / Values',accept:'value'},{key:'legend',title:'Legend / Series',accept:'field'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,legend:true,axes:true,tooltips:true,numberFormat:true,dataColor:true},
@@ -64,14 +80,15 @@ const categoryScrollTypes=new Set<VisualType>(['bar','column','stackedbar','stac
 function sanitizeBindingsForType(type:VisualType,bindings:Visual['bindings']){
   const allowed=new Set(visualProfile(type).wells.map(x=>x.key));
   const next:Visual['bindings']={};
-  for(const key of ['axis','values','target','tooltips','legend'] as VisualWellKey[]){if(allowed.has(key))(next as any)[key]=[...(((bindings as any)?.[key])||[])];}
+  for(const key of ['axis','values','target','tooltips','legend','x','size','min','max','location','latitude','longitude','geometry','detail','color','label','path','country','region','postalCode'] as VisualWellKey[]){if(allowed.has(key))(next as any)[key]=[...(((bindings as any)?.[key])||[])];}
   if(allowed.has('axis')&&bindings?.hierarchy)next.hierarchy=structuredClone(bindings.hierarchy);
   return next;
 }
-function DataWells({visual,addBinding,removeBinding,moveBinding}:{visual:Visual,addBinding:(k:VisualWellKey,x:string)=>void,removeBinding:(k:VisualWellKey,x:string)=>void,moveBinding?:(k:VisualWellKey,x:string,direction:-1|1)=>void}){
+function DataWells({visual,addBinding,removeBinding,moveBinding,updateVisual,model}:{visual:Visual,addBinding:(k:VisualWellKey,x:string)=>void,removeBinding:(k:VisualWellKey,x:string)=>void,moveBinding?:(k:VisualWellKey,x:string,direction:-1|1)=>void,updateVisual?:(fn:(v:Visual)=>void)=>void,model?:any}){
   const[,refresh]=useState(0);
   const move=(k:VisualWellKey,x:string,direction:-1|1)=>{if(moveBinding){moveBinding(k,x,direction);return}const items=[...((visual.bindings as any)[k]||[])];const from=items.indexOf(x),to=from+direction;if(from<0||to<0||to>=items.length)return;[items[from],items[to]]=[items[to],items[from]];(visual.bindings as any)[k]=items;refresh(n=>n+1)};
-  return <>{visualProfile(visual.type).wells.map(w=><Well key={w.key} title={w.title} items={(visual.bindings as any)[w.key]||[]} accept={w.accept} onDrop={x=>addBinding(w.key,x)} onRemove={x=>removeBinding(w.key,x)} onMove={(x,d)=>move(w.key,x,d)}/>)}</>;
+  const isNumericField=(field:string)=>{const core=field.split('::')[0];const typ=String(model?.columnTypes?.[core]||'').toLowerCase();return /^(u?int\d*|integer|bigint|smallint|tinyint|float\d*|double|double precision|decimal|numeric|number|real|money|currency)$/.test(typ)||/(amount|revenue|cost|qty|quantity|price|points|number|count|total|target|latitude|longitude|salary|age|score|rate|percent|ratio|value|weight|height|budget|spend|profit|loss|sales|units|days)/i.test(core.split('.').slice(-1)[0])};
+  return <>{visualProfile(visual.type).wells.map(w=><Well key={w.key} title={w.title} items={(visual.bindings as any)[w.key]||[]} accept={w.accept} onDrop={x=>addBinding(w.key,x)} onRemove={x=>removeBinding(w.key,x)} onMove={(x,d)=>move(w.key,x,d)} onRename={updateVisual ? (x,name)=>updateVisual(v=>{const names={...(v.format.fieldDisplayNames||{})};if(name.trim())names[x]=name.trim();else delete names[x];v.format.fieldDisplayNames=names}) : undefined} displayNames={(visual.format as any).fieldDisplayNames} visualType={visual.type} wellKey={w.key} isNumericField={isNumericField} isMeasureField={(f)=>!!(model?.measures?.[f.split('::')[0]])}/>)}</>;
 }
 let reportFieldDragPayload='';
 let reportFieldDragCleanup:(()=>void)|undefined;
@@ -103,7 +120,7 @@ const visualIcon=(t:VisualType)=>{
  const common={viewBox:'0 0 32 32',width:20,height:20,fill:'none',stroke:'currentColor',strokeWidth:1.75,strokeLinecap:'square' as const,strokeLinejoin:'miter' as const};
  const svg=(children:any)=><svg {...common}>{children}</svg>;
  const icons:Record<VisualType,any>={
-  textbox:<TextCursorInput size={20}/>,button:<MousePointerClick size={20}/>,
+  textbox:<TextCursorInput size={20}/>,button:<MousePointerClick size={20}/>,image:<ImageIcon size={20}/>,shape:svg(<><rect x="5" y="6" width="22" height="20" rx="3"/><circle cx="16" cy="16" r="6"/></>),
   kpi:svg(<><path d="M5 7h22v18H5zM8 21l5-6 4 3 6-8"/><path d="M21 10h3v3"/></>),
   card:svg(<><rect x="5" y="7" width="22" height="18"/><path d="M9 12h7M9 17h14M9 21h9"/></>),
   multirowcard:svg(<><rect x="4" y="5" width="24" height="22"/><path d="M8 10h5M8 15h16M8 20h5M16 10h8M16 20h8"/></>),
@@ -127,6 +144,7 @@ const visualIcon=(t:VisualType)=>{
   boxplot:svg(<><path d="M4 27h24M9 8v17M7 8h4M7 25h4M6 14h6v7H6zM22 5v19M20 5h4M20 24h4M19 10h6v8h-6z"/></>),
   gauge:svg(<><path d="M5 24a11 11 0 0 1 22 0M16 21l7-8"/><circle cx="16" cy="21" r="2"/></>),
   progress:svg(<><rect x="4" y="10" width="24" height="12"/><path d="M7 13h13v6H7z" fill="currentColor" fillOpacity=".25"/></>),
+  map:<MapPinned size={20}/>,
   table:svg(<><rect x="4" y="5" width="24" height="22"/><path d="M4 11h24M4 17h24M4 23h24M12 5v22M20 5v22"/></>),
   matrix:svg(<><rect x="4" y="5" width="24" height="22"/><path d="M4 12h24M4 19h24M13 5v22M21 5v22"/><path d="M5 6h22v5H5z" fill="currentColor" fillOpacity=".18"/></>),
   slicer:svg(<><path d="M4 6h24l-9 10v8l-6 3V16z"/><path d="M22 21h6M25 18v6"/></>)
@@ -240,16 +258,37 @@ function pageDefaults(page:Page){
   page.settings.pageHeight=page.settings.pageHeight||1080;
   if((page.settings.pageSizePreset as any)==='16:9')page.settings.pageSizePreset='Full HD 16:9';
   page.settings.pageSizePreset=page.settings.pageSizePreset||'Full HD 16:9';
+  const fixedPageSizes:Record<string,[number,number]>={
+    'HD 16:9':[1280,720],'Full HD 16:9':[1920,1080],'QHD 16:9':[2560,1440],
+    '16:10':[1920,1200],'4:3':[960,720],Letter:[816,1056],Tooltip:[320,240],
+    'A4 Landscape':[1123,794],'A4 Portrait':[794,1123]
+  };
+  const fixedSize=fixedPageSizes[page.settings.pageSizePreset];
+  if(fixedSize){
+    [page.settings.pageWidth,page.settings.pageHeight]=fixedSize;
+    // Fixed presets must retain their real aspect ratio. Older projects could be
+    // saved as 1920 x 720 and then shrink to their lowest visual.
+    page.settings.autoFitHeight=false;
+  }
   page.settings.pageAlignment=page.settings.pageAlignment||'center';
   page.settings.showGrid=page.settings.showGrid!==false;
   page.settings.snapToGrid=page.settings.snapToGrid!==false;
   page.settings.allowOverlap=page.settings.allowOverlap===true;
   page.settings.layoutMode=page.settings.layoutMode||'guided';
-  page.settings.autoFitHeight=page.settings.autoFitHeight===undefined?true:page.settings.autoFitHeight===true;
+  page.settings.autoFitHeight=page.settings.autoFitHeight===true;
   page.settings.footerGap=page.settings.footerGap===undefined||page.settings.footerGap===96?32:page.settings.footerGap;
   page.settings.navigationPosition=page.settings.navigationPosition||'outside';
   page.settings.navigationTopMargin=page.settings.navigationTopMargin??16;
   page.settings.navigationBottomMargin=page.settings.navigationBottomMargin??24;
+  if(!page.settings.autoFitHeight){
+    const bodyHeight=Math.max(30,(page.settings.pageHeight||1080)-(page.settings.header.visible?(page.settings.header.height||84):0));
+    for(const visual of page.visuals||[]){
+      visual.w=Math.max(40,Math.min(page.settings.pageWidth||1920,visual.w||40));
+      visual.h=Math.max(30,Math.min(bodyHeight,visual.h||30));
+      visual.x=Math.max(0,Math.min((page.settings.pageWidth||1920)-visual.w,visual.x||0));
+      visual.y=Math.max(0,Math.min(bodyHeight-visual.h,visual.y||0));
+    }
+  }
   page.settings.header.subtitleFontSize=page.settings.header.subtitleFontSize??12;
   page.settings.header.height=page.settings.header.height??84;
   page.settings.header.paddingTop=page.settings.header.paddingTop??12;
@@ -259,6 +298,12 @@ function pageDefaults(page:Page){
   page.settings.header.borderRadius=page.settings.header.borderRadius??14;
   page.settings.header.showGeneratedInfo=page.settings.header.showGeneratedInfo!==false;
   page.settings.header.generatedInfoBackground=page.settings.header.generatedInfoBackground||'#f8fbff';
+  const pageWidth=page.settings.pageWidth||1920;
+  for(const[visualIndex,visual]of(page.visuals||[]).entries()){
+    if(visual.geometryVersion!==2){const column=(pageWidth-11*16)/12;visual.x=Math.round((visual.x||0)*(column+16));visual.y=Math.round((visual.y||0)*66);visual.w=Math.max(40,Math.round((visual.w||2)*column+Math.max(0,(visual.w||2)-1)*16));visual.h=Math.max(30,Math.round((visual.h||2)*50+Math.max(0,(visual.h||2)-1)*16));visual.geometryVersion=2}
+    visual.rotation=visual.rotation||0;visual.zIndex=visualIndex;visual.visible=visual.visible!==false;visual.locked=visual.locked===true;
+  }
+  for(const visual of page.visuals||[])if(visual.type==='button'&&visual.action?.dynamicLabel!==false)visual.buttonLabel=resolveActionButtonLabel(visual,page,[page]);
   return page;
 }
 function formatDefaults(v:Visual){
@@ -266,7 +311,7 @@ function formatDefaults(v:Visual){
   v.format.accent=v.format.accent||'#118dff';v.format.fontSize=v.format.fontSize||12;
   if(v.format.showTitle===undefined)v.format.showTitle=true;if(v.format.dataLabels===undefined)v.format.dataLabels=false;
   v.format.background=v.format.background||'#ffffff';v.format.fontFamily=v.format.fontFamily||'Segoe UI';v.format.fieldFormats=v.format.fieldFormats||{};
-  v.format.titleFontSize=v.format.titleFontSize||12;v.format.titleColor=v.format.titleColor||'#242424';v.format.titleFontWeight=v.format.titleFontWeight||400;v.format.subtitle=v.format.subtitle||'';if(v.format.subtitleVisible===undefined)v.format.subtitleVisible=false;v.format.subtitleColor=v.format.subtitleColor||'#616161';v.format.subtitleFontSize=v.format.subtitleFontSize||10;
+  v.format.titleFontFamily=v.format.titleFontFamily||v.format.fontFamily||'Segoe UI';v.format.titleFontSize=v.format.titleFontSize||12;v.format.titleColor=v.format.titleColor||'#242424';if(v.format.titleBold===undefined)v.format.titleBold=v.format.titleFontWeight===undefined?true:v.format.titleFontWeight>=600;v.format.titleFontWeight=v.format.titleBold?700:400;v.format.subtitle=v.format.subtitle||'';if(v.format.subtitleVisible===undefined)v.format.subtitleVisible=false;v.format.subtitleFontFamily=v.format.subtitleFontFamily||v.format.titleFontFamily;v.format.subtitleColor=v.format.subtitleColor||'#616161';v.format.subtitleFontSize=v.format.subtitleFontSize||10;if(v.format.subtitleBold===undefined)v.format.subtitleBold=(v.format.subtitleFontWeight||400)>=600;
   v.format.titleAlignment=v.format.titleAlignment||'left';v.format.titleFontStyle=v.format.titleFontStyle||'normal';v.format.titleUnderline=!!v.format.titleUnderline;if(v.format.titleWrap===undefined)v.format.titleWrap=true;v.format.subtitleFontWeight=v.format.subtitleFontWeight||400;v.format.subtitleAlignment=v.format.subtitleAlignment||v.format.titleAlignment;v.format.subtitleFontStyle=v.format.subtitleFontStyle||'normal';v.format.subtitleUnderline=!!v.format.subtitleUnderline;if(v.format.subtitleWrap===undefined)v.format.subtitleWrap=true;
   v.format.labelFontSize=v.format.labelFontSize||10;v.format.labelColor=v.format.labelColor||'#242424';v.format.labelPosition=v.format.labelPosition||'top';
   v.format.axisFontSize=v.format.axisFontSize||9;v.format.axisColor=v.format.axisColor||'#616161';if(v.format.axisTitleVisible===undefined)v.format.axisTitleVisible=false;v.format.xAxisTitle=v.format.xAxisTitle||'';v.format.yAxisTitle=v.format.yAxisTitle||'';v.format.gridLineColor=v.format.gridLineColor||'#e6e6e6';v.format.gridLineStyle=v.format.gridLineStyle||'dotted';if(v.format.zoomSlider===undefined)v.format.zoomSlider=false;v.format.referenceLineLabel=v.format.referenceLineLabel||'Reference';v.format.referenceLineColor=v.format.referenceLineColor||'#d13438';if(v.format.visualHeader===undefined)v.format.visualHeader=true;if(v.format.responsive===undefined)v.format.responsive=true;v.format.altText=v.format.altText||'';v.format.markerShape=v.format.markerShape||'circle';v.format.lineWidth=v.format.lineWidth||2;if(v.format.smoothLines===undefined)v.format.smoothLines=true;v.format.barRadius=v.format.barRadius??0;v.format.barWidth=v.format.barWidth||42;v.format.padding=v.format.padding??8;v.format.chartOpacity=v.format.chartOpacity??100;if(v.format.legendVisible===undefined)v.format.legendVisible=true;v.format.legendPosition=v.format.legendPosition||'bottom';v.format.legendColor=v.format.legendColor||v.format.axisColor;v.format.legendFontSize=v.format.legendFontSize||10;v.format.visibleCategoryCount=v.format.visibleCategoryCount||12;
@@ -276,20 +321,65 @@ function formatDefaults(v:Visual){
   if(v.format.indicatorEnabled===undefined)v.format.indicatorEnabled=false;v.format.favorableDirection=v.format.favorableDirection||'up';
   v.format.positiveColor=v.format.positiveColor||'#34d399';v.format.negativeColor=v.format.negativeColor||'#fb7185';v.format.neutralColor=v.format.neutralColor||'#94a3b8';
   v.format.textFontWeight=v.format.textFontWeight||400;v.format.textItalic=!!v.format.textItalic;v.format.textUnderline=!!v.format.textUnderline;v.format.textAlign=v.format.textAlign||'left';v.format.textVerticalAlign=v.format.textVerticalAlign||'top';if(v.format.textWrap===undefined)v.format.textWrap=true;v.format.textLineHeight=v.format.textLineHeight||1.45;
+  v.format.imageFit=v.format.imageFit||'contain';v.format.imageOpacity=v.format.imageOpacity??100;
+  const savedShapeOutlineWidth=v.format.shapeStrokeWidth;
+  v.format.shapeType=v.format.shapeType||'rectangle';
+  if(v.format.shapeFillVisible===undefined)v.format.shapeFillVisible=true;
+  v.format.shapeFill=v.format.shapeFill||'#dbeafe';v.format.shapeFillTransparency=v.format.shapeFillTransparency??0;
+  // Existing reports that stored a non-zero outline width retain that outline.
+  // Newly inserted shapes explicitly opt out of an outline in newVisual().
+  if(v.format.shapeStrokeVisible===undefined)v.format.shapeStrokeVisible=(savedShapeOutlineWidth??0)>0;
+  v.format.shapeStroke=v.format.shapeStroke||'#2563eb';v.format.shapeStrokeWidth=v.format.shapeStrokeWidth??2;v.format.shapeStrokeStyle=v.format.shapeStrokeStyle||'solid';v.format.shapeCornerRadius=v.format.shapeCornerRadius??18;
+  if(v.type==='shape'){v.format.showTitle=false;v.format.visualHeader=false;v.format.backgroundEnabled=false;v.format.borderVisible=false;v.format.padding=0;v.format.paddingTop=0;v.format.paddingRight=0;v.format.paddingBottom=0;v.format.paddingLeft=0}
+  if(v.type==='map'){
+    v.format.mapMode=v.format.mapMode||'symbol';v.format.mapStyle=v.format.mapStyle||'light';if(v.format.mapAutoFit===undefined)v.format.mapAutoFit=true;if(v.format.mapNavigation===undefined)v.format.mapNavigation=true;if(v.format.mapClustering===undefined)v.format.mapClustering=true;
+    v.format.mapClusterRadius=v.format.mapClusterRadius??45;v.format.mapMarkerSize=v.format.mapMarkerSize??9;v.format.mapMarkerMinSize=v.format.mapMarkerMinSize??5;v.format.mapMarkerMaxSize=v.format.mapMarkerMaxSize??24;v.format.mapMarkerOpacity=v.format.mapMarkerOpacity??85;v.format.mapMarkerColor=v.format.mapMarkerColor||v.format.accent;
+    v.format.mapBorderColor=v.format.mapBorderColor||'#ffffff';v.format.mapBorderWidth=v.format.mapBorderWidth??1;v.format.mapFillColor=v.format.mapFillColor||v.format.accent;v.format.mapFillOpacity=v.format.mapFillOpacity??65;v.format.mapMissingColor=v.format.mapMissingColor||'#cbd5e1';
+    v.format.mapHeatRadius=v.format.mapHeatRadius??24;v.format.mapHeatIntensity=v.format.mapHeatIntensity??1;v.format.mapHeatOpacity=v.format.mapHeatOpacity??80;v.format.mapLineColor=v.format.mapLineColor||v.format.accent;v.format.mapLineWidth=v.format.mapLineWidth??3;v.format.mapLineOpacity=v.format.mapLineOpacity??90;
+    if(v.format.mapLabels===undefined)v.format.mapLabels=true;v.format.mapLabelColor=v.format.mapLabelColor||'#1f2937';v.format.mapLabelSize=v.format.mapLabelSize??11;if(v.format.mapAllowOverlap===undefined)v.format.mapAllowOverlap=false;v.format.mapSourceCrs=v.format.mapSourceCrs||'EPSG:4326';
+  }
   v.format.cardsPerRow=v.format.cardsPerRow||2;if(v.format.cardAutoFit===undefined)v.format.cardAutoFit=true;v.format.cardMinWidth=v.format.cardMinWidth||150;v.format.cardMinHeight=v.format.cardMinHeight||92;v.format.cardGapX=v.format.cardGapX??10;v.format.cardGapY=v.format.cardGapY??10;v.format.cardPadding=v.format.cardPadding??12;v.format.cardHorizontalAlign=v.format.cardHorizontalAlign||'left';v.format.cardVerticalAlign=v.format.cardVerticalAlign||'middle';v.format.cardTitlePosition=v.format.cardTitlePosition||'top';v.format.cardValuePosition=v.format.cardValuePosition||'middle';v.format.cardIconPosition=v.format.cardIconPosition||'left';v.format.cardIconSize=v.format.cardIconSize||34;
   return v;
 }
 async function queryVisual(v:Visual,project:any,roleId?:string|null,extraFilters:VisualFilter[]=[]){
-  const measures=v.type==='slicer'?[]:Array.from(new Set([...(v.bindings.values||[]),...(v.bindings.target||[]),...(v.bindings.tooltips||[])]));
-  const dimensions=Array.from(new Set([...(v.bindings.axis||[]),...(v.bindings.legend||[])]));
-  const configuredFilters=[...(v.filters||[]),...extraFilters];
+  if(v.type==='map'&&v.format.mapCustomGeometry?.features?.length&&!['location','latitude','longitude','geometry','detail','color','label','path','country','region','postalCode','size','tooltips','values'].some(key=>((v.bindings as any)[key]||[]).length))return {rows:[]};
+  let measures=v.type==='slicer'?[]:Array.from(new Set([...(v.bindings.values||[]),...(v.bindings.target||[]),...(v.bindings.tooltips||[]),...((v.bindings as any).min||[]),...((v.bindings as any).max||[]),...((v.bindings as any).x||[]),...((v.bindings as any).size||[])]));
+  const activeAxis = v.type === 'table'
+    ? (v.bindings.axis || []).filter(Boolean)
+    : v.bindings.axis ? [v.bindings.axis[v.drillLevel || 0] || v.bindings.axis[0]].filter(Boolean) : [];
+  // For table: axis fields with aggregation suffix (::sum etc.) act as measures; plain fields are dimensions
+  let axisDimensions = activeAxis;
+  if (v.type === 'table') {
+    const isMeasureField = (f: string) => f.includes('::') || (project?.model?.measures && project.model.measures[f]);
+    const axisWithAgg = activeAxis.filter(isMeasureField);
+    axisDimensions = activeAxis.filter(f => !isMeasureField(f));
+    measures = Array.from(new Set([...measures, ...axisWithAgg]));
+  }
+  let dimensions=Array.from(new Set([...axisDimensions,...(v.bindings.legend||[]),...(v.type==='scatter'?(v.bindings.axis||[]):[])]));
+  if(v.type==='map'){
+    const mapFields=['location','latitude','longitude','geometry','detail','color','label','path','country','region','postalCode'].flatMap(key=>(v.bindings as any)[key]||[]);
+    const flexible=[...(v.bindings.size||[]),...(v.bindings.tooltips||[]),...(v.bindings.values||[])];
+    const isMeasure=(field:string)=>field.includes('::')||!!project?.model?.measures?.[field];
+    dimensions=Array.from(new Set([...mapFields,...flexible.filter(field=>!isMeasure(field))]));
+    measures=Array.from(new Set(flexible.filter(isMeasure)));
+  }
+  const configuredFilters=[...(v.filters||[]),...(v.drillFilters||[]),...extraFilters];
   const topFilter=configuredFilters.find(f=>f.operator==='top_n');
-  const filters=configuredFilters.filter(f=>f.operator!=='top_n');
+  const filters=configuredFilters.filter(f=>{
+    if (f.operator === 'top_n') return false;
+    if (f.operator === 'in' && (!Array.isArray(f.value) || f.value.length === 0)) return false;
+    if (f.operator !== 'is_blank' && f.operator !== 'is_not_blank' && (f.value === '' || f.value === null || f.value === undefined)) return false;
+    return true;
+  });
   const rankingField=topFilter?.rankingField||v.bindings.values?.[0];
   const hiddenRanking=!!(topFilter&&rankingField&&!measures.includes(rankingField)&&!dimensions.includes(rankingField));
   if(hiddenRanking)measures.push(rankingField!);
-  const sort=topFilter&&rankingField?[{field:rankingField,direction:'desc' as const},...(v.sort||[]).filter(s=>s.field!==rankingField)]:v.sort||[];
-  const defaultLimit=(v.type==='table'||v.type==='matrix')?500:(v.type==='histogram'?2000:500);
+  let sort=topFilter&&rankingField?[{field:rankingField,direction:'desc' as const},...(v.sort||[]).filter(s=>s.field!==rankingField)]:v.sort||[];
+  const axisDim = activeAxis[0] || '';
+  if (!sort.length && axisDim.includes('::')) {
+    sort = [{ field: axisDim, direction: 'asc' as const }];
+  }
+  const defaultLimit=v.type==='map'?5000:(v.type==='table'||v.type==='matrix')?500:(v.type==='histogram'?2000:500);
   const limit=topFilter?Math.max(1,Math.min(5000,Number(topFilter.value)||10)):defaultLimit;
   const result=await api<any>('/query-snapshot',{method:'POST',body:JSON.stringify({project,dimensions,measures,filters,sort,limit,roleId})});
   if(hiddenRanking&&rankingField)result.rows=(result.rows||[]).map((row:any)=>{const clean={...row};delete clean[rankingField];return clean});
@@ -313,42 +403,172 @@ function downloadCsv(rows:any[],title:string){
 function downloadJson(rows:any[],title:string){const blob=new Blob([JSON.stringify(rows,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=(title||'visual-data').replace(/[^\w\-]+/g,'_')+'.json';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
 function downloadExcel(rows:any[],title:string){if(!rows.length){window.alert('No data is available to export.');return}const cols=Object.keys(rows[0]);const esc=(x:any)=>String(x??'').replace(/\t/g,' ').replace(/\r?\n/g,' ');const tsv=[cols.join('\t'),...rows.map(r=>cols.map(c=>esc(r[c])).join('\t'))].join('\r\n');const blob=new Blob([tsv],{type:'application/vnd.ms-excel;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=(title||'visual-data').replace(/[^\w\-]+/g,'_')+'.xls';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url)}
 
-function VisualCard({v,onSelect,selected,roleId,extraFilters,onSlicer,onChange,onDuplicate,onDelete,onAction,model,project}:{v:Visual,onSelect:(additive?:boolean)=>void,selected:boolean,roleId?:string|null,extraFilters:VisualFilter[],onSlicer:(f:VisualFilter|null)=>void,onChange:(fn:(v:Visual)=>void)=>void,onDuplicate:()=>void,onDelete:()=>void,onAction:(v:Visual)=>void,model:any,project:any}){
-  const[rows,setRows]=useState<any[]>([]),[err,setErr]=useState(''),[menu,setMenu]=useState(false),[focus,setFocus]=useState(false),[showData,setShowData]=useState(false),[slicerSelected,setSlicerSelected]=useState<string|null>(null);formatDefaults(v);
+function ShapeArtwork({format}:{format:VisualFormat}){
+  const type=format.shapeType||'rectangle';
+  const fillVisible=format.shapeFillVisible!==false&&type!=='line';
+  const strokeVisible=format.shapeStrokeVisible??((format.shapeStrokeWidth??0)>0);
+  const fill=format.shapeFill||'#dbeafe',fillOpacity=1-Math.max(0,Math.min(100,format.shapeFillTransparency??0))/100;
+  const stroke=format.shapeStroke||'#2563eb',strokeWidth=Math.max(0,format.shapeStrokeWidth??2),strokeStyle=format.shapeStrokeStyle||'solid';
+  const shadow=format.shadow?`drop-shadow(0 ${format.shadowOffset??8}px 10px color-mix(in srgb, ${format.shadowColor||'#000000'} 24%, transparent))`:'none';
+  const surfaceStyle={background:fillVisible?`color-mix(in srgb, ${fill} ${Math.round(fillOpacity*100)}%, transparent)`:'transparent',border:strokeVisible&&strokeWidth>0?`${strokeWidth}px ${strokeStyle} ${stroke}`:'none',borderRadius:type==='ellipse'?'50%':type==='roundedRectangle'?`${Math.max(0,format.shapeCornerRadius??18)}px`:'0',filter:shadow} as const;
+  if(type==='rectangle'||type==='roundedRectangle'||type==='ellipse')return <div className={`shapeArtwork shapeArtwork-${type}`} style={surfaceStyle} aria-hidden="true"/>;
+  const dash=strokeStyle==='dashed'?'10 6':strokeStyle==='dotted'?'2 5':undefined;
+  const common={fill:fillVisible?fill:'none',fillOpacity,stroke:strokeVisible&&strokeWidth>0?stroke:'none',strokeWidth,strokeDasharray:dash,strokeLinejoin:'round' as const,vectorEffect:'non-scaling-stroke' as const};
+  return <svg className={`shapeArtwork shapeArtwork-${type}`} style={{filter:shadow}} viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">{type==='line'?<line x1="0" y1="50" x2="100" y2="50" {...common}/>:type==='triangle'?<polygon points="50,0 100,100 0,100" {...common}/>:<polygon points="50,0 100,50 50,100 0,50" {...common}/>}</svg>;
+}
+
+function RichTextBox({v,selected,onSelect,onChange,style,designerHandle,menuNode,responsiveSizeClass}:{v:Visual;selected:boolean;onSelect:(additive?:boolean)=>void;onChange:(fn:(v:Visual)=>void)=>void;style:any;designerHandle:any;menuNode:any;responsiveSizeClass:string}){
+  const[editing,setEditing]=useState(false);
+  const editorRef=useRef<HTMLDivElement|null>(null);
+  const selectionRef=useRef<Range|null>(null);
+  const initialHtml=richTextHtml(v.richText,v.text);
+  useEffect(()=>{if(!editing&&editorRef.current&&editorRef.current.innerHTML!==initialHtml)editorRef.current.innerHTML=initialHtml},[initialHtml,editing]);
+  useEffect(()=>{if(!selected)setEditing(false)},[selected]);
+  const rememberSelection=()=>{const selection=window.getSelection(),editor=editorRef.current;if(selection?.rangeCount&&editor?.contains(selection.anchorNode))selectionRef.current=selection.getRangeAt(0).cloneRange()};
+  // Persist the current value without replacing the live contentEditable DOM.
+  // Replacing innerHTML on every input moves the caret to the start, which makes
+  // subsequent characters appear in reverse order.
+  const save=()=>{const editor=editorRef.current;if(!editor)return;rememberSelection();const html=sanitizeRichText(editor.innerHTML);const plain=editor.innerText.replace(/\u00a0/g,' ');const runs=extractRichTextRuns(editor);onChange(x=>{x.richText=html;x.richTextRuns=runs;x.text=plain})};
+  const command=(name:string,value?:string)=>{const editor=editorRef.current;if(!editor)return;editor.focus();const selection=window.getSelection();if(selectionRef.current&&selection){selection.removeAllRanges();selection.addRange(selectionRef.current)}document.execCommand(name,false,value);save()};
+  const link=()=>{const url=window.prompt('Link URL','https://');if(url)command('createLink',url)};
+  const beginEdit=(event:ReactMouseEvent)=>{event.preventDefault();event.stopPropagation();onSelect(false);setEditing(true);setTimeout(()=>{if(editorRef.current){editorRef.current.focus();const sel=window.getSelection();if(sel&&editorRef.current.childNodes.length>0){sel.selectAllChildren(editorRef.current);sel.collapseToEnd()}}},50)};
+  const stopPointer=(event:SyntheticEvent)=>event.stopPropagation();
+  const stopWhenEditing=(event:SyntheticEvent)=>{if(editing)event.stopPropagation()};
+  return <div role="group" aria-label={v.format.altTextEnabled&&v.format.altText?v.format.altText:v.title} onMouseDown={event=>onSelect(event.ctrlKey||event.metaKey||event.shiftKey)} onDoubleClick={beginEdit} className={'visualCard premiumVisualCard textBoxVisual '+responsiveSizeClass+(selected?' selected':'')+(editing?' textEditing':'')+(v.hidden?' authorHidden':'')} style={{...style,display:'flex',flexDirection:'column'}}>
+    {!editing&&designerHandle}
+    {v.format.showTitle&&<div className="visualTitle visualMoveZone"><div className="visualTitleText"><span>{v.title}</span>{v.format.subtitleVisible&&v.format.subtitle&&<small style={{color:v.format.subtitleColor,fontSize:v.format.subtitleFontSize}}>{v.format.subtitle}</small>}</div>{menuNode}</div>}
+    {!v.format.showTitle&&v.format.visualHeader!==false&&<div className="visualHeaderOnly">{menuNode}</div>}
+    {editing&&<div className="richTextToolbar" role="toolbar" aria-label="Text formatting" onMouseDown={event=>{if((event.target as HTMLElement).closest('button'))event.preventDefault();event.stopPropagation()}} onPointerDown={stopPointer} onClick={stopPointer}>
+      <select aria-label="Font" defaultValue={v.format.fontFamily||'Segoe UI'} onChange={event=>command('fontName',event.target.value)}><option>Segoe UI</option><option>Aptos</option><option>Arial</option><option>Georgia</option><option>Inter</option><option>Roboto</option></select>
+      <select aria-label="Text size" defaultValue="3" onChange={event=>command('fontSize',event.target.value)}><option value="1">10</option><option value="2">12</option><option value="3">14</option><option value="4">18</option><option value="5">24</option><option value="6">32</option><option value="7">48</option></select>
+      <input aria-label="Text color" title="Text color" type="color" defaultValue={v.format.labelColor||'#242424'} onChange={event=>command('foreColor',event.target.value)}/>
+      <button title="Bold" onClick={()=>command('bold')}><b>B</b></button><button title="Italic" onClick={()=>command('italic')}><i>I</i></button><button title="Underline" onClick={()=>command('underline')}><u>U</u></button>
+      <span className="richTextDivider"/>
+      <button title="Align left" onClick={()=>command('justifyLeft')}>≡</button><button className="alignCenterIcon" title="Align center" onClick={()=>command('justifyCenter')}>≡</button><button className="alignRightIcon" title="Align right" onClick={()=>command('justifyRight')}>≡</button>
+      <button title="Bulleted list" onClick={()=>command('insertUnorderedList')}>• List</button><button title="Numbered list" onClick={()=>command('insertOrderedList')}>1. List</button><button title="Link" onClick={link}>↗</button>
+      <button className="richTextDone" onClick={()=>{save();setEditing(false)}}>Done</button>
+    </div>}
+    <div className={'textBoxEditor align-'+(v.format.textVerticalAlign||'top')} style={{paddingTop:v.format.paddingTop??v.format.padding??8,paddingRight:v.format.paddingRight??v.format.padding??8,paddingBottom:v.format.paddingBottom??v.format.padding??8,paddingLeft:v.format.paddingLeft??v.format.padding??8}}>
+      <div ref={editorRef} className="textBoxContent customScrollbar" contentEditable={editing} suppressContentEditableWarning role="textbox" aria-multiline="true" data-placeholder="Double-click to add text" style={{userSelect:'text',WebkitUserSelect:'text',fontSize:v.format.fontSize||18,color:v.format.labelColor||'#111827',fontFamily:v.format.fontFamily||'inherit',fontWeight:v.format.textFontWeight||400,fontStyle:v.format.textItalic?'italic':'normal',textDecoration:v.format.textUnderline?'underline':'none',textAlign:v.format.textAlign||'left',whiteSpace:v.format.textWrap===false?'pre':'pre-wrap',overflowWrap:v.format.textWrap===false?'normal':'anywhere',lineHeight:v.format.textLineHeight||1.45}} onInput={save} onBlur={save} onPaste={event=>{event.preventDefault();document.execCommand('insertText',false,event.clipboardData.getData('text/plain'))}} onMouseDown={stopWhenEditing} onPointerDown={stopWhenEditing} onMouseUp={rememberSelection} onKeyUp={rememberSelection} onKeyDown={stopPointer}/>
+    </div>
+  </div>;
+}
+
+function VisualCard({v,onSelect,selected,actionSelected,roleId,extraFilters,onSlicer,onChange,onDuplicate,onDelete,onAction,model,project,activeInteractionFilter,onDrillThrough,onCategoriesLoad}:{v:Visual,onSelect:(additive?:boolean)=>void,selected:boolean,actionSelected?:boolean,roleId?:string|null,extraFilters:VisualFilter[],onSlicer:(f:VisualFilter|null)=>void,onChange:(fn:(v:Visual)=>void)=>void,onDuplicate:()=>void,onDelete:()=>void,onAction:(v:Visual)=>void,model:any,project:any,activeInteractionFilter?:VisualFilter,onDrillThrough?:(pageId:string, filter:VisualFilter)=>void,onCategoriesLoad?:(id:string,cats:string[])=>void}){
+  const[rows,setRows]=useState<any[]>([]),[err,setErr]=useState(''),[menu,setMenu]=useState(false),[focus,setFocus]=useState(false),[showData,setShowData]=useState(false),[slicerSelected,setSlicerSelected]=useState<string[]>([]),[slicerSearch,setSlicerSearch]=useState(''),[conditionalValues,setConditionalValues]=useState<Record<string,any>>({});formatDefaults(v);
   const capability=visualProfile(v.type);
-  const hasDataBindings=v.type==='slicer'?!!(v.bindings.axis||[]).length:['table','matrix'].includes(v.type)?!!((v.bindings.axis||[]).length+(v.bindings.values||[]).length):!!(v.bindings.values||[]).length;
+  const hasDataBindings=v.type==='map'?!!((v.bindings.location||[]).length+Math.min((v.bindings.latitude||[]).length,(v.bindings.longitude||[]).length)+(v.bindings.geometry||[]).length+(v.format.mapCustomGeometry?.features?.length||0)):v.type==='slicer'?!!(v.bindings.axis||[]).length:['table','matrix'].includes(v.type)?!!((v.bindings.axis||[]).length+(v.bindings.values||[]).length):!!(v.bindings.values||[]).length;
   // The caller excludes this slicer's own interaction filter while preserving report/page/other-slicer context.
   const slicerExtraFilters=extraFilters; // the caller already removes this slicer's own filter; keep page/report/other-slicer context
-  useEffect(()=>{if(v.type==='textbox'||v.type==='button'){setRows([]);setErr('');return}if(!hasDataBindings){setRows([]);return}
+  useEffect(()=>{if(v.type==='textbox'||v.type==='button'||v.type==='image'||v.type==='shape'){setRows([]);setErr('');return}if(!hasDataBindings){setRows([]);return}
     queryVisual(v,project,roleId,slicerExtraFilters).then(r=>{setRows(r.rows);setErr('')}).catch(e=>setErr(e.message));
-  },[JSON.stringify(v.bindings),JSON.stringify(v.filters),JSON.stringify(v.sort),JSON.stringify(slicerExtraFilters),JSON.stringify(project?.model?.measures||{}),v.type,roleId]);
+  },[JSON.stringify(v.bindings),JSON.stringify(v.filters),JSON.stringify(v.sort),JSON.stringify(v.drillFilters),v.drillLevel,JSON.stringify(slicerExtraFilters),JSON.stringify(project?.model?.measures||{}),v.type,roleId]);
+  useEffect(()=>{
+    if(!activeInteractionFilter) setSlicerSelected([]);
+    else if(activeInteractionFilter.operator==='in') setSlicerSelected(activeInteractionFilter.value as string[]);
+    else if(activeInteractionFilter.operator==='equals') setSlicerSelected([activeInteractionFilter.value as string]);
+  },[activeInteractionFilter]);
   useEffect(()=>{if(!menu)return;const close=()=>setMenu(false);document.addEventListener('pointerdown',close);return()=>document.removeEventListener('pointerdown',close)},[menu]);
-  const bg=v.format.background||'#0d1724', trans=Math.max(0,Math.min(100,v.format.backgroundTransparency||0));
-  const responsiveSizeClass=v.format.responsive===false?' visualFixed':(v.w<=3||v.h<=2?' visualCompact':v.w>=8?' visualWide':' visualStandard');
-  const edges=v.format.borderEdges||{top:true,right:true,bottom:true,left:true};
-  const border=v.format.borderVisible?`${v.format.borderWidth||1}px ${v.format.borderStyle||'solid'} ${v.format.borderColor||'#1f334a'}`:'0';
+  useEffect(()=>{
+    const visualMeasures=(v.format.conditionalFormatRules||[]).filter(rule=>rule.enabled!==false&&rule.measure).map(rule=>rule.measure);
+    const tableMeasures=Object.values(v.format.tableConditionalRules||{}).filter(rule=>rule.enabled!==false&&rule.formatBy==='fieldValue'&&rule.colorMeasure).map(rule=>rule.colorMeasure!);
+    const measures=Array.from(new Set([...visualMeasures,...tableMeasures]));
+    if(!measures.length){setConditionalValues({});return}
+    const filters=[...(v.filters||[]),...(v.drillFilters||[]),...extraFilters].filter(f=>f.operator!=='top_n'&&!(f.operator==='in'&&(!Array.isArray(f.value)||!f.value.length)));
+    let active=true;
+    api<any>('/query-snapshot',{method:'POST',body:JSON.stringify({project,dimensions:[],measures,filters,sort:[],limit:1,roleId})}).then(result=>{if(active)setConditionalValues(result.rows?.[0]||{})}).catch(()=>{if(active)setConditionalValues({})});
+    return()=>{active=false};
+  },[JSON.stringify(v.format.conditionalFormatRules||[]),JSON.stringify(v.format.tableConditionalRules||{}),JSON.stringify(v.filters||[]),JSON.stringify(v.drillFilters||[]),JSON.stringify(extraFilters),JSON.stringify(project?.model?.measures||{}),roleId]);
+  useEffect(()=>{
+    if(rows.length>0&&onCategoriesLoad){
+      const axis=v.bindings.axis?.[v.drillLevel||0]||v.bindings.axis?.slice(-1)[0]||v.bindings.legend?.[0];
+      if(axis){
+        const cats=Array.from(new Set(rows.map(r=>String(r[axis]||''))));
+        onCategoriesLoad(v.id,cats);
+      }
+    }
+  },[rows,v.bindings,v.id,onCategoriesLoad]);
+
+  // Hooks must be called unconditionally
+  const isSlicer = v.type === 'slicer';
+  const slicerAxis = v.bindings.axis?.[0]||'';
+  const slicerOptions = isSlicer ? rows.map(r=>String(r[slicerAxis])).filter((x,i,a)=>x&&a.indexOf(x)===i).filter(option=>!slicerSearch||option.toLowerCase().includes(slicerSearch.toLowerCase())) : [];
+  
+  useEffect(() => {
+    if (v.type === 'slicer' && v.format.slicerSingleSelect) {
+      if (slicerSelected.length !== 1 && slicerOptions.length > 0) {
+        setSlicerSelected([slicerSelected[0] || slicerOptions[0]]);
+        onSlicer({field:slicerAxis,operator:'equals',value:slicerSelected[0] || slicerOptions[0]});
+      }
+    }
+  }, [v.type, v.format.slicerSingleSelect, slicerOptions.length, slicerSelected, slicerAxis, onSlicer]);
+
+  const displayFormat={...v.format,...resolveConditionalFormat(v.format.conditionalFormatRules,conditionalValues)};
+  const displayVisual={...v,format:displayFormat};
+  const bg=displayFormat.background||'#0d1724', trans=displayFormat.backgroundEnabled===false?100:Math.max(0,Math.min(100,displayFormat.backgroundTransparency||0));
+  const titleBg=displayFormat.titleBackground||'#ffffff',titleTrans=displayFormat.titleBackgroundEnabled===false?100:Math.max(0,Math.min(100,displayFormat.titleBackgroundTransparency||0));
+  const responsiveSizeClass=displayFormat.responsive===false?' visualFixed':(v.w<=260||v.h<=130?' visualCompact':v.w>=900?' visualWide':' visualStandard');
+  const edges=displayFormat.borderEdges||{top:true,right:true,bottom:true,left:true};
+  const border=displayFormat.borderVisible?`${displayFormat.borderWidth||1}px ${displayFormat.borderStyle||'solid'} ${displayFormat.borderColor||'#1f334a'}`:'0';
+  const visualRadius=`${displayFormat.cornerRadii?.topLeft??displayFormat.cornerRadius??12}px ${displayFormat.cornerRadii?.topRight??displayFormat.cornerRadius??12}px ${displayFormat.cornerRadii?.bottomRight??displayFormat.cornerRadius??12}px ${displayFormat.cornerRadii?.bottomLeft??displayFormat.cornerRadius??12}px`;
   const style:any={
     border:'0',borderTop:edges.top?border:'0',borderRight:edges.right?border:'0',borderBottom:edges.bottom?border:'0',borderLeft:edges.left?border:'0',
-    background:`color-mix(in srgb, ${bg} ${100-trans}%, transparent)`,visibility:v.hidden?'hidden':'visible',padding:0,fontFamily:`${v.format.fontFamily||'Aptos'}, 'Segoe UI Variable', 'Segoe UI', sans-serif`,borderRadius:`${v.format.cornerRadii?.topLeft??v.format.cornerRadius??12}px ${v.format.cornerRadii?.topRight??v.format.cornerRadius??12}px ${v.format.cornerRadii?.bottomRight??v.format.cornerRadius??12}px ${v.format.cornerRadii?.bottomLeft??v.format.cornerRadius??12}px`,boxShadow:v.format.shadow?'0 12px 32px rgba(15,23,42,.10), 0 2px 8px rgba(15,23,42,.05)':'none',
-    '--visual-background':`color-mix(in srgb, ${bg} ${100-trans}%, transparent)`,'--visual-border-top':edges.top?border:'none','--visual-border-right':edges.right?border:'none','--visual-border-bottom':edges.bottom?border:'none','--visual-border-left':edges.left?border:'none','--visual-radius':`${v.format.cornerRadii?.topLeft??v.format.cornerRadius??12}px ${v.format.cornerRadii?.topRight??v.format.cornerRadius??12}px ${v.format.cornerRadii?.bottomRight??v.format.cornerRadius??12}px ${v.format.cornerRadii?.bottomLeft??v.format.cornerRadius??12}px`,'--visual-shadow':v.format.shadow?'0 12px 32px rgba(15,23,42,.10), 0 2px 8px rgba(15,23,42,.05)':'none','--visual-title-color':v.format.titleColor||'#0f172a','--visual-padding':`${v.format.padding??8}px`
+    background:`color-mix(in srgb, ${bg} ${100-trans}%, transparent)`,visibility:v.hidden?'hidden':'visible',padding:0,fontFamily:`${displayFormat.fontFamily||'Aptos'}, 'Segoe UI Variable', 'Segoe UI', sans-serif`,borderRadius:visualRadius,boxShadow:displayFormat.shadow?`0 ${displayFormat.shadowOffset??12}px 32px color-mix(in srgb, ${displayFormat.shadowColor||'#0f172a'} 16%, transparent)`:'none',
+    '--visual-background':`color-mix(in srgb, ${bg} ${100-trans}%, transparent)`,'--visual-title-background':`color-mix(in srgb, ${titleBg} ${100-titleTrans}%, transparent)`,'--visual-border-top':edges.top?border:'none','--visual-border-right':edges.right?border:'none','--visual-border-bottom':edges.bottom?border:'none','--visual-border-left':edges.left?border:'none','--visual-radius':visualRadius,'--visual-shadow':displayFormat.shadow?`0 ${displayFormat.shadowOffset??12}px 32px color-mix(in srgb, ${displayFormat.shadowColor||'#0f172a'} 16%, transparent)`:'none','--visual-title-color':displayFormat.titleColor||'#0f172a','--visual-padding-top':`${displayFormat.paddingTop??displayFormat.padding??8}px`,'--visual-padding-right':`${displayFormat.paddingRight??displayFormat.padding??8}px`,'--visual-padding-bottom':`${displayFormat.paddingBottom??displayFormat.padding??8}px`,'--visual-padding-left':`${displayFormat.paddingLeft??displayFormat.padding??8}px`
   };
-  Object.assign(style,{'--visual-title-align':v.format.titleAlignment||'left','--visual-title-style':v.format.titleFontStyle||'normal','--visual-title-decoration':v.format.titleUnderline?'underline':'none','--visual-title-wrap':v.format.titleWrap===false?'nowrap':'normal','--visual-subtitle-weight':v.format.subtitleFontWeight||400,'--visual-subtitle-align':v.format.subtitleAlignment||v.format.titleAlignment||'left','--visual-subtitle-style':v.format.subtitleFontStyle||'normal','--visual-subtitle-decoration':v.format.subtitleUnderline?'underline':'none','--visual-subtitle-wrap':v.format.subtitleWrap===false?'nowrap':'normal'});
+  Object.assign(style,{'--visual-title-font':displayFormat.titleFontFamily||displayFormat.fontFamily||'Segoe UI','--visual-title-size':`${displayFormat.titleFontSize||12}px`,'--visual-title-weight':displayFormat.titleBold===false?400:(displayFormat.titleFontWeight||700),'--visual-title-align':displayFormat.titleAlignment||'left','--visual-title-style':displayFormat.titleFontStyle||'normal','--visual-title-decoration':displayFormat.titleUnderline?'underline':'none','--visual-title-wrap':displayFormat.titleWrap===false?'nowrap':'normal','--visual-subtitle-font':displayFormat.subtitleFontFamily||displayFormat.titleFontFamily||displayFormat.fontFamily||'Segoe UI','--visual-subtitle-size':`${displayFormat.subtitleFontSize||10}px`,'--visual-subtitle-color':displayFormat.subtitleColor||'#616161','--visual-subtitle-weight':displayFormat.subtitleBold?(displayFormat.subtitleFontWeight||700):400,'--visual-subtitle-align':displayFormat.subtitleAlignment||displayFormat.titleAlignment||'left','--visual-subtitle-style':displayFormat.subtitleFontStyle||'normal','--visual-subtitle-decoration':displayFormat.subtitleUnderline?'underline':'none','--visual-subtitle-wrap':displayFormat.subtitleWrap===false?'nowrap':'normal'});
+  const titleTextStyle:any={fontFamily:displayFormat.titleFontFamily||displayFormat.fontFamily||'Segoe UI',fontSize:displayFormat.titleFontSize||12,color:displayFormat.titleColor||'#242424',fontWeight:displayFormat.titleBold===false?400:(displayFormat.titleFontWeight||700),fontStyle:displayFormat.titleFontStyle||'normal',textDecoration:displayFormat.titleUnderline?'underline':'none',whiteSpace:displayFormat.titleWrap===false?'nowrap':'normal',textAlign:displayFormat.titleAlignment||'left'};
+  const subtitleTextStyle:any={fontFamily:displayFormat.subtitleFontFamily||displayFormat.titleFontFamily||displayFormat.fontFamily||'Segoe UI',fontSize:displayFormat.subtitleFontSize||10,color:displayFormat.subtitleColor||'#616161',fontWeight:displayFormat.subtitleBold?(displayFormat.subtitleFontWeight||700):400,fontStyle:displayFormat.subtitleFontStyle||'normal',textDecoration:displayFormat.subtitleUnderline?'underline':'none',whiteSpace:displayFormat.subtitleWrap===false?'nowrap':'normal',textAlign:displayFormat.subtitleAlignment||displayFormat.titleAlignment||'left'};
   const axisSortField=(v.bindings.axis||[]).slice(-1)[0]||'';
   const valueSortField=v.bindings.values?.[0]||'';
-  const hierarchy=(model?.hierarchies||[]).find((h:any)=>h.id===v.bindings.hierarchy?.id);
-  const hierarchyLevel=v.bindings.hierarchy?.level||0;
-  const drill=(dir:number)=>{if(!hierarchy)return;const level=Math.max(0,Math.min(hierarchy.levels.length-1,hierarchyLevel+dir));onChange(x=>{x.bindings.hierarchy={id:hierarchy.id,level};x.bindings.axis=hierarchy.levels.slice(0,level+1).map((z:any)=>z.field);x.sort=[]})};
-  const setSort=(field:string,direction:'asc'|'desc')=>{if(field)onChange(x=>x.sort=[{field,direction}]);setMenu(false)};
-  const clearFilter=()=>{onChange(x=>x.filters=[]);setMenu(false)};
-  const menuNode=<div className="visualHeaderActions">
-    {hierarchy&&<div className="drillControls" title={`${hierarchy.name}: ${hierarchy.levels[hierarchyLevel]?.name||''}`}>
-      <button disabled={hierarchyLevel<=0} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();drill(-1)}} title="Drill up"><ArrowUpCircle size={15}/></button>
-      <button disabled={hierarchyLevel>=hierarchy.levels.length-1} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();drill(1)}} title="Drill down"><ArrowDownCircle size={15}/></button>
-      <span>{hierarchy.levels[hierarchyLevel]?.name}</span>
+  const drillUp = () => {
+    const level = v.drillLevel || 0;
+    if (level > 0) {
+      onChange(x => {
+        x.drillLevel = level - 1;
+        if (x.drillFilters && x.drillFilters.length > 0) x.drillFilters = x.drillFilters.slice(0, -1);
+      });
+    }
+  };
+  const drillDown = () => {
+    const axis = v.bindings.axis || [];
+    const level = v.drillLevel || 0;
+    if (level < axis.length - 1) {
+      onChange(x => { x.drillLevel = level + 1; });
+    }
+  };
+    
+const handlePointClick = (field: string, value: any) => {
+      const axis = v.bindings.axis || [];
+      const level = v.drillLevel || 0;
+      // Only drill when the user has enabled drill mode (↓ arrow toggled on), just like Power BI.
+      // When drill mode is off, clicks cross-filter other visuals on the page instead.
+      if (v.drillModeActive && axis.length > 1 && level < axis.length - 1) {
+        onChange(x => {
+          x.drillLevel = level + 1;
+          x.drillFilters = [...(x.drillFilters || []), { field, operator: 'equals', value }];
+        });
+      } else {
+        onSlicer({ field, operator: 'equals', value });
+      }
+    };
+    const setSort=(field:string,direction:'asc'|'desc')=>{if(field)onChange(x=>x.sort=[{field,direction}]);setMenu(false)};
+    const clearFilter=()=>{onChange(x=>x.filters=[]);setMenu(false)};
+    const drillPath = (v.drillFilters || []).map((f, i) => <span key={i} style={{cursor: "pointer", color: "#2563eb"}} onClick={() => onChange(x => { x.drillLevel = i; x.drillFilters = x.drillFilters!.slice(0, i); })}> {f.value} &gt; </span>);
+    const targetPages = activeInteractionFilter ? (project.report.pages||[]).filter((p:Page) => p.id !== project.report.activePageId && p.drillThroughFields?.includes(activeInteractionFilter.field)) : [];
+    const menuNode=<div className="visualHeaderActions">
+      {(v.bindings.axis?.length||0)>1&&v.format.headerDrillIcon!==false&&<div className="drillControls" title="Drill controls">
+        <button disabled={(v.drillLevel||0)<=0} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();drillUp()}} title="Drill up"><ArrowUpCircle size={15}/></button>
+        <button className={v.drillModeActive ? 'active' : ''} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();onChange(x=>{x.drillModeActive = !x.drillModeActive})}} title={v.drillModeActive ? "Click to turn off Drill down" : "Click to turn on Drill down"} style={{color: v.drillModeActive ? '#2563eb' : 'inherit', background: v.drillModeActive ? '#e2e8f0' : 'transparent', borderRadius: '4px'}}><ArrowDown size={15}/></button>
+        <button disabled={(v.drillLevel||0)>=(v.bindings.axis?.length||1)-1} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();drillDown()}} title="Expand all down one level in the hierarchy"><ChevronsDown size={15}/></button>
+      </div>}
+    {targetPages.length > 0 && activeInteractionFilter && onDrillThrough && <div className="drillControls" style={{padding: '0 6px', gap: '4px'}}>
+      <span style={{fontSize: 9}}>Drill:</span>
+      {targetPages.map((p:Page) => <button key={p.id} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation(); onDrillThrough(p.id, activeInteractionFilter);}} style={{padding:'2px 4px', fontSize:10, background:'#e2e8f0', color:'#0f172a', borderRadius:4, width:'auto', height:'auto'}}>{p.name}</button>)}
     </div>}
     <div className="visualMenuWrap">
-    <button className="visualMenuButton" title="Focus mode" onClick={e=>{e.preventDefault();e.stopPropagation();setFocus(true)}}><Maximize2 size={15}/></button>
-    <button className="visualMenuButton" title="More options" onClick={e=>{e.preventDefault();e.stopPropagation();onSelect(false);setMenu(x=>!x)}}><MoreHorizontal size={17}/></button>
+    {v.format.headerFocusIcon!==false&&<button className="visualMenuButton" title="Focus mode" onClick={e=>{e.preventDefault();e.stopPropagation();setFocus(true)}}><Maximize2 size={15}/></button>}
+    {v.format.headerMoreIcon!==false&&<button className="visualMenuButton" title="More options" onClick={e=>{e.preventDefault();e.stopPropagation();onSelect(false);setMenu(x=>!x)}}><MoreHorizontal size={17}/></button>}
     {menu&&<div className="visualContextMenu" onPointerDown={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
       {axisSortField&&<button onClick={()=>setSort(axisSortField,'asc')}><ArrowUpAZ size={14}/>Sort category ascending</button>}
       {axisSortField&&<button onClick={()=>setSort(axisSortField,'desc')}><ArrowDownAZ size={14}/>Sort category descending</button>}
@@ -371,29 +591,108 @@ function VisualCard({v,onSelect,selected,roleId,extraFilters,onSlicer,onChange,o
     </div>}
     </div>
   </div>;
-  const designerHandle=selected&&!v.format.showTitle?<div className="visualMoveOverlay visualMoveZone"><Move size={13}/><span>Move visual</span></div>:null;
-  if(v.type==='textbox')return <div onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'visualCard premiumVisualCard textBoxVisual '+responsiveSizeClass+(selected?' selected':'')+(menu?' menuOpen':'')+(v.hidden?' authorHidden':'')} style={{...style,display:'flex',flexDirection:'column'}}>{designerHandle}{(v.format.showTitle||selected)&&<div className="visualTitle visualMoveZone">{v.format.showTitle?<div className="visualTitleText"><span>{v.title}</span>{v.format.subtitleVisible&&v.format.subtitle&&<small style={{color:v.format.subtitleColor,fontSize:v.format.subtitleFontSize}}>{v.format.subtitle}</small>}</div>:<div/>}{menuNode}</div>}<div className={'textBoxEditor align-'+(v.format.textVerticalAlign||'top')} style={{padding:v.format.padding||8}}><textarea className="textBoxContent customScrollbar" style={{resize:'none',border:'none',background:'transparent',outline:'none',fontSize:v.format.fontSize||18,color:v.format.labelColor||'#111827',fontFamily:v.format.fontFamily||'inherit',fontWeight:v.format.textFontWeight||400,fontStyle:v.format.textItalic?'italic':'normal',textDecoration:v.format.textUnderline?'underline':'none',textAlign:v.format.textAlign||'left',whiteSpace:v.format.textWrap===false?'pre':'pre-wrap',overflowWrap:v.format.textWrap===false?'normal':'anywhere',lineHeight:v.format.textLineHeight||1.45,width:'100%',minHeight:'0'}} value={v.text||''} placeholder="Add narrative text, notes or instructions here." onChange={e=>onChange(x=>x.text=e.target.value)} onMouseDown={e=>e.stopPropagation()} onPointerDown={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()}/></div></div>;
-  if(v.type==='button')return <button type="button" aria-label={v.buttonLabel||'Action Button'} title="Click to select. Ctrl+click to preview the action." onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} onClick={e=>{e.stopPropagation();if(e.ctrlKey||e.metaKey)onAction(v);else onSelect(false)}} className={'visualCard reportActionButton authoringActionButton buttonVisualOnly '+responsiveSizeClass+(selected?' selected':'')+(v.hidden?' authorHidden':'')} style={{...style,background:v.format.buttonBackground||'#2563eb',color:v.format.buttonTextColor||'#ffffff',fontSize:v.format.buttonFontSize||12,borderRadius:v.format.buttonCornerRadius??6,border:v.format.buttonBorderVisible?`1px solid ${v.format.buttonBorderColor||'#1d4ed8'}`:'none'}}><MousePointerClick size={16}/>{v.buttonLabel||'Action Button'}</button>;
-  if(v.type==='slicer'){const axis=v.bindings.axis?.[0];const mode=v.slicerStyle||'list';return <div onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'visualCard '+responsiveSizeClass+(selected?' selected':'')+(menu?' menuOpen':'')} style={style}>{designerHandle}<div className="visualTitle visualMoveZone" style={{fontSize:v.format.titleFontSize,color:v.format.titleColor,fontWeight:v.format.titleFontWeight}}><div className="visualTitleText"><span>{v.title}</span>{v.format.subtitleVisible&&v.format.subtitle&&<small style={{color:v.format.subtitleColor,fontSize:v.format.subtitleFontSize}}>{v.format.subtitle}</small>}</div>{menuNode}</div>{mode==='dropdown'?<select className="slicerDropdown" value={slicerSelected||''} onChange={e=>{const val=e.target.value;setSlicerSelected(val||null);val?onSlicer({field:axis||'',operator:'equals',value:val}):onSlicer(null)}}><option value="">Select…</option>{rows.map((r,i)=><option key={i} value={String(r[axis||''])}>{String(r[axis||''])}</option>)}</select>:<div className={'slicerList slicer-'+mode}>{rows.map((r,i)=>{const val=String(r[axis||'']);const isActive=slicerSelected===val;return <button key={i} className={isActive?'active':''} onClick={e=>{e.stopPropagation();if(isActive){setSlicerSelected(null);onSlicer(null);}else{setSlicerSelected(val);onSlicer({field:axis||'',operator:'equals',value:r[axis||'']});}}}>{val}</button>})}</div>}</div>}
-  const card=<div onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'visualCard premiumVisualCard '+responsiveSizeClass+(selected?' selected':'')+(menu?' menuOpen':'')} style={{...style, display:'flex', flexDirection:'column'}}>{designerHandle}{v.format.showTitle&&<div className="visualTitle visualMoveZone" style={{fontSize:v.format.titleFontSize,color:v.format.titleColor,fontWeight:v.format.titleFontWeight}}><div className="visualTitleText"><span>{v.title}</span>{v.format.subtitleVisible&&v.format.subtitle&&<small style={{color:v.format.subtitleColor,fontSize:v.format.subtitleFontSize}}>{v.format.subtitle}</small>}</div>{menuNode}</div>}<div className="visualBody" style={{padding:v.format.padding, flex:1, minHeight:0, display:'flex', flexDirection:'column'}} onMouseDown={e=>{e.stopPropagation();onSelect(false)}} onPointerDown={e=>e.stopPropagation()}>{err?<div className="empty compact">{err}</div>:!hasDataBindings?<div className="visualEmpty"><Sparkles size={20}/><b>Add data to this visual</b><span>Choose a field in Data or drag it to a field well.</span></div>:<Chart visual={v} rows={rows} onPointClick={(field,value)=>onSlicer({field,operator:'equals',value})}/>}</div></div>;
-  const overlay=(focus||showData)&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>{setFocus(false);setShowData(false)}}><div className="visualFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>{showData?'UNDERLYING DATA':'FOCUS MODE'}</small><b>{v.title}</b></div><button onClick={()=>{setFocus(false);setShowData(false)}}>Close</button></div><div className="visualFocusBody">{showData?<div className="underlyingDataTable"><table><thead><tr>{rows.length&&Object.keys(rows[0]).map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.slice(0,500).map((r,i)=><tr key={i}>{Object.keys(r).map(c=><td key={c}>{String(r[c]??'')}</td>)}</tr>)}</tbody></table></div>:<Chart visual={v} rows={rows} onPointClick={(field,value)=>onSlicer({field,operator:'equals',value})}/>}</div></div></div>,document.body);
+  const designerHandle=null;
+  if(v.type==='textbox')return <RichTextBox v={displayVisual} selected={selected} onSelect={onSelect} onChange={onChange} style={style} designerHandle={designerHandle} menuNode={menuNode} responsiveSizeClass={responsiveSizeClass}/>;
+  if(v.type==='image')return <div role="img" aria-label={displayFormat.altText||v.imageName||v.title} onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'visualCard mediaVisual imageVisual '+responsiveSizeClass+(selected?' selected':'')+(v.hidden?' authorHidden':'')} style={{...style,display:'flex',flexDirection:'column'}}>
+    {displayFormat.showTitle&&<div className="visualTitle visualMoveZone"><div className="visualTitleText"><span style={titleTextStyle}>{v.title}</span>{displayFormat.subtitleVisible&&displayFormat.subtitle&&<small style={subtitleTextStyle}>{displayFormat.subtitle}</small>}</div>{displayFormat.visualHeader!==false&&menuNode}</div>}
+    {!displayFormat.showTitle&&displayFormat.visualHeader!==false&&<div className="visualHeaderOnly">{menuNode}</div>}
+    <div className="mediaVisualBody">{v.imageSrc?<img src={v.imageSrc} alt={displayFormat.altText||v.imageName||''} draggable={false} style={{objectFit:displayFormat.imageFit||'contain',opacity:(displayFormat.imageOpacity??100)/100}}/>:<div className="mediaVisualEmpty"><ImageIcon size={28}/><span>Select this visual and choose an image</span></div>}</div>
+  </div>;
+  if(v.type==='shape')return <div role="img" aria-label={displayFormat.altText||`${displayFormat.shapeType||'rectangle'} shape`} onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'shapeObject '+responsiveSizeClass+(v.hidden?' authorHidden':'')} style={{visibility:v.hidden?'hidden':'visible'}}><ShapeArtwork format={displayFormat}/></div>;
+  if(v.type==='button')return <div role="group" aria-label={v.format.altTextEnabled&&v.format.altText?v.format.altText:(v.buttonLabel||'Action Button')} onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'visualCard buttonVisualContainer '+responsiveSizeClass+(selected?' selected':'')+(v.hidden?' authorHidden':'')+(v.format.showTitle?' buttonTitleVisible':' buttonTitleHidden')} style={{...style,display:'flex',flexDirection:'column'}}>
+    {displayFormat.showTitle&&<div className="visualTitle visualMoveZone"><div className="visualTitleText"><span style={titleTextStyle}>{v.title}</span>{displayFormat.subtitleVisible&&displayFormat.subtitle&&<small style={subtitleTextStyle}>{displayFormat.subtitle}</small>}</div>{displayFormat.visualHeader!==false&&menuNode}</div>}
+    {!displayFormat.showTitle&&displayFormat.visualHeader!==false&&<div className="visualHeaderOnly">{menuNode}</div>}
+    <button type="button" aria-pressed={displayFormat.buttonSelectionEnabled!==false?actionSelected:undefined} title="Click to select and run the action. Ctrl+click only selects the visual." onClick={e=>{e.stopPropagation();onSelect(e.ctrlKey||e.metaKey||e.shiftKey);if(!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&(displayFormat.buttonSelectionEnabled!==false||(v.action&&v.action.type!=='none')))onAction(v)}} className={'reportActionButton authoringActionButton buttonVisualOnly'+(actionSelected?' actionSelected':'')} style={{flex:1,background:actionSelected?(displayFormat.buttonSelectedBackground||'#16a34a'):(displayFormat.buttonBackground||'#6b7280'),color:actionSelected?(displayFormat.buttonSelectedTextColor||'#ffffff'):(displayFormat.buttonTextColor||'#ffffff'),fontSize:displayFormat.buttonFontSize||12,borderRadius:displayFormat.buttonCornerRadius??6,border:displayFormat.buttonBorderVisible?'1px solid '+(actionSelected?(displayFormat.buttonSelectedBorderColor||'#15803d'):(displayFormat.buttonBorderColor||'#4b5563')):'none'}}><MousePointerClick size={16}/>{v.buttonLabel||'Action Button'}</button>
+  </div>;
+
+  if(v.type==='slicer'){
+    const axis=v.bindings.axis?.[0]||'';
+    const mode=v.slicerStyle||'list';
+    const allOptions=rows.map(r=>String(r[axis])).filter((x,i,a)=>x&&a.indexOf(x)===i);
+    const options=allOptions.filter(option=>!slicerSearch||option.toLowerCase().includes(slicerSearch.toLowerCase()));
+    const apply=(next:string[], isSelectAll?: boolean)=>{
+      setSlicerSelected(next);
+      if (isSelectAll || !next.length) {
+        onSlicer(null);
+      } else {
+        onSlicer({field:axis,operator:next.length===1?'equals':'in',value:next.length===1?next[0]:next});
+      }
+    };
+    const choose=(val:string)=>{const next=v.format.slicerSingleSelect?[val]:slicerSelected.includes(val)?slicerSelected.filter(x=>x!==val):[...slicerSelected,val];apply(next)};
+
+    const tilesPerRow=v.format.tilesPerRow||3;
+    const tilesPerColumn=v.format.tilesPerColumn||0;
+    const gridStyle:any={gridTemplateColumns:`repeat(${tilesPerRow}, 1fr)`};
+    if(tilesPerColumn>0)gridStyle.gridTemplateRows=`repeat(${tilesPerColumn}, 1fr)`;
+    const allSelected=allOptions.length>0&&allOptions.every(option=>slicerSelected.includes(option));
+    const slicerStyle:any={...style,'--slicer-font':displayFormat.tableFontFamily||'Segoe UI','--slicer-text':displayFormat.tableTextColor||'#242424','--slicer-size':`${displayFormat.tableFontSize||11}px`,'--slicer-weight':displayFormat.tableTextBold?700:400,'--slicer-style':displayFormat.tableTextItalic?'italic':'normal','--slicer-wrap':displayFormat.tableTextWrap?'normal':'nowrap','--slicer-align':displayFormat.tableTextAlign||'left','--slicer-bg':displayFormat.tableBackground||'#ffffff','--slicer-alt':displayFormat.tableAlternatingRows===false?(displayFormat.tableBackground||'#ffffff'):(displayFormat.tableAlternateColor||'#f8fafc'),'--slicer-row-padding':`${displayFormat.tableRowPadding??8}px`};
+    return <div role="group" aria-label={v.format.altTextEnabled&&v.format.altText?v.format.altText:v.title} onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'visualCard slicerVisual '+responsiveSizeClass+(selected?' selected':'')+(menu?' menuOpen':'')} style={slicerStyle}>
+      {designerHandle}
+      {displayFormat.showTitle&&<div className="visualTitle visualMoveZone"><div className="visualTitleText"><span style={titleTextStyle}>{v.title}</span>{displayFormat.subtitleVisible&&displayFormat.subtitle&&<small style={subtitleTextStyle}>{displayFormat.subtitle}</small>}</div>{displayFormat.visualHeader!==false&&menuNode}</div>}
+      {!v.format.showTitle&&v.format.visualHeader!==false&&<div className="visualHeaderOnly">{menuNode}</div>}
+      {v.format.slicerSearch&&<input className="slicerSearchInput" value={slicerSearch} onChange={e=>setSlicerSearch(e.target.value)} onMouseDown={e=>e.stopPropagation()} placeholder="Search values" aria-label="Search slicer values"/>}
+      {mode==='dropdown'?v.format.slicerMultiSelect?<div className="slicerDropdownMulti" style={{background:v.format.tableBackground||'#ffffff',color:v.format.tableTextColor||'#242424',fontSize:v.format.tableFontSize||11,textAlign:(v.format.tableTextAlign as any)||'left'}}>{v.format.slicerSelectAll&&<label className="slicerListItem" style={{borderBottom:'1px solid #e2e8f0',marginBottom:4,paddingBottom:4}}><input type="checkbox" checked={allSelected} onChange={e=>{e.stopPropagation();apply(allSelected?[]:allOptions,!allSelected)}}/><span>Select all</span></label>}{options.map(val=><label key={val} className="slicerListItem"><input type="checkbox" checked={slicerSelected.includes(val)} onChange={e=>{e.stopPropagation();choose(val)}}/><span>{val}</span></label>)}</div>:<select className="slicerDropdown" style={{color:v.format.tableTextColor,fontSize:v.format.tableFontSize,background:v.format.tableBackground,textAlign:v.format.tableTextAlign}} value={allSelected ? '__all__' : slicerSelected[0]||''} onChange={e=>{if(e.target.value==='__all__'){apply(allOptions, true)}else if(e.target.value){apply([e.target.value])}else{apply([])}}}><option value="" style={{background:v.format.tableBackground||'#ffffff',color:v.format.tableTextColor||'inherit'}}>Select…</option>{v.format.slicerSelectAll&&<option value="__all__" style={{background:v.format.tableBackground||'#ffffff',color:v.format.tableTextColor||'inherit'}}>Select all</option>}{options.map(val=><option key={val} value={val} style={{background:v.format.tableBackground||'#ffffff',color:v.format.tableTextColor||'inherit'}}>{val}</option>)}</select>:mode==='list'?<div className={'slicerList slicer-list orientation-'+(v.format.slicerOrientation||'vertical')} style={{'--slicer-text':v.format.tableTextColor||'#242424','--slicer-size':`${v.format.tableFontSize||11}px`,'--slicer-bg':v.format.tableBackground||'#ffffff','--slicer-alt':v.format.tableAlternatingRows===false?(v.format.tableBackground||'#ffffff'):(v.format.tableAlternateColor||'#f8fafc'),textAlign:v.format.tableTextAlign} as any}>{v.format.slicerSelectAll&&!v.format.slicerSingleSelect&&<label className="slicerListItem"><input type="checkbox" checked={allSelected} onChange={e=>{e.stopPropagation();apply(allSelected?[]:allOptions, !allSelected)}}/><span>Select all</span></label>}{options.map(val=><label key={val} className="slicerListItem"><input type={(v.format.slicerSingleSelect||!v.format.slicerMultiSelect)?'radio':'checkbox'} checked={slicerSelected.includes(val)} onChange={e=>{e.stopPropagation();choose(val)}}/><span>{val}</span></label>)}</div>:<div className={'slicerList slicer-'+mode+' orientation-'+(v.format.slicerOrientation||'vertical')} style={{...(mode==='button'?gridStyle:{}),'--slicer-text':v.format.tableTextColor||'#242424','--slicer-size':`${v.format.tableFontSize||11}px`,'--slicer-bg':v.format.tableBackground||'#ffffff','--slicer-alt':v.format.tableAlternateColor||'#f8fafc',textAlign:v.format.tableTextAlign} as any}>{v.format.slicerSelectAll&&!v.format.slicerSingleSelect&&<button className={allSelected?'active':''} style={{borderRadius:v.format.slicerCornerRadius??6}} onClick={e=>{e.stopPropagation();apply(allSelected?[]:allOptions, !allSelected)}}>Select all</button>}{options.map(val=><button key={val} className={slicerSelected.includes(val)?'active':''} style={{borderRadius:v.format.slicerCornerRadius??6}} onClick={e=>{e.stopPropagation();choose(val)}}>{val}</button>)}</div>}
+    </div>
+  }
+  const card=<div role="group" aria-label={displayFormat.altTextEnabled&&displayFormat.altText?displayFormat.altText:v.title} onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'visualCard premiumVisualCard '+responsiveSizeClass+(selected?' selected':'')+(menu?' menuOpen':'')} style={{...style, display:'flex', flexDirection:'column'}}>{designerHandle}{displayFormat.showTitle&&<div className="visualTitle visualMoveZone"><div className="visualTitleText">{drillPath.length>0&&<span className="drillPath">{drillPath}</span>}<span style={titleTextStyle}>{v.title}</span>{displayFormat.subtitleVisible&&displayFormat.subtitle&&<small style={subtitleTextStyle}>{displayFormat.subtitle}</small>}</div>{displayFormat.visualHeader!==false&&menuNode}</div>}{!displayFormat.showTitle&&displayFormat.visualHeader!==false&&<div className="visualHeaderOnly">{menuNode}</div>}<div className="visualBody" style={{paddingTop:displayFormat.paddingTop??displayFormat.padding??8,paddingRight:displayFormat.paddingRight??displayFormat.padding??8,paddingBottom:displayFormat.paddingBottom??displayFormat.padding??8,paddingLeft:displayFormat.paddingLeft??displayFormat.padding??8, flex:1, minHeight:0, display:'flex', flexDirection:'column'}}>{err?<div className="empty compact">{err}</div>:!hasDataBindings?<div className="visualEmpty"><Sparkles size={20}/><b>Add data to this visual</b><span>Choose a field in Data or drag it to a field well.</span></div>:<Chart visual={displayVisual} rows={rows} conditionalValues={conditionalValues} onPointClick={handlePointClick}/>}</div></div>;
+  const overlay=(focus||showData)&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>{setFocus(false);setShowData(false)}}><div className="visualFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>{showData?'UNDERLYING DATA':'FOCUS MODE'}</small><b>{drillPath.length>0&&<span className="drillPath" style={{marginRight:8}}>{drillPath}</span>}{v.title}</b></div><button onClick={()=>{setFocus(false);setShowData(false)}}>Close</button></div><div className="visualFocusBody">{err?<div className="empty compact">{err}</div>:showData?<div className="underlyingDataTable"><table><thead><tr>{rows.length&&Object.keys(rows[0]).map(c=><th key={c}>{c}</th>)}</tr></thead><tbody>{rows.slice(0,500).map((r,i)=><tr key={i}>{Object.keys(r).map(c=><td key={c}>{String(r[c]??'')}</td>)}</tr>)}</tbody></table></div>:<Chart visual={displayVisual} rows={rows} conditionalValues={conditionalValues} onPointClick={handlePointClick}/>}</div></div></div>,document.body);
   return <>{card}{overlay}</>;
 }
 
 function Fields({project,onCollapse,onAutoBind,selectedBindings}:{project:any,onCollapse?:()=>void,onAutoBind?:(payload:string)=>void,selectedBindings?:Visual['bindings']}){
   const{setView}=useStudio();const[search,setSearch]=useState('');const start=(e:any,payload:string)=>beginReportFieldDrag(payload,e);
   const hierarchies=project.model.hierarchies||[];
-  const boundFields=new Set(['axis','values','target','tooltips','legend'].flatMap(k=>(selectedBindings as any)?.[k]||[]));
+  const boundFields=new Set(['axis','values','target','tooltips','legend','min','max'].flatMap(k=>(selectedBindings as any)?.[k]||[]));
   const isNumericCol=(t:string,c:string)=>{
     const typ=String(project.model.columnTypes?.[`${t}.${c}`]||'').toLowerCase();
     return /^(u?int\d*|integer|bigint|smallint|tinyint|float\d*|double|double precision|decimal|numeric|number|real|money|currency)$/.test(typ)
       ||/(amount|revenue|cost|qty|quantity|price|points|number|count|total|target|latitude|longitude|salary|age|score|rate|percent|ratio|value|weight|height|budget|spend|profit|loss|sales|units|days)/i.test(c);
   };
   const measures=Object.keys(project.model.measures||{}).filter(m=>m.toLowerCase().includes(search.toLowerCase()));
-  return <div className="fieldsPane advancedFields"><div className="paneTitle"><span>Data</span><small>{Object.keys(project.model.tables).length} tables</small>{onCollapse&&<button className="dockCollapseButton" title="Collapse Data pane" onClick={onCollapse}><PanelRightClose size={14}/></button>}</div><input className="fieldSearch" placeholder="Search data" value={search} onChange={e=>setSearch(e.target.value)}/>{Object.entries<any>(project.model.tables).filter(([t,x])=>{if(!search)return true;const s=search.toLowerCase();return t.toLowerCase().includes(s)||hierarchies.some((h:any)=>h.table===t&&h.name.toLowerCase().includes(s))||Object.keys(x.columns).some(c=>(t+c).toLowerCase().includes(s));}).map(([t,x])=>{const s=search.toLowerCase();const match=t.toLowerCase().includes(s);return <details key={t} open={!!search}><summary><span className="tableGlyph">T</span><b className="tableName">{t}</b></summary>{hierarchies.filter((h:any)=>h.table===t&&(match||h.name.toLowerCase().includes(s))).map((h:any)=><div onPointerDown={e=>start(e,'hierarchy:'+h.id)} onMouseDown={e=>start(e,'hierarchy:'+h.id)} className="field hierarchyField" key={h.id}><GitBranch size={13}/><div><b>{h.name}</b><small>{h.levels.map((l:any)=>l.name).join(' › ')}</small></div></div>)}{Object.keys(x.columns).filter(c=>match||(t+c).toLowerCase().includes(s)).map(c=>{const numeric=isNumericCol(t,c);const colType=project.model.columnTypes?.[`${t}.${c}`];const isDate=colType==='date';const prefix=numeric?'numericField:':'field:';const payload=prefix+t+'.'+c;const typeLabel=isDate?'D':numeric?'#':'Aa';const isBound=boundFields.has(t+'.'+c);const cls='field'+(numeric?' numericField':'')+(isBound?' boundField':'');return <div role="button" tabIndex={0} title="Click to add automatically, or drag to a field well" onClick={()=>onAutoBind?.(payload)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onAutoBind?.(payload)}}} onPointerDown={e=>start(e,payload)} onMouseDown={e=>start(e,payload)} className={cls} key={c}><span className="fieldCheck">{isBound?'✓':''}</span><span className={'fieldType '+(isDate?'dateType':numeric?'numberType':'textType')}>{typeLabel}</span><span className="fieldName">{c}</span></div>})}</details>})}<details open><summary><span className="measureGlyph">Σ</span><b>Measures</b><small>{Object.keys(project.model.measures||{}).length}</small></summary>{measures.map(m=>{const isBound=boundFields.has(m);return <div role="button" tabIndex={0} title="Click to add automatically, or drag to a field well" onClick={()=>onAutoBind?.('measure:'+m)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onAutoBind?.('measure:'+m)}}} onPointerDown={e=>start(e,'measure:'+m)} onMouseDown={e=>start(e,'measure:'+m)} className={'field measure'+(isBound?' boundField':'')} key={m}><span className="fieldCheck">{isBound?'✓':''}</span><span>∑</span>{m}</div>})}{!Object.keys(project.model.measures||{}).length&&<div className="measuresEmptyState"><b>No measures yet</b><span>Create and validate a measure before adding it to a visual.</span><button onClick={()=>setView('measures')}>Create a measure</button></div>}</details></div>;
+  return <div className="fieldsPane advancedFields"><div className="paneTitle"><span>Data</span><small>{Object.keys(project.model.tables).length} tables</small>{onCollapse&&<button className="dockCollapseButton" title="Collapse Data pane" onClick={onCollapse} aria-label="Action"><PanelRightClose size={14}/></button>}</div><input className="fieldSearch" placeholder="Search data" value={search} onChange={e=>setSearch(e.target.value)}/>{Object.entries<any>(project.model.tables).filter(([t,x])=>{const query=search.toLowerCase();if(!query)return true;if(t.toLowerCase().includes(query))return true;if(hierarchies.some((h:any)=>h.table===t&&h.name.toLowerCase().includes(query)))return true;if(Object.keys(x.columns).some(c=>(t+c).toLowerCase().includes(query)))return true;return false;}).map(([t,x])=>{const query=search.toLowerCase();const tableMatches=t.toLowerCase().includes(query);return <details key={t} open={!!search}><summary><span className="tableGlyph">T</span><b className="tableName">{t}</b></summary>{hierarchies.filter((h:any)=>h.table===t&&(tableMatches||!search||h.name.toLowerCase().includes(query))).map((h:any)=><div onPointerDown={e=>start(e,'hierarchy:'+h.id)} onMouseDown={e=>start(e,'hierarchy:'+h.id)} className="field hierarchyField" key={h.id}><GitBranch size={13}/><div><b>{h.name}</b><small>{h.levels.map((l:any)=>l.name).join(' › ')}</small></div></div>)}{Object.keys(x.columns).filter(c=>tableMatches||!search||(t+c).toLowerCase().includes(query)).map(c=>{const numeric=isNumericCol(t,c);const colType=project.model.columnTypes?.[`${t}.${c}`];const isDate=colType==='date'||colType==='datetime'||colType==='timestamp';const prefix=numeric?'numericField:':'field:';const payload=prefix+t+'.'+c;const typeLabel=isDate?'D':numeric?'#':'Aa';const isBound=boundFields.has(t+'.'+c);const cls='field'+(numeric?' numericField':'')+(isBound?' boundField':'');
+if (isDate) {
+  const parts = ['Year', 'Quarter', 'Month', 'Day'];
+  return (
+    <details key={c} className="dateHierarchyDetails">
+      <summary>
+        <ChevronRight size={14} className="date-caret" />
+        <div className={cls} onClick={(e)=>{e.preventDefault();onAutoBind?.(payload)}} onPointerDown={e=>start(e,payload)} onMouseDown={e=>start(e,payload)}>
+          <span className="fieldCheck">{isBound?'✓':''}</span>
+          <span className="fieldType dateType">{typeLabel}</span>
+          <span className="fieldName">{c}</span>
+        </div>
+      </summary>
+      <details open className="dateHierarchyDetailsInner">
+        <summary>
+          <ChevronRight size={14} className="date-caret" />
+          <div className="field hierarchyField" style={{border: 'none'}}>
+            <GitBranch size={13} />
+            <span className="fieldName">Date Hierarchy</span>
+          </div>
+        </summary>
+        <div className="dateHierarchyChildren">
+          {parts.map(p => {
+             const subPayload = payload + '::' + p;
+             const isSubBound = boundFields.has(t+'.'+c+'::'+p);
+             const subCls = 'field' + (isSubBound ? ' boundField' : '');
+             return <div role="button" tabIndex={0} key={p} className={subCls} onPointerDown={e=>start(e,subPayload)} onMouseDown={e=>start(e,subPayload)} onClick={()=>onAutoBind?.(subPayload)}>
+               <span className="fieldCheck">{isSubBound?'✓':''}</span>
+               <span className="fieldType" style={{opacity: 0}} />
+               <span className="fieldName">{p}</span>
+             </div>
+           })}
+        </div>
+      </details>
+    </details>
+  )
 }
-function Well({title,items,onDrop,onRemove,onMove,accept}:{title:string,items:string[],onDrop:(v:string)=>void,onRemove:(v:string)=>void,onMove:(v:string,direction:-1|1)=>void,accept:'field'|'measure'|'value'}){
+return <div role="button" tabIndex={0} title="Click to add automatically, or drag to a field well" onClick={()=>onAutoBind?.(payload)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onAutoBind?.(payload)}}} onPointerDown={e=>start(e,payload)} onMouseDown={e=>start(e,payload)} className={cls} key={c}><span className="fieldCheck">{isBound?'✓':''}</span><span className={'fieldType '+(isDate?'dateType':numeric?'numberType':'textType')}>{typeLabel}</span><span className="fieldName">{c}</span></div>
+})}</details>})}<details open><summary><span className="measureGlyph">Σ</span><b>Measures</b><small>{Object.keys(project.model.measures||{}).length}</small></summary>{measures.map(m=>{const isBound=boundFields.has(m);return <div role="button" tabIndex={0} title="Click to add automatically, or drag to a field well" onClick={()=>onAutoBind?.('measure:'+m)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onAutoBind?.('measure:'+m)}}} onPointerDown={e=>start(e,'measure:'+m)} onMouseDown={e=>start(e,'measure:'+m)} className={'field measure'+(isBound?' boundField':'')} key={m}><span className="fieldCheck">{isBound?'✓':''}</span><span>∑</span>{m}</div>})}{!Object.keys(project.model.measures||{}).length&&<div className="measuresEmptyState"><b>No measures yet</b><span>Create and validate a measure before adding it to a visual.</span><button onClick={()=>setView('measures')}>Create a measure</button></div>}</details></div>;
+}
+function Well({title,items,onDrop,onRemove,onMove,onRename,displayNames,accept,visualType,wellKey,isNumericField,isMeasureField}:{title:string,items:string[],onDrop:(v:string)=>void,onRemove:(v:string)=>void,onMove:(v:string,direction:-1|1)=>void,onRename?:(v:string,name:string)=>void,displayNames?:Record<string,string>,accept:'field'|'measure'|'value',visualType?:string,wellKey?:string,isNumericField?:(f:string)=>boolean,isMeasureField?:(f:string)=>boolean}){
   const ref=useRef<HTMLDivElement|null>(null);
+  const [menu, setMenu] = useState<{x:string,rect:DOMRect}|null>(null);
+  const [editing, setEditing] = useState<string|null>(null);
   const hint=accept==='measure'?'measure or numeric column':accept==='value'?'measure or numeric column':'field';
   const commit=(raw:string)=>{if(!raw)return;const now=Date.now();if(reportFieldLastDropRaw===raw&&now-reportFieldLastDropAt<180)return;reportFieldLastDropRaw=raw;reportFieldLastDropAt=now;const[prefix,...rest]=raw.split(':');const payload=rest.join(':');
     if(accept==='value'&&(prefix==='measure'||prefix==='numericField'||prefix==='field'))onDrop(payload);
@@ -403,10 +702,84 @@ function Well({title,items,onDrop,onRemove,onMove,accept}:{title:string,items:st
     else if(accept==='measure'&&(prefix==='measure'||prefix==='numericField'))onDrop(payload);
   };
   useEffect(()=>{const el=ref.current;if(!el)return;const handler=(e:Event)=>{commit((e as CustomEvent<{raw:string}>).detail?.raw||'')};el.addEventListener('vtab-report-field-drop',handler);return()=>el.removeEventListener('vtab-report-field-drop',handler)});
-  return <div ref={ref} data-report-field-drop="true" className="well dropWell" onPointerUp={e=>{if(reportFieldDragPayload){e.preventDefault();commit(reportFieldDragPayload);clearReportFieldDragPayload()}}} onMouseUp={e=>{if(reportFieldDragPayload){e.preventDefault();commit(reportFieldDragPayload);clearReportFieldDragPayload()}}} onDragEnter={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'}} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'}} onDrop={e=>{e.preventDefault();commit(e.dataTransfer.getData('application/x-vtab-field')||e.dataTransfer.getData('text/plain')||reportFieldDragPayload);clearReportFieldDragPayload()}}><div className="wellLabel"><span>{title}</span><small>{items.length}</small></div>{items.map((x,i)=><b key={x}><span>{x}</span><span className="wellItemActions"><button disabled={i===0} title="Move up" onClick={e=>{e.stopPropagation();onMove(x,-1)}}>↑</button><button disabled={i===items.length-1} title="Move down" onClick={e=>{e.stopPropagation();onMove(x,1)}}>↓</button><button title="Remove field" onClick={e=>{e.stopPropagation();onRemove(x)}}>×</button></span></b>)}{!items.length&&<em>Drop {hint} here</em>}</div>;
+  useEffect(() => {
+    if(!menu)return;
+    const close=()=>setMenu(null);
+    document.addEventListener('pointerdown',close);
+    return()=>document.removeEventListener('pointerdown',close);
+  }, [menu]);
+  const selectAggregation = (x: string, suffix: string) => {
+    const core = x.split('::')[0];
+    const newField = suffix ? `${core}::${suffix}` : core;
+    onDrop(newField); 
+    onRemove(x);
+    setMenu(null);
+  };
+  // Show aggregation dropdown for: (a) value/measure wells, OR (b) table axis well with a numeric/integer column
+  const showDropdownForField = (x: string): boolean => {
+    if (accept === 'value' || accept === 'measure') return true;
+    if (visualType === 'table' && wellKey === 'axis' && isNumericField) {
+      return isNumericField(x);
+    }
+    return false;
+  };
+  // For table axis numeric fields: determine current state (no suffix = "do not summarise")
+  const isTableAxisNumeric = (x: string) => visualType === 'table' && wellKey === 'axis' && isNumericField && isNumericField(x);
+  const isTableMeasure = (x: string) => visualType === 'table' && isMeasureField && isMeasureField(x);
+  return <div ref={ref} data-report-field-drop="true" className="well dropWell" onPointerUp={e=>{if(reportFieldDragPayload){e.preventDefault();commit(reportFieldDragPayload);clearReportFieldDragPayload()}}} onMouseUp={e=>{if(reportFieldDragPayload){e.preventDefault();commit(reportFieldDragPayload);clearReportFieldDragPayload()}}} onDragEnter={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'}} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'}} onDrop={e=>{e.preventDefault();commit(e.dataTransfer.getData('application/x-vtab-field')||e.dataTransfer.getData('text/plain')||reportFieldDragPayload);clearReportFieldDragPayload()}}>
+    <div className="wellLabel"><span>{title}</span><small>{items.length}</small></div>
+    {items.map((x,i)=>{
+      const isAggr = accept==='value' || accept==='measure';
+      const core = x.split('::')[0];
+      const currentAgg = x.split('::')[1] || (isAggr ? 'sum' : '');
+      const tableAxisNum = isTableAxisNumeric(x);
+      const tableAxisAgg = x.split('::')[1];
+      // Label: for table axis numeric, show aggregation prefix if set, otherwise show field name (Do not summarise)
+      let fieldLabel = (tableAxisNum || isTableMeasure(x)) ? (tableAxisAgg && !isTableMeasure(x) ? `${tableAxisAgg} of ${core}` : core) : (x.includes('::') && !isMeasureField?.(x) ? `${currentAgg} of ${core}` : core); if (displayNames && displayNames[x]) fieldLabel = displayNames[x]; return <b key={x}>{editing===x ? <input type="text" autoFocus defaultValue={displayNames?.[x]||fieldLabel} placeholder={core} onKeyDown={e=>{if(e.key==="Enter"){onRename?.(x,e.currentTarget.value);setEditing(null)}}} onBlur={e=>{onRename?.(x,e.currentTarget.value);setEditing(null)}} onClick={e=>e.stopPropagation()} onDoubleClick={e=>e.stopPropagation()} style={{width:"100%",background:"transparent",border:"none",outline:"none",fontSize:11,margin:0,padding:0,color:"inherit"}} /> : <span onDoubleClick={(e)=>{e.stopPropagation();if(onRename)setEditing(x)}} style={{cursor:"text",flex:1,overflow:"hidden",textOverflow:"ellipsis",userSelect:"none"}}>{fieldLabel}</span>}<span className="wellItemActions"><button title="Field options" onClick={e=>{e.stopPropagation();setMenu({x,rect:e.currentTarget.getBoundingClientRect()})}}><ChevronDown size={12}/></button><button disabled={i===0} title="Move up" onClick={e=>{e.stopPropagation();onMove(x,-1)}}> </button><button disabled={i===items.length-1} title="Move down" onClick={e=>{e.stopPropagation();onMove(x,1)}}> </button><button title="Remove field" onClick={e=>{e.stopPropagation();onRemove(x)}}>x</button></span></b>; })} {!items.length&&<em>Drop {hint} here</em>} {menu && createPortal(<div className="fieldOptionsDropdown" style={{top: menu.rect.bottom + 300 > window.innerHeight ? menu.rect.top - 230 : menu.rect.bottom, left: menu.rect.left - 100}} onPointerDown={e=>e.stopPropagation()}> {onRename && <div style={{padding:'8px 12px', borderBottom:'1px solid #e2e8f0', marginBottom:4}}><label style={{display:'block', fontSize:11, color:'#64748b', marginBottom:4}}>Display name</label><input type="text" autoFocus defaultValue={displayNames?.[menu.x] || ''} placeholder={menu.x.split('::')[0]} onKeyDown={e=>{if(e.key==='Enter'){onRename(menu.x, e.currentTarget.value);setMenu(null);}}} onBlur={e=>{onRename(menu.x, e.currentTarget.value);}} style={{width:'100%', boxSizing:'border-box', border:'1px solid #cbd5e1', borderRadius:4, padding:'4px 8px', fontSize:12, outline:'none'}} /></div>} {showDropdownForField(menu.x) && <><div style={{padding:'4px 8px', fontSize:10, color:'#64748b', fontWeight:600}}>{isTableAxisNumeric(menu.x) || isTableMeasure(menu.x) ? 'SUMMARIZATION' : 'AGGREGATION'}</div>
+         {(isTableAxisNumeric(menu.x) || isTableMeasure(menu.x)) && <button className={(!menu.x.includes('::') || isTableMeasure(menu.x))?'active':''} onClick={()=>selectAggregation(menu.x, '')}>Don&apos;t summarize</button>}
+         <button disabled={isTableMeasure(menu.x)} className={(!isTableAxisNumeric(menu.x)&&!isTableMeasure(menu.x)&&(!menu.x.includes('::')||menu.x.endsWith('::sum')))||(isTableAxisNumeric(menu.x)&&menu.x.endsWith('::sum'))?'active':''} onClick={()=>selectAggregation(menu.x, 'sum')}>Sum</button>
+         <button disabled={isTableMeasure(menu.x)} className={menu.x.endsWith('::average')?'active':''} onClick={()=>selectAggregation(menu.x, 'average')}>Average</button>
+         <button disabled={isTableMeasure(menu.x)} className={menu.x.endsWith('::min')?'active':''} onClick={()=>selectAggregation(menu.x, 'min')}>Minimum</button>
+         <button disabled={isTableMeasure(menu.x)} className={menu.x.endsWith('::max')?'active':''} onClick={()=>selectAggregation(menu.x, 'max')}>Maximum</button>
+         <button disabled={isTableMeasure(menu.x)} className={menu.x.endsWith('::count')?'active':''} onClick={()=>selectAggregation(menu.x, 'count')}>Count</button>
+         <button disabled={isTableMeasure(menu.x)} className={menu.x.endsWith('::count_distinct')?'active':''} onClick={()=>selectAggregation(menu.x, 'count_distinct')}>Count (Distinct)</button></>}</div>,
+      document.body
+    )}
+  </div>;
 }
 function Section({title,icon,children,open=false}:{title:string,icon?:any,children:any,open?:boolean}){return <details className="formatSection" open={open} onToggle={e=>{if(e.currentTarget.open)requestAnimationFrame(()=>e.currentTarget.scrollIntoView({block:'nearest',behavior:'smooth'}))}}><summary>{icon}{title}<span>⌄</span></summary><div className="formatSectionBody">{children}</div></details>}
 function Toggle({label,value,onChange}:{label:string,value:boolean,onChange:(v:boolean)=>void}){return <label className="switchRow"><span>{label}</span><input type="checkbox" checked={value} onChange={e=>onChange(e.target.checked)}/></label>}
+function CustomActionSteps({visual,page,updateVisual}:{visual:Visual,page:Page,updateVisual:(fn:(v:Visual)=>void)=>void}){
+  const steps=visual.action?.steps||[];
+  const groups=Array.from(new Set(page.visuals.map(item=>item.groupId?.trim()).filter(Boolean) as string[]));
+  const save=(next:VisualActionStep[])=>updateVisual(v=>v.action={...(v.action||{}),type:'custom',steps:next});
+  const change=(index:number,changes:Partial<VisualActionStep>)=>save(steps.map((step,i)=>i===index?{...step,...changes}:step));
+  return <div className="customActionSteps"><div className="formatHint">All configured steps run together from one button click.</div>{steps.map((step,index)=><div className="customActionStep" key={index}>
+    <select aria-label="Operation" value={step.operation} onChange={e=>change(index,{operation:e.target.value as VisualActionStep['operation']})}><option value="show">Show</option><option value="hide">Hide</option><option value="toggle">Toggle</option></select>
+    <select aria-label="Target type" value={step.targetType} onChange={e=>change(index,{targetType:e.target.value as VisualActionStep['targetType'],targetId:''})}><option value="visual">Visual</option><option value="group">Group</option></select>
+    <select aria-label="Target" value={step.targetId} onChange={e=>change(index,{targetId:e.target.value})}><option value="">Select target</option>{step.targetType==='group'?groups.map(group=><option key={group} value={group}>{group}</option>):page.visuals.filter(item=>item.id!==visual.id).map(item=><option key={item.id} value={item.id}>{item.title||visualLabels[item.type]}</option>)}</select>
+    <button title="Remove action" onClick={()=>save(steps.filter((_,i)=>i!==index))}>×</button>
+  </div>)}{!steps.length&&<div className="customActionEmpty">No steps yet. Add a Show, Hide, or Toggle step.</div>}<button className="addActionStep" onClick={()=>save([...steps,{operation:'show',targetType:'visual',targetId:''}])}>+ Add action step</button></div>;
+}
+function ButtonActionEditor({visual,page,pages,updateVisual}:{visual:Visual,page:Page,pages:Page[],updateVisual:(fn:(v:Visual)=>void)=>void}){
+  const action=visual.action||{type:'none'};
+  const groups=Array.from(new Set(page.visuals.map(item=>item.groupId?.trim()).filter(Boolean) as string[]));
+  const setAction=(changes:any)=>updateVisual(v=>v.action={...(v.action||{}),...changes});
+  const visualAction=['toggleVisual','showVisual','hideVisual'].includes(action.type||'');
+  const groupAction=['toggleGroup','showGroup','hideGroup'].includes(action.type||'');
+  return <Section open title="Button action" icon={<MousePointerClick size={14}/>}>
+    <Toggle label="Dynamic button label" value={action.dynamicLabel!==false} onChange={value=>setAction({dynamicLabel:value})}/>
+    <label>Button label<input value={visual.buttonLabel||''} disabled={action.dynamicLabel!==false} onChange={e=>updateVisual(v=>v.buttonLabel=e.target.value)} placeholder="Used when dynamic label is off"/></label>
+    <label>Action<select value={action.type||'none'} onChange={e=>setAction({type:e.target.value})}>
+      <option value="none">No action</option><option value="navigate">Page navigation</option><option value="showVisual">Show visual</option><option value="hideVisual">Hide visual</option><option value="toggleVisual">Toggle visual</option><option value="showGroup">Show group</option><option value="hideGroup">Hide group</option><option value="toggleGroup">Toggle group</option><option value="custom">Custom multi-action</option><option value="back">Back / previous page</option><option value="resetState">Reset page state</option>
+    </select></label>
+    {action.type==='navigate'&&<><label>Target report ID (optional)<input value={action.targetReportId||''} onChange={e=>setAction({targetReportId:e.target.value.trim()||undefined})} placeholder="Leave blank for this report"/></label>{action.targetReportId?<label>Target page ID (optional)<input value={action.targetPageId||''} onChange={e=>setAction({targetPageId:e.target.value.trim()||undefined})} placeholder="Page ID in the target report"/></label>:<label>Target page<select value={action.targetPageId||''} onChange={e=>setAction({targetPageId:e.target.value||undefined})}><option value="">Select page</option>{pages.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}</>}
+    {visualAction&&<label>Target visual<select value={action.targetVisualId||''} onChange={e=>setAction({targetVisualId:e.target.value||undefined})}><option value="">Select visual</option>{page.visuals.filter(item=>item.id!==visual.id).map(item=><option key={item.id} value={item.id}>{item.title||visualLabels[item.type]}</option>)}</select></label>}
+    {groupAction&&<label>Target group<select value={action.targetGroupId||''} onChange={e=>setAction({targetGroupId:e.target.value||undefined})}><option value="">Select group</option>{groups.map(group=><option key={group} value={group}>{group}</option>)}</select>{action.targetGroupId&&<div style={{fontSize:11,color:'#64748b',marginTop:4}}>{page.visuals.filter(item=>(item.groupId?.trim()||'')===(action.targetGroupId?.trim()||'')&&item.groupId).length} visuals in this group</div>}</label>}
+    {action.type==='custom'&&<CustomActionSteps visual={visual} page={page} updateVisual={updateVisual}/>} 
+    <div className="buttonActionPreview"><small>Preview</small><b>{resolveActionButtonLabel(visual,page,pages)}</b></div>
+  </Section>;
+}
 function ColorControl({value,onChange}:{value:string,onChange:(v:string)=>void}){return <div className="colorControl"><input type="color" value={value} onChange={e=>onChange(e.target.value)}/><input value={value} onChange={e=>onChange(e.target.value)}/></div>}
 function NumberFormatting({visual,updateVisual}:{visual:Visual,updateVisual:(fn:(v:Visual)=>void)=>void}){
   const fields=Array.from(new Set([...(visual.type==='table'||visual.type==='matrix'?(visual.bindings.axis||[]):[]),...(visual.bindings.values||[])]));const[field,setField]=useState(fields[0]||'');useEffect(()=>{if(!fields.includes(field))setField(fields[0]||'')},[fields.join('|')]);
@@ -422,16 +795,231 @@ function InlineFilterBuilder({model,onAdd}:{model:any,onAdd:(f:VisualFilter)=>vo
   const top=operator==='top_n';
   return <div className="inlineFilterBuilder"><select aria-label="Filter field" value={field} onChange={e=>setField(e.target.value)}>{fields.map(f=><option key={f}>{f}</option>)}</select><select aria-label="Filter type" value={operator} onChange={e=>{setOperator(e.target.value);setValue(e.target.value==='top_n'?'10':'')}}><option value="equals">Equals</option><option value="not_equals">Not equal</option><option value="contains">Contains</option><option value="gt">Greater than</option><option value="gte">Greater/equal</option><option value="lt">Less than</option><option value="lte">Less/equal</option><option value="top_n">Top N</option></select><input aria-label={top?'Number of items':'Filter value'} type={top?'number':'text'} min={top?1:undefined} max={top?5000:undefined} value={value} onChange={e=>setValue(e.target.value)} placeholder={top?'Number of items':'Filter value'}/>{top&&<select aria-label="Rank by" value={rankingField} onChange={e=>setRankingField(e.target.value)}><option value="">Rank by…</option>{rankingFields.map(f=><option key={f}>{f}</option>)}</select>}<button disabled={!field||value===''||(top&&!rankingField)} onClick={()=>{if(field&&value!==''&&(!top||rankingField)){onAdd({field,operator,value:top?Math.max(1,Math.min(5000,Number(value)||10)):value,rankingField:top?rankingField:undefined});setValue(top?'10':'')}}}><Plus size={12}/>Add</button></div>
 }
-function FilterList({title,filters,onRemove,model,onAdd}:{title:string,filters:VisualFilter[],onRemove:(i:number)=>void,model:any,onAdd:(f:VisualFilter)=>void}){
-  return <details className="scopeBlock" open><summary className="scopeHead"><ChevronDown size={13}/><b>{title}</b><span>{filters.length}</span></summary><div className="scopeContent"><InlineFilterBuilder model={model} onAdd={onAdd}/>{filters.map((f,i)=><div className="filterBox premiumFilter" key={i}><div><b>{f.field}</b><span>{f.operator==='top_n'?`Top ${f.value} by ${f.rankingField||'value'}`:`${f.operator} ${String(f.value)}`}</span></div><button onClick={()=>onRemove(i)}>×</button></div>)}{!filters.length&&<small>No filters configured.</small>}</div></details>;
-}
+function FilterCard({f,onRemove,onUpdate,model}: {f:VisualFilter,onRemove:()=>void,onUpdate:(f:VisualFilter)=>void,model?:any}) {
+  const hasValue = f.value!==undefined && f.value!=='' && (!Array.isArray(f.value) || f.value.length > 0);
+  const [expanded,setExpanded]=useState(!hasValue);
+  const [draft, setDraft] = useState({...f});
+  
+  useEffect(() => { setDraft({...f}) }, [f]);
 
+  const operatorLabels:Record<string,string>={'equals':'is','not_equals':'is not','contains':'contains','gt':'is greater than','gte':'is greater than or equal to','lt':'is less than','lte':'is less than or equal to','is_blank':'is blank','is_not_blank':'is not blank','starts_with':'starts with','does_not_start_with':'does not start with'};
+  const shortName = f.field.includes('.') ? f.field.split('.').slice(-1)[0] : f.field;
+  const summary = f.operator==='top_n' ? `Top ${f.value}` : f.operator==='in' ? (Array.isArray(f.value)&&f.value.length ? `is ${f.value.length>1?'multiple':f.value[0]}` : 'is (All)') : (!f.value&&f.value!==0) ? 'is (All)' : `${operatorLabels[f.operator]||f.operator} ${f.value}`;
+  
+  const filterType = draft.operator === 'top_n' ? 'top_n' : (['in_last','in_next','is_in_this'].includes(draft.operator) ? 'relative' : (draft.operator === 'in' ? 'basic' : 'advanced'));
+  const cleanKey = (f.field||'').replace(/^(field:|numericField:|hierarchy:|measure:)/, '');
+  const colType = String(model?.columnTypes?.[cleanKey] || '').toLowerCase();
+  const isDate = colType === 'date' || colType === 'datetime' || colType === 'timestamp' || colType.startsWith('date') || colType.startsWith('timestamp');
+  const fields = Object.entries<any>(model?.tables||{}).flatMap(([t,x])=>Object.keys(x.columns||{}).map(c=>`${t}.${c}`));
+  const rankingFields=[...Object.keys(model?.measures||{}),...fields.filter(field=>/int|decimal|double|float|numeric|number|money|currency/i.test(String(model?.columnTypes?.[field]||'')))];
+
+  const [distinctValues, setDistinctValues] = useState<{value:string}[]|null>(null);
+  const [basicSearch, setBasicSearch] = useState('');
+
+  useEffect(() => {
+    if (filterType === 'basic' && model && !distinctValues) {
+      api<any>('/query-snapshot', {
+        method: 'POST',
+        body: JSON.stringify({
+          project: { model },
+          dimensions: [f.field],
+          measures: [],
+          limit: 500
+        })
+      }).then(res => {
+        setDistinctValues(res.rows.map((r:any) => ({value: String(r[f.field] ?? '(Blank)')})));
+      }).catch(err => {
+        setDistinctValues([]);
+      });
+    }
+  }, [filterType, f.field, model, distinctValues]);
+
+  const handleToggleBasic = (val: string) => {
+    let current = Array.isArray(draft.value) ? [...draft.value] : (typeof draft.value==='string'&&draft.value ? draft.value.split(',') : []);
+    if (current.includes(val)) current = current.filter(x => x !== val);
+    else current.push(val);
+    setDraft({...draft, value: current});
+  };
+
+  const handleSelectAll = () => {
+    if (!distinctValues) return;
+    const all = distinctValues.map(v => v.value);
+    const current = Array.isArray(draft.value) ? draft.value : [];
+    if (current.length === all.length) setDraft({...draft, value: []});
+    else setDraft({...draft, value: all});
+  };
+
+  const isDirty = JSON.stringify(draft) !== JSON.stringify(f);
+
+  return (
+    <div className={`pbFilterCard${hasValue?' pbFilterCardActive':''}`}>
+      <div className="pbFilterCardHeader" onClick={()=>setExpanded(!expanded)}>
+        <div className="pbFilterCardMeta">
+          <span className="pbFilterCardField">{shortName}</span>
+          <span className={`pbFilterCardSummary${hasValue?' pbFilterCardSummaryActive':''}`}>{summary}</span>
+        </div>
+        <div className="pbFilterCardActions">
+          <button className="pbFilterCardRemove" title="Remove filter" onClick={e=>{e.stopPropagation();onRemove()}}><X size={12}/></button>
+          <ChevronDown size={13} style={{transform:expanded?'rotate(180deg)':'none',transition:'0.2s',flexShrink:0,color:'#605e5c'}}/>
+        </div>
+      </div>
+      {expanded && <div className="pbFilterCardBody">
+        <label className="pbFilterLabel">Filter type <Info size={12}/></label>
+        <select className="pbFilterSelect" value={filterType} onChange={e=>{
+          const type = e.target.value;
+          if (type === 'top_n') setDraft({...draft, operator: 'top_n', value: '10', condition: undefined, operator2: undefined, value2: undefined});
+          else if (type === 'basic') setDraft({...draft, operator: 'in', value: [], condition: undefined, operator2: undefined, value2: undefined});
+          else if (type === 'relative') setDraft({...draft, operator: 'in_last', value: '30', value2: 'days', condition: undefined, operator2: undefined, rankingField: undefined});
+          else setDraft({...draft, operator: 'equals', value: '', rankingField: undefined});
+        }}>
+          <option value="basic">Basic filtering</option>
+          <option value="advanced">Advanced filtering</option>
+          <option value="top_n">Top N</option>
+          {isDate && <option value="relative">Relative date/time</option>}
+        </select>
+        
+        {filterType === 'basic' && <>
+          <div className="pbFilterSearchWrap">
+             <Search size={12} className="pbFilterSearchIcon"/>
+             <input type="text" className="pbFilterSearchInput" placeholder="Search" value={basicSearch} onChange={e=>setBasicSearch(e.target.value)} />
+          </div>
+          <div className="pbFilterList">
+            <label className="pbFilterCheckboxItem"><input type="checkbox" checked={!!(distinctValues && Array.isArray(draft.value) && draft.value.length === distinctValues.length && distinctValues.length > 0)} onChange={handleSelectAll}/><span>Select all</span></label>
+            {!distinctValues ? <div style={{padding:8,fontSize:12}}>Loading...</div> : distinctValues.filter(x => x.value.toLowerCase().includes(basicSearch.toLowerCase())).map(v => (
+              <label key={v.value} className="pbFilterCheckboxItem"><input type="checkbox" checked={Array.isArray(draft.value) && draft.value.includes(v.value)} onChange={()=>handleToggleBasic(v.value)}/><span>{v.value}</span></label>
+            ))}
+          </div>
+
+        </>}
+
+        {filterType === 'advanced' && <>
+          <label className="pbFilterLabel">Show items when the value:</label>
+          <select className="pbFilterSelect" value={draft.operator} onChange={e=>setDraft({...draft,operator:e.target.value})}>
+            {Object.entries(isDate ? {'equals':'is', 'not_equals':'is not', 'lt':'is before', 'lte':'is on or before', 'gt':'is after', 'gte':'is on or after', 'is_blank':'is blank', 'is_not_blank':'is not blank'} : operatorLabels).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+          </select>
+          {!['is_blank','is_not_blank'].includes(draft.operator) && <input className="pbFilterInput" type={isDate?'datetime-local':'text'} value={draft.value||''} onChange={e=>setDraft({...draft,value:e.target.value})}/>}
+          
+          <div className="pbFilterConditionGroup">
+            <label><input type="radio" name={`cond-${f.field}`} checked={draft.condition==='and'} onChange={()=>setDraft({...draft,condition:'and'})}/> And</label>
+            <label><input type="radio" name={`cond-${f.field}`} checked={draft.condition==='or'} onChange={()=>setDraft({...draft,condition:'or'})}/> Or</label>
+          </div>
+          
+          <select className="pbFilterSelect" value={draft.operator2||''} onChange={e=>setDraft({...draft,operator2:e.target.value})}>
+            <option value="">(None)</option>
+            {Object.entries(isDate ? {'equals':'is', 'not_equals':'is not', 'lt':'is before', 'lte':'is on or before', 'gt':'is after', 'gte':'is on or after', 'is_blank':'is blank', 'is_not_blank':'is not blank'} : operatorLabels).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+          </select>
+          {draft.operator2 && !['is_blank','is_not_blank'].includes(draft.operator2) && <input className="pbFilterInput" type={isDate?'datetime-local':'text'} value={draft.value2||''} onChange={e=>setDraft({...draft,value2:e.target.value})}/>}
+        </>}
+        
+        {filterType === 'relative' && <>
+          <label className="pbFilterLabel">Show items when the value:</label>
+          <div style={{display:'flex', gap: 8, alignItems: 'center'}}>
+            <select className="pbFilterSelect" style={{flex: '0 0 40%', marginBottom: 0}} value={draft.operator} onChange={e=>setDraft({...draft,operator:e.target.value})}>
+              <option value="in_last">is in the last</option>
+              <option value="is_in_this">is in this</option>
+              <option value="in_next">is in the next</option>
+            </select>
+            {draft.operator !== 'is_in_this' && <input className="pbFilterInput" type="number" style={{flex: '1 1 auto', marginBottom: 0, minWidth: 0}} value={draft.value||''} onChange={e=>setDraft({...draft,value:e.target.value})} min={1}/>}
+          </div>
+          <select className="pbFilterSelect" style={{marginTop: 8}} value={draft.value2||'days'} onChange={e=>setDraft({...draft,value2:e.target.value})}>
+            <option value="days">days</option>
+            <option value="weeks">weeks</option>
+            <option value="months">months</option>
+            <option value="years">years</option>
+            <option value="hours">hours</option>
+            <option value="minutes">minutes</option>
+          </select>
+        </>}
+
+        {filterType === 'top_n' && <>
+          <label className="pbFilterLabel">Show items</label>
+          <div style={{display:'flex', gap: 8, alignItems: 'center'}}>
+            <select className="pbFilterSelect" style={{flex: '0 0 40%', marginBottom: 0}} disabled><option>Top</option></select>
+            <input className="pbFilterInput" type="number" style={{flex: '1 1 auto', marginBottom: 0, minWidth: 0}} value={draft.value||''} onChange={e=>setDraft({...draft,value:e.target.value})} min={1}/>
+          </div>
+          <label className="pbFilterLabel" style={{marginTop: 4}}>By value</label>
+          <select className="pbFilterSelect pbFilterDropzone" value={draft.rankingField||''} onChange={e=>setDraft({...draft,rankingField:e.target.value})}>
+            <option value="" disabled>Select an option</option>
+            {rankingFields.map(rf=><option key={rf} value={rf}>{rf}</option>)}
+          </select>
+        </>}
+        
+        <div style={{display: 'flex', justifyContent: 'flex-end', marginTop: 8}}>
+          <button className={`pbApplyFilterBtn ${isDirty ? 'active' : ''}`} disabled={!isDirty} onClick={()=>onUpdate(draft)}>Apply filter</button>
+        </div>
+      </div>}
+    </div>
+  );
+}
+function FilterList({title,filters,onRemove,onUpdate,model,onAdd}:{title:string,filters:VisualFilter[],onRemove:(i:number)=>void,onUpdate:(i:number,f:VisualFilter)=>void,model:any,onAdd:(f:VisualFilter)=>void}){
+  const [open,setOpen]=useState(true);
+  const sectionRef = useRef<HTMLDivElement>(null);
+
+  const handleDrop = (raw: string) => {
+    if (!raw) return;
+    const cleanField = raw.replace(/^(field:|numericField:|hierarchy:|measure:)/, '');
+    onAdd({ field: cleanField, operator: 'in', value: [] });
+    clearReportFieldDragPayload();
+  };
+
+  useEffect(() => {
+    const el = sectionRef.current;
+    if (!el) return;
+    const handler = (e: Event) => {
+      const raw = (e as CustomEvent<{raw:string}>).detail?.raw || '';
+      handleDrop(raw);
+    };
+    el.addEventListener('vtab-report-field-drop', handler);
+    return () => el.removeEventListener('vtab-report-field-drop', handler);
+  });
+
+  return (
+    <div className="pbFilterSection">
+      <div className="pbFilterSectionHeader" onClick={()=>setOpen(o=>!o)}>
+        <span className="pbFilterSectionTitle">{title}</span>
+        <div style={{display:'flex',gap:4,alignItems:'center'}}>
+          <ChevronDown size={13} style={{transform:open?'none':'rotate(-90deg)',transition:'0.2s',color:'#605e5c'}}/>
+        </div>
+      </div>
+      {open && <div
+        ref={sectionRef}
+        className="pbFilterSectionBody"
+        data-report-field-drop="true"
+        onPointerUp={e=>{if(reportFieldDragPayload){e.preventDefault();handleDrop(reportFieldDragPayload)}}}
+        onMouseUp={e=>{if(reportFieldDragPayload){e.preventDefault();handleDrop(reportFieldDragPayload)}}}
+        onDragEnter={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'}}
+        onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy'}}
+        onDrop={e=>{
+          e.preventDefault();
+          const payload = e.dataTransfer.getData('application/x-vtab-field') || e.dataTransfer.getData('text/plain') || reportFieldDragPayload;
+          handleDrop(payload);
+        }}
+      >
+        {filters.map((f,i)=><FilterCard key={i} f={f} onRemove={()=>onRemove(i)} onUpdate={nx=>onUpdate(i,nx)} model={model}/>)}
+        <div className="pbEmptyDropzone">Add data fields here</div>
+      </div>}
+    </div>
+  );
+}
 function FiltersDock({visual,updateVisual,page,updatePage,reportFilters,setReportFilters,model,onCollapse}:{visual:Visual|undefined,updateVisual:(fn:(v:Visual)=>void)=>void,page:Page,updatePage:(fn:(p:Page)=>void)=>void,reportFilters:VisualFilter[],setReportFilters:(x:VisualFilter[])=>void,model:any,onCollapse?:()=>void}){
-  return <aside className="filtersDock professionalDockPane" aria-label="Filters pane"><div className="dockPaneTitle"><Filter size={15}/><b>Filters</b>{onCollapse&&<button className="dockCollapseButton" title="Collapse Filters pane" onClick={onCollapse}><PanelRightClose size={14}/></button>}</div><div className="dockPaneScroll">
-    <FilterList title="Filters on this visual" filters={visual?.filters||[]} model={model} onAdd={f=>visual&&updateVisual(v=>v.filters=[...(v.filters||[]),f])} onRemove={i=>visual&&updateVisual(v=>v.filters=(v.filters||[]).filter((_,j)=>i!==j))}/>
-    <FilterList title="Filters on this page" filters={page.filters||[]} model={model} onAdd={f=>updatePage(p=>p.filters=[...(p.filters||[]),f])} onRemove={i=>updatePage(p=>p.filters=(p.filters||[]).filter((_,j)=>i!==j))}/>
-    <FilterList title="Filters on all pages" filters={reportFilters} model={model} onAdd={f=>setReportFilters([...reportFilters,f])} onRemove={i=>setReportFilters(reportFilters.filter((_,j)=>i!==j))}/>
-  </div></aside>
+  const [search,setSearch]=useState('');
+  return <aside className="filtersDock pbFiltersDock" aria-label="Filters pane">
+    <div className="pbFiltersDockHeader">
+      <div className="pbFiltersDockTitle"><Filter size={14}/><b>Filters</b></div>
+      <div style={{display:'flex',gap:4,alignItems:'center'}}>
+        {onCollapse&&<button className="dockCollapseButton" title="Collapse Filters pane" onClick={onCollapse} aria-label="Action"><ChevronRight size={14}/></button>}
+      </div>
+    </div>
+    <div className="pbFiltersSearch">
+      <Filter size={13} style={{color:'#a19f9d',flexShrink:0}}/>
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search" aria-label="Search filters"/>
+    </div>
+    <div className="pbFiltersDockScroll">
+      <FilterList title="Filters on this visual" filters={(visual?.filters||[]).filter(f=>!search||f.field.toLowerCase().includes(search.toLowerCase()))} model={model} onAdd={f=>visual&&updateVisual(v=>v.filters=[...(v.filters||[]),f])} onRemove={i=>visual&&updateVisual(v=>v.filters=(v.filters||[]).filter((_,j)=>i!==j))} onUpdate={(i,nx)=>visual&&updateVisual(v=>v.filters=(v.filters||[]).map((f,j)=>i===j?nx:f))}/>
+      <FilterList title="Filters on this page" filters={(page.filters||[]).filter(f=>!search||f.field.toLowerCase().includes(search.toLowerCase()))} model={model} onAdd={f=>updatePage(p=>p.filters=[...(p.filters||[]),f])} onRemove={i=>updatePage(p=>p.filters=(p.filters||[]).filter((_,j)=>i!==j))} onUpdate={(i,nx)=>updatePage(p=>p.filters=(p.filters||[]).map((f,j)=>i===j?nx:f))}/>
+      <FilterList title="Filters on all pages" filters={reportFilters.filter(f=>!search||f.field.toLowerCase().includes(search.toLowerCase()))} model={model} onAdd={f=>setReportFilters([...reportFilters,f])} onRemove={i=>setReportFilters(reportFilters.filter((_,j)=>i!==j))} onUpdate={(i,nx)=>setReportFilters(reportFilters.map((f,j)=>i===j?nx:f))}/>
+    </div>
+  </aside>;
 }
 function VisualizationsPane({addVisual}:{addVisual:(type:VisualType)=>void}){
   return <section className="visualizationsPane">
@@ -440,52 +1028,132 @@ function VisualizationsPane({addVisual}:{addVisual:(type:VisualType)=>void}){
   </section>;
 }
 
-function RightPane({visual,updateVisual,removeVisual,duplicate,page,updatePage,reportFilters,setReportFilters,model,addVisual,galleryVisible,onCollapse}:{visual:Visual|undefined,updateVisual:(fn:(v:Visual)=>void)=>void,removeVisual:()=>void,duplicate:()=>void,page:Page,updatePage:(fn:(p:Page)=>void)=>void,reportFilters:VisualFilter[],setReportFilters:(x:VisualFilter[])=>void,model:any,addVisual:(type:VisualType)=>void,galleryVisible:boolean,onCollapse?:()=>void}){
+function MapBuildTools({visual,updateVisual}:{visual:Visual;updateVisual:(fn:(visual:Visual)=>void)=>void}){
+  const[crs,setCrs]=useState(visual.format.mapSourceCrs||'EPSG:4326'),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[correction,setCorrection]=useState({query:'',latitude:'',longitude:''});
+  const defaultLayers=[{id:'symbol',name:'Symbols',type:'symbol' as const,visible:true,opacity:85,color:'#118dff',size:9},{id:'filled',name:'Filled areas',type:'filled' as const,visible:true,opacity:65,color:'#118dff'},{id:'density',name:'Density',type:'density' as const,visible:true,opacity:80,color:'#ef4444'},{id:'path',name:'Paths',type:'path' as const,visible:true,opacity:90,color:'#118dff',size:3}];
+  const layers=visual.format.mapLayers?.length?visual.format.mapLayers:defaultLayers;
+  const updateLayer=(id:string,changes:any)=>updateVisual(v=>{const current=v.format.mapLayers?.length?v.format.mapLayers:defaultLayers;v.format.mapLayers=current.map(layer=>layer.id===id?{...layer,...changes}:layer)});
+  const moveLayer=(index:number,direction:-1|1)=>updateVisual(v=>{const current=[...(v.format.mapLayers?.length?v.format.mapLayers:defaultLayers)],target=index+direction;if(target<0||target>=current.length)return;[current[index],current[target]]=[current[target],current[index]];v.format.mapLayers=current});
+  const importFile=async(file:File)=>{setBusy(true);setMessage('');try{const geometry=await parseSpatialFile(file,crs);updateVisual(v=>{v.format.mapCustomGeometry=geometry;v.format.mapCustomGeometryName=file.name;v.format.mapSourceCrs=crs});setMessage(`${geometry.features.length.toLocaleString()} features imported from ${file.name}.`)}catch(error:any){setMessage(error?.message||String(error))}finally{setBusy(false)}};
+  const saveCorrection=async()=>{const latitude=Number(correction.latitude),longitude=Number(correction.longitude);if(!correction.query.trim()||!Number.isFinite(latitude)||!Number.isFinite(longitude)){setMessage('Enter a location, latitude, and longitude.');return}setBusy(true);try{await api('/map/geocode/corrections',{method:'POST',body:JSON.stringify({corrections:[{query:correction.query.trim(),latitude,longitude}]})});window.dispatchEvent(new Event('vtab-map-geocode-updated'));setMessage(`Saved the location correction for ${correction.query.trim()}.`);setCorrection({query:'',latitude:'',longitude:''})}catch(error:any){setMessage(error?.message||String(error))}finally{setBusy(false)}};
+  return <>
+    <Section title="Spatial data" icon={<MapPinned size={14}/>}><div className="formatHint">Import GeoJSON, TopoJSON, KML, or a zipped shapefile. Geometry is normalized and saved with the report.</div><label>Source coordinate system<input value={crs} onChange={event=>setCrs(event.target.value)} placeholder="EPSG:4326"/></label><label className="imageUploadButton"><Upload size={14}/>{busy?'Importing…':visual.format.mapCustomGeometryName?'Replace spatial file':'Import spatial file'}<input type="file" disabled={busy} accept=".geojson,.json,.topojson,.kml,.zip,.shp" onChange={event=>{const file=event.target.files?.[0];if(file)void importFile(file);event.currentTarget.value=''}}/></label>{visual.format.mapCustomGeometryName&&<><small>{visual.format.mapCustomGeometryName} · {visual.format.mapCustomGeometry?.features?.length||0} features</small><label>Join property<input value={visual.format.mapGeometryJoinProperty||''} onChange={event=>updateVisual(v=>v.format.mapGeometryJoinProperty=event.target.value||undefined)} placeholder="Boundary property matching Location"/></label><button type="button" className="dangerBtn" onClick={()=>updateVisual(v=>{v.format.mapCustomGeometry=undefined;v.format.mapCustomGeometryName=undefined})}><Trash2 size={13}/>Remove spatial file</button></>}{message&&<small>{message}</small>}</Section>
+    <Section title="Location correction" icon={<LocateFixed size={14}/>}><div className="formatHint">Resolve an unmatched or ambiguous location without changing the source data.</div><label>Location query<input value={correction.query} onChange={event=>setCorrection(current=>({...current,query:event.target.value}))} placeholder="City, region, country"/></label><div className="twoCol"><label>Latitude<input type="number" min="-90" max="90" step="any" value={correction.latitude} onChange={event=>setCorrection(current=>({...current,latitude:event.target.value}))}/></label><label>Longitude<input type="number" min="-180" max="180" step="any" value={correction.longitude} onChange={event=>setCorrection(current=>({...current,longitude:event.target.value}))}/></label></div><button type="button" disabled={busy} onClick={()=>void saveCorrection()}><MapPinned size={13}/>Save correction</button></Section>
+    <Section title="Map layers" icon={<Layers3 size={14}/>}><div className="formatHint">Layers render from bottom to top. Use Layered mode to combine them.</div>{layers.map((layer,index)=><div className="mapLayerEditor" key={layer.id}><div><input type="checkbox" checked={layer.visible!==false} onChange={event=>updateLayer(layer.id,{visible:event.target.checked})}/><b>{layer.name}</b></div><div><button disabled={index===0} title="Move up" onClick={()=>moveLayer(index,-1)}><ArrowUpCircle size={13}/></button><button disabled={index===layers.length-1} title="Move down" onClick={()=>moveLayer(index,1)}><ArrowDownCircle size={13}/></button><input type="color" value={layer.color||'#118dff'} onChange={event=>updateLayer(layer.id,{color:event.target.value})}/></div></div>)}</Section>
+  </>;
+}
+const _chartAxisTypes=new Set(['bar','column','stackedbar','stackedcolumn','line','area','combo','waterfall','scatter','bubble','histogram','boxplot','heatmap']);
+const _defaultVisualLabels=new Set(Object.values(visualLabels));
+function autoNameFromBindings(v:Visual){
+  const capitalize=(s:string)=>s?s[0].toUpperCase()+s.slice(1):'';
+  const prettyField=(f:string)=>f.replace(/[_-]+/g,' ').split(' ').filter(Boolean).map(capitalize).join(' ');
+  const describe=(binding?:string)=>{
+    if(!binding)return {field:'',aggregate:''};
+    const [path,aggregate='']=binding.split('::');
+    return {field:prettyField(path.split('.').slice(-1)[0]||''),aggregate:aggregate?capitalize(aggregate):''};
+  };
+  const axisFields=(v.bindings.axis||[]).filter((f:string)=>!f.startsWith('@@'));
+  const firstAxis=describe(axisFields[0]),firstLegend=describe(v.bindings.legend?.[0]);
+  const firstValue=describe(v.bindings.values?.[0]),firstTarget=describe(v.bindings.target?.[0]);
+  const firstX=describe(v.bindings.x?.[0]);
+  const valueLabel=firstValue.field?(firstValue.aggregate?`${firstValue.aggregate} of ${firstValue.field}`:firstValue.field):'';
+  if(_chartAxisTypes.has(v.type)){
+    if(firstAxis.field){v.format.xAxisTitle=firstAxis.field;v.format.axisTitleVisible=true;(v.format as any).xAxisTitleVisible=true;}
+    if(firstValue.field){v.format.yAxisTitle=firstValue.field;v.format.axisTitleVisible=true;(v.format as any).yAxisTitleVisible=true;}
+  }
+  const isDefaultTitle=!v.title||_defaultVisualLabels.has(v.title)||(v.format as any)._autoTitle;
+  if(isDefaultTitle){
+    let title='';
+    if(v.type==='textbox'||v.type==='button')return;
+    if(v.type==='slicer')title=firstAxis.field;
+    else if(v.type==='map')title=`Map${describe(v.bindings.location?.[0]||v.bindings.detail?.[0]).field?` by ${describe(v.bindings.location?.[0]||v.bindings.detail?.[0]).field}`:''}`;
+    else if(v.type==='heatmap')title=[valueLabel,[firstLegend.field,firstAxis.field].filter(Boolean).join(' and ')].filter(Boolean).join(' by ');
+    else if(v.type==='scatter')title=[firstValue.field,firstX.field||firstAxis.field].filter(Boolean).join(' by ');
+    else if(v.type==='multirowcard')title=(v.bindings.values||[]).slice(0,3).map(x=>describe(x).field).filter(Boolean).join(', ');
+    else if(v.type==='table')title=[...(v.bindings.axis||[]),...(v.bindings.values||[])].slice(0,3).map(x=>describe(x).field).filter(Boolean).join(', ');
+    else if(v.type==='matrix')title=[valueLabel,[firstAxis.field,firstLegend.field].filter(Boolean).join(' and ')].filter(Boolean).join(' by ');
+    else if(v.type==='kpi')title=[valueLabel,firstAxis.field].filter(Boolean).join(' by ');
+    else if(['card','gauge','progress'].includes(v.type))title=valueLabel||firstTarget.field||firstAxis.field;
+    else title=[valueLabel,firstAxis.field||firstLegend.field].filter(Boolean).join(' by ');
+    v.title=title||visualLabels[v.type];
+    (v.format as any)._autoTitle=true;
+  }
+}
+function RightPane({visual,updateVisual,removeVisual,duplicate,page,updatePage,reportFilters,setReportFilters,model,addVisual,galleryVisible,onCollapse,selectedIds}:{visual:Visual|undefined,updateVisual:(fn:(v:Visual)=>void)=>void,removeVisual:()=>void,duplicate:()=>void,page:Page,updatePage:(fn:(p:Page)=>void)=>void,reportFilters:VisualFilter[],setReportFilters:(x:VisualFilter[])=>void,model:any,addVisual:(type:VisualType)=>void,galleryVisible:boolean,onCollapse?:()=>void,selectedIds?:string[]}){
   const[tab,setTab]=useState<'build'|'format'|'analytics'|'page'>('build');
+  const[liveCategories,setLiveCategories]=useState<string[]>([]);
+  useEffect(()=>{
+    if(!visual||!model||(visual.type!=='pie'&&visual.type!=='donut'&&visual.type!=='bar'&&visual.type!=='column'&&visual.type!=='stackedbar'&&visual.type!=='stackedcolumn')){setLiveCategories([]);return;}
+    const axis=(visual.bindings.axis||[])[visual.drillLevel||0]||(visual.bindings.axis||[]).slice(-1)[0]||(visual.bindings.legend||[])[0];
+    if(!axis){setLiveCategories([]);return;}
+    const project={model,report:{pages:[{...page,visuals:page.visuals}],filters:[],activePageId:page.id}};
+    queryVisual(visual,project,null,[]).then(r=>{
+      const cats=Array.from(new Set(r.rows.map((row:any)=>String(row[axis]||'')))).filter(Boolean) as string[];
+      setLiveCategories(cats);
+    }).catch(()=>setLiveCategories([]));
+  },[visual?.id,visual?.bindings,visual?.drillLevel,visual?.type,model]);
+  const multiSelect = (selectedIds?.length || 0) > 1;
+  const selectedVisuals = (selectedIds || []).map(id => page.visuals.find(x => x.id === id)).filter(Boolean) as Visual[];
+  const multiSelectSameType = multiSelect && selectedVisuals.length > 0 && selectedVisuals.every(v => v.type === selectedVisuals[0].type);
+  const formatUpdateVisual = multiSelect ? (fn:(v:Visual)=>void) => {
+    updatePage(pg => {
+      for (const id of selectedIds!) {
+        const v = pg.visuals.find(x => x.id === id);
+        if (v) { formatDefaults(v); fn(v); }
+      }
+    });
+  } : updateVisual;
   const setFmt=(k:keyof VisualFormat,val:any)=>visual&&updateVisual(v=>{formatDefaults(v);(v.format as any)[k]=val});
   const addBinding=(k:VisualWellKey,x:string)=>visual&&updateVisual(v=>{
-    if(k==='axis'&&x.startsWith('@@HIERARCHY@@')){const id=x.replace('@@HIERARCHY@@','');const h=(model?.hierarchies||[]).find((z:any)=>z.id===id);if(h){v.bindings.hierarchy={id,level:0};v.bindings.axis=[h.levels[0].field];return}}
-    (v.bindings as any)[k]=[...((v.bindings as any)[k]||[]),x];
-    const formatHint=model?.columnFormats?.[x];
-    if(formatHint&&['values','target','tooltips'].includes(k)){formatDefaults(v);v.format.fieldFormats=v.format.fieldFormats||{};v.format.fieldFormats[x]={...DEFAULT_NUMBER_FORMAT,...formatHint}}
+    let dropVal = x;
+    if (k === 'axis') {
+      v.drillLevel = 0;
+      v.drillFilters = [];
+    }
+    
+    const cleanKey = dropVal.replace(/^(field:|numericField:)/, '');
+    const colType = (model?.columnTypes?.[cleanKey] || '').toLowerCase();
+    
+    if (k === 'axis' && (colType === 'date' || colType === 'datetime' || colType === 'timestamp' || colType.startsWith('date') || colType.startsWith('timestamp'))) {
+      v.bindings.axis = [`${cleanKey}::Year`, `${cleanKey}::Quarter`, `${cleanKey}::Month`, `${cleanKey}::Day`];
+      v.bindings.hierarchy = undefined;
+      return;
+    }
+    
+    if (k === 'axis' && !dropVal.startsWith('@@HIERARCHY@@')) {
+      const h = (model?.hierarchies||[]).find((z:any) => z.sourceField === dropVal);
+      if (h) dropVal = '@@HIERARCHY@@' + h.id;
+    }
+    
+    if (k === 'axis' && dropVal.startsWith('@@HIERARCHY@@')) {
+      const id = dropVal.replace('@@HIERARCHY@@', '');
+      const h = (model?.hierarchies||[]).find((z:any) => z.id === id);
+      if (h) {
+        v.bindings.hierarchy = { id, level: 0 };
+        v.bindings.axis = [h.levels[0].field];
+        return;
+      }
+    }
+    
+    (v.bindings as any)[k]=[...((v.bindings as any)[k]||[]),dropVal];
+    const formatHint=model?.columnFormats?.[dropVal];
+    if(formatHint&&['values','target','tooltips'].includes(k)){formatDefaults(v);v.format.fieldFormats=v.format.fieldFormats||{};v.format.fieldFormats[dropVal]={...DEFAULT_NUMBER_FORMAT,...formatHint}}
+    // Auto-name: generate Power BI-style chart title + axis titles
+    autoNameFromBindings(v);
   });
-  const removeBinding=(k:VisualWellKey,x:string)=>visual&&updateVisual(v=>{(v.bindings as any)[k]=((v.bindings as any)[k]||[]).filter((z:string)=>z!==x);if(k==='axis'&&!(v.bindings.axis||[]).length)v.bindings.hierarchy=undefined});
+  const removeBinding=(k:VisualWellKey,x:string)=>visual&&updateVisual(v=>{(v.bindings as any)[k]=((v.bindings as any)[k]||[]).filter((z:string)=>z!==x);if(k==='axis'&&!(v.bindings.axis||[]).length)v.bindings.hierarchy=undefined;autoNameFromBindings(v)});
   const pageSettings=page.settings||defaultPageSettings();
   const pageType=pageSettings.pageSizePreset==='Custom'?'Custom':pageSettings.pageSizePreset==='4:3'?'4:3':pageSettings.pageSizePreset==='Letter'?'Letter':pageSettings.pageSizePreset==='Tooltip'?'Tooltip':'16:9';
   const setPageType=(type:'16:9'|'4:3'|'Letter'|'Tooltip'|'Custom')=>updatePage(p=>{pageDefaults(p);p.settings!.pageSizePreset=type;p.settings!.autoFitHeight=false;const dimensions:Record<string,[number,number]>={'16:9':[1280,720],'4:3':[960,720],Letter:[816,1056],Tooltip:[320,240]};if(dimensions[type]){p.settings!.pageWidth=dimensions[type][0];p.settings!.pageHeight=dimensions[type][1]}});
   const profile=visual?visualProfile(visual.type):undefined;
   const supportsCategoryScroll=!!visual&&categoryScrollTypes.has(visual.type);
-  return <div className="formatPane advancedFormat professionalRightPane"><div className="formatPaneHeader"><div className="formatPaneIdentity"><b>Visualizations</b>{onCollapse&&<button className="dockCollapseButton" title="Collapse Visualizations pane" onClick={onCollapse}><PanelRightClose size={14}/></button>}</div><div className="formatTabs four" role="tablist" aria-label="Visual authoring"><button title="Build visual" aria-label="Build visual" className={tab==='build'?'active':''} onClick={()=>setTab('build')}><BarChart3 size={20}/><span>Build</span></button><button title="Format visual" aria-label="Format visual" className={tab==='format'?'active':''} onClick={()=>setTab('format')}><PaintBucket size={20}/><span>Format</span></button><button title="Analytics" aria-label="Analytics" disabled={!visual} className={tab==='analytics'?'active':''} onClick={()=>setTab('analytics')}><LineChart size={20}/><span>Analytics</span></button><button title="Canvas settings" aria-label="Canvas settings" className={tab==='page'?'active':''} onClick={()=>setTab('page')}><Settings2 size={20}/><span>Canvas</span></button></div></div>
-  {tab==='build'&&supportsCategoryScroll&&visual&&<div className="categoryScrollQuick"><div><b>Scrollable category window</b><small>Choose how many bars or categories are visible at once. Remaining categories stay available on the chart scrollbar.</small></div><label>Visible at once<input type="number" min="3" max="100" value={visual.format.visibleCategoryCount||12} onChange={e=>setFmt('visibleCategoryCount',Math.max(3,Math.min(100,+e.target.value||12)))}/></label></div>}
+  return <div className="formatPane advancedFormat professionalRightPane"><div className="formatPaneHeader"><div className="formatPaneIdentity"><b>Visualizations</b>{onCollapse&&<button className="dockCollapseButton" title="Collapse Visualizations pane" onClick={onCollapse} aria-label="Action"><PanelRightClose size={14}/></button>}</div><div className="formatTabs four" role="tablist" aria-label="Visual authoring"><button title="Build visual" aria-label="Build visual" className={tab==='build'?'active':''} onClick={()=>setTab('build')}><BarChart3 size={20}/><span>Build</span></button><button title="Format visual" aria-label="Format visual" className={tab==='format'?'active':''} onClick={()=>setTab('format')}><PaintBucket size={20}/><span>Format</span></button><button title="Analytics" aria-label="Analytics" disabled={!visual} className={tab==='analytics'?'active':''} onClick={()=>setTab('analytics')}><LineChart size={20}/><span>Analytics</span></button><button title="Canvas settings" aria-label="Canvas settings" className={tab==='page'?'active':''} onClick={()=>setTab('page')}><Settings2 size={20}/><span>Canvas</span></button></div></div>
+
   {tab==='build'&&galleryVisible&&<VisualizationsPane addVisual={addVisual}/>} 
-  {tab==='build'?(!visual?<div className="paneEmpty"><Layers3/><b>Select a visual</b><span>Choose a visual on the canvas to bind fields and measures.</span></div>:<div className="propertyList">{visual.type==='textbox'?<Section open title="Text box" icon={<TextCursorInput size={14}/>}><label>Text<textarea rows={7} value={visual.text||''} onChange={e=>updateVisual(v=>v.text=e.target.value)} placeholder="Enter report text..."/></label></Section>:visual.type==='button'?<><Section open title="Button" icon={<MousePointerClick size={14}/>}><label>Button label<input value={visual.buttonLabel||''} onChange={e=>updateVisual(v=>v.buttonLabel=e.target.value)} placeholder="Go to Details"/></label><label>Action<select value={visual.action?.type||'none'} onChange={e=>updateVisual(v=>v.action={...(v.action||{}),type:e.target.value as any})}><option value="none">No action</option><option value="navigate">Navigate to page</option><option value="toggleVisual">Show / Hide visual</option><option value="showVisual">Show visual</option><option value="hideVisual">Hide visual</option><option value="clearFilters">Clear filters</option></select></label>{visual.action?.type==='navigate'&&<label>Target page<select value={visual.action?.targetPageId||''} onChange={e=>updateVisual(v=>v.action={...(v.action||{}),targetPageId:e.target.value})}><option value="">Select page</option>{(model?.__pages||[]).map((p:any)=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>}{['toggleVisual','showVisual','hideVisual'].includes(visual.action?.type||'')&&<label>Target visual<select value={visual.action?.targetVisualId||''} onChange={e=>updateVisual(v=>v.action={...(v.action||{}),targetVisualId:e.target.value})}><option value="">Select visual</option>{page.visuals.filter(x=>x.id!==visual.id).map(x=><option key={x.id} value={x.id}>{x.title}</option>)}</select></label>}</Section></>:<Section open title="Data" icon={<Layers3 size={14}/>}><DataWells visual={visual} addBinding={addBinding} removeBinding={removeBinding}/></Section>}{visual.type==='slicer'&&<Section open title="Slicer layout" icon={<Filter size={14}/>}><label>Style<select value={visual.slicerStyle||'list'} onChange={e=>updateVisual(v=>v.slicerStyle=e.target.value as any)}><option value="list">List</option><option value="dropdown">Dropdown</option><option value="verticalTiles">Vertical tiles</option><option value="horizontalTiles">Horizontal tiles</option></select></label></Section>}<div className="visualActions"><button onClick={duplicate}><Copy size={14}/>Duplicate</button><button className="dangerBtn" onClick={removeVisual}><Trash2 size={14}/>Delete</button></div></div>)
-  :tab==='format'?(!visual?<div className="paneEmpty"><Palette/><b>Select a visual</b><span>Visual formatting appears here.</span></div>:<div className="propertyList"><input className="formatSearch" aria-label="Search format settings" placeholder="Search format settings" onChange={e=>{const query=e.target.value.trim().toLowerCase();e.currentTarget.parentElement?.querySelectorAll('.formatSection').forEach(section=>{(section as HTMLElement).hidden=!!query&&!section.querySelector('summary')?.textContent?.toLowerCase().includes(query)})}}/><Section title="Premium visual style" icon={<Sparkles size={14}/>}><div className="premiumPresetGrid"><button onClick={()=>updateVisual(v=>{formatDefaults(v);Object.assign(v.format,{background:'#ffffff',borderColor:'#e2e8f0',cornerRadius:16,cornerLinked:true,cornerRadii:{topLeft:16,topRight:16,bottomRight:16,bottomLeft:16},shadow:true,titleColor:'#0f172a',labelColor:'#334155',axisColor:'#64748b',gridLines:true,barRadius:10})})}>Executive</button><button onClick={()=>updateVisual(v=>{formatDefaults(v);Object.assign(v.format,{background:'#ffffff',borderColor:'#eef2f7',cornerRadius:12,cornerLinked:true,cornerRadii:{topLeft:12,topRight:12,bottomRight:12,bottomLeft:12},shadow:false,titleColor:'#111827',labelColor:'#475569',axisColor:'#64748b',gridLines:false,barRadius:6})})}>Clean</button><button onClick={()=>updateVisual(v=>{formatDefaults(v);Object.assign(v.format,{background:'#ffffff',borderColor:'#dbeafe',cornerRadius:18,cornerLinked:true,cornerRadii:{topLeft:18,topRight:18,bottomRight:18,bottomLeft:18},shadow:true,titleColor:'#0f172a',labelColor:'#1f2937',axisColor:'#475569',gridLines:true,barRadius:12})})}>Elevated</button></div><div className="formatHint">Applies a polished container, typography, axis and spacing preset. Fine-tune individual settings below.</div></Section>{profile?.numberFormat&&<Section title="Number / amount formatting" icon={<Hash size={14}/>}><NumberFormatting visual={visual} updateVisual={updateVisual}/></Section>}<Section title="Title & subtitle" icon={<Type size={14}/>}><Toggle label="Show title" value={visual.format.showTitle} onChange={x=>setFmt('showTitle',x)}/><label>Title text<input value={visual.title} onChange={e=>updateVisual(v=>v.title=e.target.value)}/></label><div className="twoCol"><label>Font size<input type="number" min="8" max="48" value={visual.format.titleFontSize} onChange={e=>setFmt('titleFontSize',+e.target.value)}/></label><label>Weight<select value={visual.format.titleFontWeight||700} onChange={e=>setFmt('titleFontWeight',+e.target.value)}><option value="400">Regular</option><option value="500">Medium</option><option value="600">Semi Bold</option><option value="700">Bold</option><option value="800">Extra Bold</option></select></label></div><label>Title color<ColorControl value={visual.format.titleColor||'#0f172a'} onChange={x=>setFmt('titleColor',x)}/></label><Toggle label="Show subtitle" value={!!visual.format.subtitleVisible} onChange={x=>setFmt('subtitleVisible',x)}/>{visual.format.subtitleVisible&&<><label>Subtitle<input value={visual.format.subtitle||''} onChange={e=>setFmt('subtitle',e.target.value)}/></label><div className="twoCol"><label>Subtitle size<input type="number" min="7" max="24" value={visual.format.subtitleFontSize||9} onChange={e=>setFmt('subtitleFontSize',+e.target.value)}/></label><label>Subtitle color<ColorControl value={visual.format.subtitleColor||'#475569'} onChange={x=>setFmt('subtitleColor',x)}/></label></div></>}</Section>{profile?.dataLabels&&<Section title="Data labels & points" icon={<SlidersHorizontal size={14}/>}><Toggle label="Show data labels" value={visual.format.dataLabels} onChange={x=>setFmt('dataLabels',x)}/><Toggle label="Show data points" value={visual.format.showDataPoints!==false} onChange={x=>setFmt('showDataPoints',x)}/><label>Point size<input type="range" min="2" max="18" value={visual.format.dataPointSize||7} onChange={e=>setFmt('dataPointSize',+e.target.value)}/></label><div className="twoCol"><label>Label size<input type="number" min="8" max="36" value={visual.format.labelFontSize} onChange={e=>setFmt('labelFontSize',+e.target.value)}/></label><label>Position<select value={visual.format.labelPosition} onChange={e=>setFmt('labelPosition',e.target.value)}><option value="top">Outside / Top</option><option value="inside">Inside</option><option value="outside">Outside</option></select></label></div></Section>}{visual.type==='kpi'&&<Section title="Up / Down indicator" icon={<ArrowUpDown size={14}/>}><Toggle label="Show indicator arrow" value={!!visual.format.indicatorEnabled} onChange={x=>setFmt('indicatorEnabled',x)}/><label>Good direction<select value={visual.format.favorableDirection||'up'} onChange={e=>setFmt('favorableDirection',e.target.value)}><option value="up">Higher is better ↑</option><option value="down">Lower is better ↓</option></select></label><label>Positive color<ColorControl value={visual.format.positiveColor||'#34d399'} onChange={x=>setFmt('positiveColor',x)}/></label><label>Negative color<ColorControl value={visual.format.negativeColor||'#fb7185'} onChange={x=>setFmt('negativeColor',x)}/></label><div className="formatHint">Add a second measure in <b>Comparison / Target</b>. The KPI compares the primary value to that measure and renders ↑, ↓ or →.</div></Section>}{profile?.tooltips&&<Section title="Tooltips" icon={<MessageSquareText size={14}/>}><Toggle label="Show tooltips" value={visual.format.tooltipEnabled!==false} onChange={x=>setFmt('tooltipEnabled',x)}/><label>Tooltip background<ColorControl value={visual.format.tooltipBackground||'#0a1421'} onChange={x=>setFmt('tooltipBackground',x)}/></label><label>Tooltip text<ColorControl value={visual.format.tooltipColor||'#dce8f5'} onChange={x=>setFmt('tooltipColor',x)}/></label><div className="formatHint">Drag extra measures to the <b>Tooltips</b> field well to show them without changing the chart axis.</div></Section>}{profile?.dataColor&&<Section title="Data colors" icon={<Palette size={14}/>}><label>Primary series color<ColorControl value={visual.format.accent} onChange={x=>setFmt('accent',x)}/></label></Section>}{(profile?.legend||profile?.axes)&&<Section title="Legend & axes" icon={<Settings2 size={14}/>}>{profile?.legend&&<><Toggle label="Show legend" value={visual.format.legendVisible!==false} onChange={x=>setFmt('legendVisible',x)}/><label>Legend position<select value={visual.format.legendPosition||'bottom'} onChange={e=>setFmt('legendPosition',e.target.value)}><option value="top">Top</option><option value="bottom">Bottom</option><option value="left">Left</option><option value="right">Right</option></select></label></>}{profile?.axes&&<Toggle label="Grid lines" value={visual.format.gridLines!==false} onChange={x=>setFmt('gridLines',x)}/>}</Section>}{(profile?.axes||profile?.legend||profile?.dataLabels)&&<Section title="Chart appearance" icon={<Sparkles size={14}/>}> 
-{profile?.legend&&<div className="twoCol"><label>Legend text size<input type="number" min="7" max="24" value={visual.format.legendFontSize||10} onChange={e=>setFmt('legendFontSize',+e.target.value)}/></label><label>Legend color<ColorControl value={visual.format.legendColor||visual.format.axisColor||'#616161'} onChange={x=>setFmt('legendColor',x)}/></label></div>}
-<div className="twoCol"><label>Axis text size<input type="number" min="7" max="24" value={visual.format.axisFontSize||10} onChange={e=>setFmt('axisFontSize',+e.target.value)}/></label><label>Line width<input type="number" min="1" max="10" value={visual.format.lineWidth||3} onChange={e=>setFmt('lineWidth',+e.target.value)}/></label></div>
-<label>Axis / tick color<ColorControl value={visual.format.axisColor||'#475569'} onChange={x=>setFmt('axisColor',x)}/></label>
-<div className="twoCol"><label>Bar radius<input type="number" min="0" max="30" value={visual.format.barRadius??6} onChange={e=>setFmt('barRadius',+e.target.value)}/></label><label>Bar max width<input type="number" min="8" max="100" value={visual.format.barWidth||38} onChange={e=>setFmt('barWidth',+e.target.value)}/></label></div>
-<Toggle label="Smooth lines" value={visual.format.smoothLines!==false} onChange={x=>setFmt('smoothLines',x)}/>
-<label>Marker shape<select value={visual.format.markerShape||'circle'} onChange={e=>setFmt('markerShape',e.target.value)}><option value="circle">Circle</option><option value="rect">Square</option><option value="roundRect">Rounded square</option><option value="triangle">Triangle</option><option value="diamond">Diamond</option></select></label>
-<div className="twoCol"><label>Inner padding<input type="number" min="0" max="40" value={visual.format.padding??8} onChange={e=>setFmt('padding',+e.target.value)}/></label><label>Chart opacity<input type="number" min="20" max="100" value={visual.format.chartOpacity??100} onChange={e=>setFmt('chartOpacity',+e.target.value)}/></label></div>
-</Section>}{profile?.axes&&<Section title="Axes & grid" icon={<Settings2 size={14}/>}><Toggle label="Show axis titles" value={!!visual.format.axisTitleVisible} onChange={x=>setFmt('axisTitleVisible',x)}/>{visual.format.axisTitleVisible&&<div className="twoCol"><label>X axis title<input value={visual.format.xAxisTitle||''} onChange={e=>setFmt('xAxisTitle',e.target.value)} placeholder={(visual.bindings.axis||[])[0]||'Category'}/></label><label>Y axis title<input value={visual.format.yAxisTitle||''} onChange={e=>setFmt('yAxisTitle',e.target.value)} placeholder={(visual.bindings.values||[])[0]||'Value'}/></label></div>}<label>Grid line color<ColorControl value={visual.format.gridLineColor||'#e2e8f0'} onChange={x=>setFmt('gridLineColor',x)}/></label><label>Grid line style<select value={visual.format.gridLineStyle||'dashed'} onChange={e=>setFmt('gridLineStyle',e.target.value)}><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select></label><label>Visible categories before scroll<input type="number" min="3" max="100" value={visual.format.visibleCategoryCount||12} onChange={e=>setFmt('visibleCategoryCount',Math.max(3,+e.target.value||12))}/></label></Section>}
- {visual.type==='textbox'&&<Section title="Text formatting" icon={<TextCursorInput size={14}/>} open><div className="twoCol"><label>Font size<input type="number" min="7" max="96" value={visual.format.fontSize||18} onChange={e=>setFmt('fontSize',+e.target.value)}/></label><label>Weight<select value={visual.format.textFontWeight||400} onChange={e=>setFmt('textFontWeight',+e.target.value)}><option value="400">Regular</option><option value="500">Medium</option><option value="600">Semi Bold</option><option value="700">Bold</option><option value="800">Extra Bold</option></select></label></div><div className="twoCol"><Toggle label="Italic" value={!!visual.format.textItalic} onChange={x=>setFmt('textItalic',x)}/><Toggle label="Underline" value={!!visual.format.textUnderline} onChange={x=>setFmt('textUnderline',x)}/></div><label>Text color<ColorControl value={visual.format.labelColor||'#111827'} onChange={x=>setFmt('labelColor',x)}/></label><div className="twoCol"><label>Horizontal alignment<select value={visual.format.textAlign||'left'} onChange={e=>setFmt('textAlign',e.target.value)}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option><option value="justify">Justify</option></select></label><label>Vertical alignment<select value={visual.format.textVerticalAlign||'top'} onChange={e=>setFmt('textVerticalAlign',e.target.value)}><option value="top">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option></select></label></div><Toggle label="Wrap text" value={visual.format.textWrap!==false} onChange={x=>setFmt('textWrap',x)}/><div className="twoCol"><label>Line height<input type="number" min="1" max="3" step="0.05" value={visual.format.textLineHeight||1.45} onChange={e=>setFmt('textLineHeight',+e.target.value)}/></label><label>Padding<input type="number" min="0" max="80" value={visual.format.padding??8} onChange={e=>setFmt('padding',+e.target.value)}/></label></div></Section>}
- {visual.type==='multirowcard'&&<Section title="Multi Card layout" icon={<LayoutDashboard size={14}/>} open><Toggle label="Auto-fit cards" value={visual.format.cardAutoFit!==false} onChange={x=>setFmt('cardAutoFit',x)}/>{visual.format.cardAutoFit===false&&<label>Cards per row<input type="number" min="1" max="8" value={visual.format.cardsPerRow||2} onChange={e=>setFmt('cardsPerRow',Math.max(1,Math.min(8,+e.target.value||1)))}/></label>}<div className="twoCol"><label>Minimum card width<input type="number" min="80" max="500" value={visual.format.cardMinWidth||150} onChange={e=>setFmt('cardMinWidth',+e.target.value)}/></label><label>Card height<input type="number" min="56" max="300" value={visual.format.cardMinHeight||92} onChange={e=>setFmt('cardMinHeight',+e.target.value)}/></label></div><div className="twoCol"><label>Horizontal gap<input type="number" min="0" max="60" value={visual.format.cardGapX??10} onChange={e=>setFmt('cardGapX',+e.target.value)}/></label><label>Vertical gap<input type="number" min="0" max="60" value={visual.format.cardGapY??10} onChange={e=>setFmt('cardGapY',+e.target.value)}/></label></div><label>Internal padding<input type="number" min="0" max="60" value={visual.format.cardPadding??12} onChange={e=>setFmt('cardPadding',+e.target.value)}/></label><div className="twoCol"><label>Content alignment<select value={visual.format.cardHorizontalAlign||'left'} onChange={e=>setFmt('cardHorizontalAlign',e.target.value)}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label><label>Vertical alignment<select value={visual.format.cardVerticalAlign||'middle'} onChange={e=>setFmt('cardVerticalAlign',e.target.value)}><option value="top">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option></select></label></div><div className="twoCol"><label>Label position<select value={visual.format.cardTitlePosition||'top'} onChange={e=>setFmt('cardTitlePosition',e.target.value)}><option value="top">Top</option><option value="bottom">Bottom</option></select></label><label>Value position<select value={visual.format.cardValuePosition||'middle'} onChange={e=>setFmt('cardValuePosition',e.target.value)}><option value="top">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option></select></label></div><div className="twoCol"><label>Icon position<select value={visual.format.cardIconPosition||'left'} onChange={e=>setFmt('cardIconPosition',e.target.value)}><option value="left">Left</option><option value="top">Top</option><option value="right">Right</option></select></label><label>Icon size<input type="number" min="18" max="80" value={visual.format.cardIconSize||34} onChange={e=>setFmt('cardIconSize',+e.target.value)}/></label></div></Section>}
- <Section title="Title layout" icon={<Heading1 size={14}/>}><div className="twoCol"><label>Title alignment<select value={visual.format.titleAlignment||'left'} onChange={e=>setFmt('titleAlignment',e.target.value)}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label><label>Title style<select value={visual.format.titleFontStyle||'normal'} onChange={e=>setFmt('titleFontStyle',e.target.value)}><option value="normal">Normal</option><option value="italic">Italic</option></select></label></div><div className="twoCol"><Toggle label="Underline title" value={!!visual.format.titleUnderline} onChange={x=>setFmt('titleUnderline',x)}/><Toggle label="Wrap title" value={visual.format.titleWrap!==false} onChange={x=>setFmt('titleWrap',x)}/></div>{visual.format.subtitleVisible&&<><div className="twoCol"><label>Subtitle alignment<select value={visual.format.subtitleAlignment||'left'} onChange={e=>setFmt('subtitleAlignment',e.target.value)}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label><label>Subtitle weight<select value={visual.format.subtitleFontWeight||400} onChange={e=>setFmt('subtitleFontWeight',+e.target.value)}><option value="400">Regular</option><option value="600">Semi Bold</option><option value="700">Bold</option></select></label></div><div className="twoCol"><Toggle label="Underline subtitle" value={!!visual.format.subtitleUnderline} onChange={x=>setFmt('subtitleUnderline',x)}/><Toggle label="Wrap subtitle" value={visual.format.subtitleWrap!==false} onChange={x=>setFmt('subtitleWrap',x)}/></div></>}</Section>
- <Section title="Position & size" icon={<Move size={14}/>}> 
-  <Toggle label="Responsive visual layout" value={visual.format.responsive!==false} onChange={x=>setFmt('responsive',x)}/>
-  <div className="visualSizeStatus"><b>Current grid size</b><span>{visual.w} columns × {visual.h} rows</span></div>
-  <div className="placementGroup"><b>Quick placement</b><div className="placementButtons"><button title="Align to left" onClick={()=>updateVisual(v=>v.x=0)}>Left</button><button title="Center horizontally" onClick={()=>updateVisual(v=>v.x=Math.max(0,Math.round((12-v.w)/2)))}>Center</button><button title="Align to right" onClick={()=>updateVisual(v=>v.x=Math.max(0,12-v.w))}>Right</button><button title="Move to top" onClick={()=>updateVisual(v=>v.y=0)}>Top</button></div></div>
-  <div className="placementGroup"><b>Nudge</b><div className="nudgePad"><span/><button title="Move up one grid row" onClick={()=>updateVisual(v=>v.y=Math.max(0,v.y-1))}>↑</button><span/><button title="Move left one grid column" onClick={()=>updateVisual(v=>v.x=Math.max(0,v.x-1))}>←</button><button title="Reset position" onClick={()=>updateVisual(v=>{v.x=0;v.y=0})}>●</button><button title="Move right one grid column" onClick={()=>updateVisual(v=>v.x=Math.min(12-v.w,v.x+1))}>→</button><span/><button title="Move down one grid row" onClick={()=>updateVisual(v=>v.y=v.y+1)}>↓</button><span/></div></div>
-  <div className="twoCol"><label>Horizontal position (X)<input type="number" min="0" max={Math.max(0,12-visual.w)} value={visual.x} onChange={e=>updateVisual(v=>v.x=Math.max(0,Math.min(12-v.w,+e.target.value)))}/></label><label>Vertical position (Y)<input type="number" min="0" value={visual.y} onChange={e=>updateVisual(v=>v.y=Math.max(0,+e.target.value))}/></label></div>
-  <div className="twoCol"><label>Width<input type="number" min="2" max="12" value={visual.w} onChange={e=>updateVisual(v=>{v.w=Math.max(2,Math.min(12,+e.target.value));v.x=Math.min(v.x,12-v.w)})}/></label><label>Height<input type="number" min="2" max="30" value={visual.h} onChange={e=>updateVisual(v=>v.h=Math.max(2,Math.min(30,+e.target.value)))}/></label></div>
-  <div className="placementGroup"><b>Quick width</b><div className="placementButtons widthPresets"><button onClick={()=>updateVisual(v=>{v.w=3;v.x=Math.min(v.x,9)})}>¼</button><button onClick={()=>updateVisual(v=>{v.w=4;v.x=Math.min(v.x,8)})}>⅓</button><button onClick={()=>updateVisual(v=>{v.w=6;v.x=Math.min(v.x,6)})}>½</button><button onClick={()=>updateVisual(v=>{v.w=8;v.x=Math.min(v.x,4)})}>⅔</button><button onClick={()=>updateVisual(v=>{v.w=12;v.x=0})}>Full</button></div></div>
-  <div className="formatHint"><b>Tip:</b> select the visual and use the visible <b>Drag</b> handle. Resize handles appear on all sides and corners. Position controls use the same 12-column report grid.</div>
-</Section><Section title="Visual container" icon={<PanelRight size={14}/>}><label>Background<ColorControl value={visual.format.background||'#ffffff'} onChange={x=>setFmt('background',x)}/></label><label>Background transparency<input type="range" min="0" max="100" value={visual.format.backgroundTransparency??0} onChange={e=>setFmt('backgroundTransparency',+e.target.value)}/><span>{visual.format.backgroundTransparency??0}%</span></label><Toggle label="Shadow" value={!!visual.format.shadow} onChange={x=>setFmt('shadow',x)}/><Toggle label="Border" value={visual.format.borderVisible!==false} onChange={x=>setFmt('borderVisible',x)}/>
-<label>Border color<ColorControl value={visual.format.borderColor||'#d5dee8'} onChange={x=>setFmt('borderColor',x)}/></label>
-<div className="twoCol"><label>Border width<input type="number" min="0" max="8" value={visual.format.borderWidth??1} onChange={e=>setFmt('borderWidth',+e.target.value)}/></label><label>Border style<select value={visual.format.borderStyle||'solid'} onChange={e=>setFmt('borderStyle',e.target.value)}><option value="solid">Solid</option><option value="dashed">Dashed</option><option value="dotted">Dotted</option></select></label></div>
-<div className="edgeGrid"><Toggle label="Top edge" value={visual.format.borderEdges?.top!==false} onChange={x=>updateVisual(v=>{formatDefaults(v);v.format.borderEdges={...v.format.borderEdges,top:x}})}/><Toggle label="Right edge" value={visual.format.borderEdges?.right!==false} onChange={x=>updateVisual(v=>{formatDefaults(v);v.format.borderEdges={...v.format.borderEdges,right:x}})}/><Toggle label="Bottom edge" value={visual.format.borderEdges?.bottom!==false} onChange={x=>updateVisual(v=>{formatDefaults(v);v.format.borderEdges={...v.format.borderEdges,bottom:x}})}/><Toggle label="Left edge" value={visual.format.borderEdges?.left!==false} onChange={x=>updateVisual(v=>{formatDefaults(v);v.format.borderEdges={...v.format.borderEdges,left:x}})}/></div><div className="cornerEditor"><div className="cornerEditorHead"><b>Visual corners</b><Toggle label="Link all corners" value={visual.format.cornerLinked!==false} onChange={x=>updateVisual(v=>{formatDefaults(v);v.format.cornerLinked=x;if(x){const r=v.format.cornerRadii?.topLeft??v.format.cornerRadius??12;v.format.cornerRadius=r;v.format.cornerRadii={topLeft:r,topRight:r,bottomRight:r,bottomLeft:r}}})}/></div>{visual.format.cornerLinked!==false?<label>All corners<input type="range" min="0" max="48" value={visual.format.cornerRadii?.topLeft??visual.format.cornerRadius??12} onChange={e=>updateVisual(v=>{formatDefaults(v);const r=+e.target.value;v.format.cornerRadius=r;v.format.cornerRadii={topLeft:r,topRight:r,bottomRight:r,bottomLeft:r}})}/><span className="cornerValue">{visual.format.cornerRadii?.topLeft??visual.format.cornerRadius??12}px</span></label>:<div className="cornerGrid"><label>Top left<input type="number" min="0" max="48" value={visual.format.cornerRadii?.topLeft??12} onChange={e=>updateVisual(v=>{formatDefaults(v);v.format.cornerRadii={...v.format.cornerRadii,topLeft:+e.target.value}})}/></label><label>Top right<input type="number" min="0" max="48" value={visual.format.cornerRadii?.topRight??12} onChange={e=>updateVisual(v=>{formatDefaults(v);v.format.cornerRadii={...v.format.cornerRadii,topRight:+e.target.value}})}/></label><label>Bottom left<input type="number" min="0" max="48" value={visual.format.cornerRadii?.bottomLeft??12} onChange={e=>updateVisual(v=>{formatDefaults(v);v.format.cornerRadii={...v.format.cornerRadii,bottomLeft:+e.target.value}})}/></label><label>Bottom right<input type="number" min="0" max="48" value={visual.format.cornerRadii?.bottomRight??12} onChange={e=>updateVisual(v=>{formatDefaults(v);v.format.cornerRadii={...v.format.cornerRadii,bottomRight:+e.target.value}})}/></label></div>}</div><label>Font<select value={visual.format.fontFamily||'Inter'} onChange={e=>setFmt('fontFamily',e.target.value)}><option>Aptos</option><option>Segoe UI Variable</option><option>Segoe UI</option><option>Inter</option><option>Poppins</option><option>Roboto</option><option>Arial</option><option>Georgia</option></select></label></Section><div style={{padding:'16px',borderTop:'1px solid var(--glass-border)',marginTop:16}}><button className="btnGlass danger" style={{width:'100%',justifyContent:'center'}} onClick={removeVisual}>
-<Trash2 size={15}/> Delete visual</button></div></div>)
-  :tab==='analytics'?(!visual?<div className="paneEmpty"><LineChart/><b>Select a visual</b><span>Analytics settings appear for the selected chart.</span></div>:!profile?.axes?<div className="paneEmpty"><LineChart/><b>Analytics not supported for this visual</b><span>Reference lines and category zoom are available for axis-based charts such as Bar, Column, Line, Area, Combo, Scatter and Waterfall.</span></div>:<div className="propertyList"><Section title="Reference line" icon={<LineChart size={14}/>}><Toggle label="Show reference line" value={!!visual.format.referenceLineEnabled} onChange={x=>setFmt('referenceLineEnabled',x)}/>{visual.format.referenceLineEnabled&&<><label>Value<input type="number" value={visual.format.referenceLineValue??0} onChange={e=>setFmt('referenceLineValue',+e.target.value)}/></label><label>Label<input value={visual.format.referenceLineLabel||'Reference'} onChange={e=>setFmt('referenceLineLabel',e.target.value)}/></label><label>Line color<ColorControl value={visual.format.referenceLineColor||'#d13438'} onChange={x=>setFmt('referenceLineColor',x)}/></label></>}</Section><Section title="Exploration" icon={<SlidersHorizontal size={14}/>}><Toggle label="Zoom slider" value={!!visual.format.zoomSlider} onChange={x=>setFmt('zoomSlider',x)}/><label>Visible categories<input type="number" min="3" max="100" value={visual.format.visibleCategoryCount||12} onChange={e=>setFmt('visibleCategoryCount',Math.max(3,+e.target.value||12))}/></label><div className="formatHint">Dense charts display this many categories and expose a scrollbar for the remainder.</div></Section></div>)
+  {tab==='build'&&visual?.type==='button'&&<div className="propertyList interactionActionEditor buttonActionEditor"><ButtonActionEditor visual={visual} page={page} pages={model?.__pages||[]} updateVisual={updateVisual}/><div className="visualActions"><button onClick={duplicate}><Copy size={14}/>Duplicate</button><button className="dangerBtn" onClick={removeVisual}><Trash2 size={14}/>Delete</button></div></div>}
+  {tab==='build'?(!visual?<div className="paneEmpty"><Layers3/><b>Select a visual</b><span>Choose a visual on the canvas to bind fields and measures.</span></div>:<div className="propertyList">{visual.type==='textbox'?<Section open title="Text box" icon={<TextCursorInput size={14}/>}><div className="formatHint">Double-click the text box on the canvas to edit and format text directly.</div><label>Plain text<textarea rows={7} value={visual.text||''} onChange={e=>updateVisual(v=>{v.text=e.target.value;v.richText=undefined})} placeholder="Enter report text..."/></label></Section>:visual.type==='image'?<Section open title="Image" icon={<ImageIcon size={14}/>}><div className="formatHint">PNG, JPG, SVG, GIF and WEBP files up to 8 MB are stored with the report.</div><label className="imageUploadButton"><Upload size={14}/>{visual.imageSrc?'Replace image':'Choose image'}<input type="file" accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(file)uploadBackgroundImage(file,dataUrl=>updateVisual(v=>{v.imageSrc=dataUrl;v.imageName=file.name}));e.currentTarget.value=''}}/></label>{visual.imageName&&<small>{visual.imageName}</small>}</Section>:visual.type==='shape'?<Section open title="Shape" icon={<LayoutDashboard size={14}/>}><label>Shape<select value={visual.format.shapeType||'rectangle'} onChange={e=>updateVisual(v=>{v.format.shapeType=e.target.value as VisualFormat['shapeType'];if(v.format.shapeType==='line'&&v.format.shapeStrokeVisible===false)v.format.shapeStrokeVisible=true})}><option value="rectangle">Rectangle</option><option value="roundedRectangle">Rounded rectangle</option><option value="ellipse">Ellipse</option><option value="line">Line</option><option value="triangle">Triangle</option><option value="diamond">Diamond</option></select></label><div className="formatHint">Use the Format tab to change fill, transparency, outline, and line style.</div></Section>:visual.type==='button'?null:<><Section open title="Data" icon={<Layers3 size={14}/>}><DataWells visual={visual} addBinding={addBinding} removeBinding={removeBinding} updateVisual={updateVisual} model={model}/></Section>{visual.type==='map'&&<MapBuildTools visual={visual} updateVisual={updateVisual}/>}<Section open title="Visual group" icon={<Layers3 size={14}/>}><label>Group name<input value={visual.groupId||''} list="visual-groups-list" onChange={e=>formatUpdateVisual(v=>v.groupId=e.target.value.trim()||undefined)} placeholder="e.g. charts-panel"/></label><datalist id="visual-groups-list">{Array.from(new Set(page.visuals.map(v=>v.groupId?.trim()).filter(Boolean))).map(g=><option key={g as string} value={g as string}/>)}</datalist></Section></>}{visual.type==='slicer'&&<Section open title="Slicer layout" icon={<Filter size={14}/>}><label>Style<select value={visual.slicerStyle||'list'} onChange={e=>updateVisual(v=>v.slicerStyle=e.target.value as any)}><option value="list">List</option><option value="dropdown">Dropdown</option><option value="button">Tile</option></select></label></Section>}<div className="visualActions"><button onClick={duplicate}><Copy size={14}/>Duplicate</button><button className="dangerBtn" onClick={removeVisual}><Trash2 size={14}/>Delete</button></div></div>)
+  :tab==='format'?(!visual?<div className="paneEmpty"><Palette/><b>Select a visual</b><span>Visual formatting appears here.</span></div>:<FormattingWorkspace visual={visual} categories={liveCategories} updateVisual={formatUpdateVisual} multiSelect={multiSelect} multiSelectSameType={multiSelectSameType}/>)
+  :tab==='analytics'?(!visual?<div className="paneEmpty"><LineChart/><b>Select a visual</b><span>Analytics settings appear for the selected chart.</span></div>:<FormattingWorkspace visual={visual} updateVisual={formatUpdateVisual} mode="analytics" multiSelect={multiSelect} multiSelectSameType={multiSelectSameType}/>)
   :<div className="propertyList">
     <Section title="Report Theme" icon={<Palette size={14}/>}>
       <div className="themeGallery">{REPORT_THEMES.map(theme=><button key={theme.id} className={(pageSettings.themeId||'light-professional')===theme.id?'themeCard active':'themeCard'} onClick={()=>updatePage(p=>applyThemeToPage(p,theme.id))}>
@@ -504,24 +1172,9 @@ function RightPane({visual,updateVisual,removeVisual,duplicate,page,updatePage,r
       <div className="inlineActions"><button onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.backgroundImage=undefined})}><Trash2 size={13}/>Remove image</button><button onClick={()=>updatePage(p=>{const fresh=defaultPageSettings();p.settings=fresh})}><RotateCcw size={13}/>Reset page</button></div>
       <div className="formatHint">PNG, JPG, WEBP or GIF up to 8 MB. The image is stored with report metadata for this authoring build.</div>
     </Section>
-    <Section title="Dashboard Header" icon={<Heading1 size={14}/>}>
-<Toggle label="Show header" value={pageSettings.header.visible} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.header.visible=x})}/>
-<label>Dashboard title<input value={pageSettings.header.title} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.title=e.target.value})}/></label>
-<label>Subtitle<input value={pageSettings.header.subtitle} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.subtitle=e.target.value})}/></label>
-<div className="headerPresetButtons"><button onClick={()=>updatePage(p=>{pageDefaults(p);Object.assign(p.settings!.header,{height:76,fontSize:26,subtitleFontSize:11,paddingTop:10,paddingBottom:10})})}>Compact</button><button onClick={()=>updatePage(p=>{pageDefaults(p);Object.assign(p.settings!.header,{height:96,fontSize:30,subtitleFontSize:12,paddingTop:14,paddingBottom:14})})}>Standard</button><button onClick={()=>updatePage(p=>{pageDefaults(p);Object.assign(p.settings!.header,{height:132,fontSize:38,subtitleFontSize:14,paddingTop:20,paddingBottom:20})})}>Large</button></div>
-<label>Header height <span>{pageSettings.header.height??84}px</span><input type="range" min="60" max="220" value={pageSettings.header.height??84} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.height=+e.target.value})}/></label>
-<div className="twoCol"><label>Title size<input type="number" min="16" max="64" value={pageSettings.header.fontSize} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.fontSize=+e.target.value})}/></label><label>Subtitle size<input type="number" min="9" max="28" value={pageSettings.header.subtitleFontSize??12} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.subtitleFontSize=+e.target.value})}/></label></div>
-<label>Alignment<select value={pageSettings.header.alignment} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.alignment=e.target.value as any})}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
-<label>Header background<ColorControl value={pageSettings.header.background} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.header.background=x})}/></label>
-<div className="twoCol"><label>Title color<ColorControl value={pageSettings.header.titleColor} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.header.titleColor=x})}/></label><label>Subtitle color<ColorControl value={pageSettings.header.subtitleColor} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.header.subtitleColor=x})}/></label></div>
-<div className="twoCol"><label>Top padding<input type="number" min="0" max="60" value={pageSettings.header.paddingTop??12} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.paddingTop=+e.target.value})}/></label><label>Bottom padding<input type="number" min="0" max="60" value={pageSettings.header.paddingBottom??12} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.paddingBottom=+e.target.value})}/></label></div>
-<div className="twoCol"><label>Left padding<input type="number" min="0" max="80" value={pageSettings.header.paddingLeft??24} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.paddingLeft=+e.target.value})}/></label><label>Right padding<input type="number" min="0" max="80" value={pageSettings.header.paddingRight??24} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.paddingRight=+e.target.value})}/></label></div>
-<label>Header corner radius <span>{pageSettings.header.borderRadius??14}px</span><input type="range" min="0" max="40" value={pageSettings.header.borderRadius??14} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.header.borderRadius=+e.target.value})}/></label>
-<Toggle label="Show generated-date box" value={pageSettings.header.showGeneratedInfo!==false} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.header.showGeneratedInfo=x})}/>
-{pageSettings.header.showGeneratedInfo!==false&&<label>Generated-date background<ColorControl value={pageSettings.header.generatedInfoBackground||'#f8fbff'} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.header.generatedInfoBackground=x})}/></label>}
-</Section><Section title="Page size & canvas" icon={<Maximize2 size={14}/>}>
+<Section title="Page size & canvas" icon={<Maximize2 size={14}/>}>
 <div className="powerBiCanvasSettings"><label>Type<select value={pageType} onChange={e=>setPageType(e.target.value as any)}><option value="16:9">16:9</option><option value="4:3">4:3</option><option value="Letter">Letter</option><option value="Tooltip">Tooltip</option><option value="Custom">Custom</option></select></label><div className="canvasDimensionGrid"><label>Width<input type="number" min="240" max="4000" disabled={pageType!=='Custom'} value={pageSettings.pageWidth||1280} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.pageWidth=Math.max(240,+e.target.value);p.settings!.pageSizePreset='Custom'})}/></label><label>Height<input type="number" min="180" max="6000" disabled={pageType!=='Custom'} value={pageSettings.pageHeight||720} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.pageHeight=Math.max(180,+e.target.value);p.settings!.pageSizePreset='Custom';p.settings!.autoFitHeight=false})}/></label></div><label>Vertical alignment<select value={pageSettings.pageVerticalAlignment||'top'} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.pageVerticalAlignment=e.target.value as any})}><option value="top">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option></select></label><button className="resetCanvasType" onClick={()=>setPageType('16:9')}><RotateCcw size={13}/>Reset to default</button></div>
-<details className="canvasAdvancedOptions"><summary>Advanced canvas options</summary><div><label>Horizontal alignment<select value={pageSettings.pageAlignment||'center'} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.pageAlignment=e.target.value as any})}><option value="center">Center</option><option value="left">Left</option></select></label><div className="pageSizeActions"><button onClick={()=>updatePage(p=>{pageDefaults(p);const w=p.settings!.pageWidth||1280;p.settings!.pageWidth=p.settings!.pageHeight||720;p.settings!.pageHeight=w;p.settings!.pageSizePreset='Custom';p.settings!.autoFitHeight=false})}>Swap orientation</button><button onClick={()=>updatePage(p=>{pageDefaults(p);const headerH=p.settings!.header.visible?(p.settings!.header.height||84):0;const maxRow=(p.visuals||[]).reduce((m,v)=>Math.max(m,(v.y||0)+(v.h||2)),0);p.settings!.pageHeight=Math.max(480,Math.ceil((headerH+34+maxRow*66+(p.settings!.footerGap||32))/50)*50);p.settings!.pageSizePreset='Custom';p.settings!.autoFitHeight=true})}>Fit height to visuals</button></div><Toggle label="Show canvas grid" value={pageSettings.showGrid!==false} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.showGrid=x})}/><Toggle label="Snap visuals to grid" value={pageSettings.snapToGrid!==false} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.snapToGrid=x})}/><Toggle label="Allow visuals to overlap" value={pageSettings.allowOverlap===true} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.allowOverlap=x})}/></div></details>
+<details className="canvasAdvancedOptions"><summary>Advanced canvas options</summary><div><label>Horizontal alignment<select value={pageSettings.pageAlignment||'center'} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.pageAlignment=e.target.value as any})}><option value="center">Center</option><option value="left">Left</option></select></label><div className="pageSizeActions"><button onClick={()=>updatePage(p=>{pageDefaults(p);const w=p.settings!.pageWidth||1280;p.settings!.pageWidth=p.settings!.pageHeight||720;p.settings!.pageHeight=w;p.settings!.pageSizePreset='Custom';p.settings!.autoFitHeight=false})}>Swap orientation</button><button onClick={()=>updatePage(p=>{pageDefaults(p);const headerH=0;const maxBottom=(p.visuals||[]).reduce((m,v)=>Math.max(m,(v.y||0)+(v.h||30)),0);p.settings!.pageHeight=Math.max(480,Math.ceil((headerH+34+maxBottom+(p.settings!.footerGap||32))/50)*50);p.settings!.pageSizePreset='Custom';p.settings!.autoFitHeight=true})}>Fit height to visuals</button></div><Toggle label="Show canvas grid" value={pageSettings.showGrid!==false} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.showGrid=x})}/><Toggle label="Snap visuals to grid" value={pageSettings.snapToGrid!==false} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.snapToGrid=x})}/><Toggle label="Allow visuals to overlap" value={pageSettings.allowOverlap===true} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.allowOverlap=x})}/></div></details>
 </Section>
 <Section title="Page background" icon={<PaintBucket size={14}/>}>
 <label>Canvas color<ColorControl value={pageSettings.background} onChange={x=>updatePage(p=>{pageDefaults(p);p.settings!.background=x})}/></label>
@@ -533,28 +1186,29 @@ function RightPane({visual,updateVisual,removeVisual,duplicate,page,updatePage,r
 <div className="twoCol"><label>Top margin<input type="number" min="0" max="120" value={pageSettings.navigationTopMargin??16} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.navigationTopMargin=+e.target.value})}/></label><label>Bottom margin<input type="number" min="0" max="160" value={pageSettings.navigationBottomMargin??24} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.navigationBottomMargin=+e.target.value})}/></label></div>
 <div className="formatHint">Navigation is rendered after the complete report page height. It no longer consumes canvas height or floats in the middle of a tall page.</div>
 </>}
+</Section><Section title="Drill through" icon={<ArrowDownCircle size={14}/>}>
+<div className="formatHint">Allow users to drill through to this page from other visuals when they click on a specific category.</div>
+<label>Target fields (comma separated)<input placeholder="e.g. Table.Year, Store.City" value={(page.drillThroughFields||[]).join(', ')} onChange={e=>updatePage(p=>{p.drillThroughFields=e.target.value.split(',').map(x=>x.trim()).filter(Boolean)})}/></label>
 </Section></div>}</div>;
 }
-function SelectionPane({page,selectedIds,selectedVisualId,onSelect,onLayer,onReorder,onReorderTab,onBringToFront,onToggleVisibility,onCollapse}:{page:Page,selectedIds:string[],selectedVisualId:string|null,onSelect:(id:string,additive:boolean)=>void,onLayer:(mode:'front'|'back'|'forward'|'backward')=>void,onReorder:(sourceId:string,targetId:string)=>void,onReorderTab:(sourceId:string,targetId:string)=>void,onBringToFront:(id:string)=>void,onToggleVisibility:(id:string)=>void,onCollapse:()=>void}){
+
+function SelectionPane({page,selectedIds,selectedVisualId,onSelect,onLayer,onReorder,onReorderTab,onBringToFront,onToggleVisibility,onCreateGroup,onUngroup,onCollapse}:{page:Page,selectedIds:string[],selectedVisualId:string|null,onSelect:(id:string,additive:boolean)=>void,onLayer:(mode:'front'|'back'|'forward'|'backward')=>void,onReorder:(sourceId:string,targetId:string)=>void,onReorderTab:(sourceId:string,targetId:string)=>void,onBringToFront:(id:string)=>void,onToggleVisibility:(id:string)=>void,onCreateGroup:(name:string)=>void,onUngroup:()=>void,onCollapse:()=>void}){
   const[draggedId,setDraggedId]=useState<string|null>(null);
-  const[tab,setTab]=useState<'layer'|'tab'>('layer');
-  const ordered=[...page.visuals].reverse();
+  const[activeTab,setActiveTab]=useState<'layer'|'tab'>('layer');
+  const[groupName,setGroupName]=useState('');
+  const orderedLayer=[...page.visuals].reverse();
   const orderedTab=[...page.visuals].sort((a,b)=>(a.tabOrder??0)-(b.tabOrder??0));
   const hasSelection=selectedIds.length>0||!!selectedVisualId;
+  const groups=Array.from(new Set(page.visuals.map(visual=>visual.groupId?.trim()).filter(Boolean) as string[])).sort((a,b)=>a.localeCompare(b));
+  const selectedVisuals=page.visuals.filter(visual=>selectedIds.includes(visual.id)||(selectedIds.length===0&&visual.id===selectedVisualId));
+  const canUngroup=selectedVisuals.some(visual=>!!visual.groupId);
+  const ordered = activeTab==='layer'?orderedLayer:orderedTab;
   return <aside className="selectionPaneGlass" aria-label="Selection and layer order">
-    <div className="selectionPaneHeader"><div><Layers3 size={17}/><b>Selection</b></div><button title="Collapse Selection pane" aria-label="Collapse Selection pane" onClick={onCollapse}><PanelRightClose size={17}/></button></div>
-    <div style={{display:'flex',borderBottom:'1px solid var(--border)',marginBottom:'8px'}}>
-      <button style={{flex:1,padding:'8px',background:tab==='layer'?'var(--soft)':'transparent',borderBottom:tab==='layer'?'2px solid var(--primary)':'none',fontWeight:tab==='layer'?600:400}} onClick={()=>setTab('layer')}>Layer order</button>
-      <button style={{flex:1,padding:'8px',background:tab==='tab'?'var(--soft)':'transparent',borderBottom:tab==='tab'?'2px solid var(--primary)':'none',fontWeight:tab==='tab'?600:400}} onClick={()=>setTab('tab')}>Tab order</button>
-    </div>
-    {tab==='layer' && <div className="selectionLayerActions"><button disabled={!hasSelection} onClick={()=>onLayer('front')} title="Bring to front">Front</button><button disabled={!hasSelection} onClick={()=>onLayer('forward')} title="Bring forward">Forward</button><button disabled={!hasSelection} onClick={()=>onLayer('backward')} title="Send backward">Backward</button><button disabled={!hasSelection} onClick={()=>onLayer('back')} title="Send to back">Back</button></div>}
-    <div className="selectionLayerList">
-      {tab==='layer' ? ordered.map((visual,index)=>{const active=selectedIds.includes(visual.id)||selectedVisualId===visual.id;return <div key={visual.id} draggable className={'selectionLayerRow '+(active?'selected ':'')+(visual.hidden?'hidden ':'')+(draggedId===visual.id?'dragging ':'')} onDragStart={event=>{setDraggedId(visual.id);event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',visual.id)}} onDragEnd={()=>setDraggedId(null)} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect='move'}} onDrop={event=>{event.preventDefault();const sourceId=event.dataTransfer.getData('text/plain')||draggedId;if(sourceId&&sourceId!==visual.id)onReorder(sourceId,visual.id);setDraggedId(null)}} onClick={event=>onSelect(visual.id,event.ctrlKey||event.metaKey||event.shiftKey)}><span className="selectionDragHandle" title="Drag to change layer order"><GripVertical size={14}/></span><button className="selectionVisibility" title={visual.hidden?'Show visual':'Hide visual'} onClick={event=>{event.stopPropagation();onToggleVisibility(visual.id)}}>{visual.hidden?<EyeOff size={15}/>:<Eye size={15}/>}</button><span className="selectionVisualGlyph">{visualIcon(visual.type)}</span><div><b>{visual.title||visualLabels[visual.type]}</b><small>{visualLabels[visual.type]} &bull; layer {ordered.length-index}</small></div><button className="selectionBringFront" disabled={index===0} title={index===0?'Already at front':'Bring this visual to front'} onClick={event=>{event.stopPropagation();onBringToFront(visual.id)}}>{index===0?<em>Front</em>:<ArrowUpCircle size={15}/>}</button></div>})
-      : orderedTab.map((visual,index)=>{const active=selectedIds.includes(visual.id)||selectedVisualId===visual.id;return <div key={visual.id} draggable className={'selectionLayerRow '+(active?'selected ':'')+(draggedId===visual.id?'dragging ':'')} onDragStart={event=>{setDraggedId(visual.id);event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',visual.id)}} onDragEnd={()=>setDraggedId(null)} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect='move'}} onDrop={event=>{event.preventDefault();const sourceId=event.dataTransfer.getData('text/plain')||draggedId;if(sourceId&&sourceId!==visual.id)onReorderTab(sourceId,visual.id);setDraggedId(null)}} onClick={event=>onSelect(visual.id,event.ctrlKey||event.metaKey||event.shiftKey)}><span className="selectionDragHandle" title="Drag to change tab order"><GripVertical size={14}/></span><span className="selectionVisualGlyph" style={{marginLeft:'8px'}}>{visualIcon(visual.type)}</span><div><b>{visual.title||visualLabels[visual.type]}</b><small>{visualLabels[visual.type]} &bull; tab index {index+1}</small></div></div>})
-      }
-      {!page.visuals.length&&<div className="selectionPaneEmpty">Add a visual to see its order.</div>}
-    </div>
-    <div className="selectionPaneHint">Drag rows to reorder. {tab==='layer'?'Use the eye to show or hide a visual.':''} Ctrl or Shift-click to select multiple visuals.</div>
+      <div className="selectionPaneHeader"><div className="segmentedFormat" style={{marginRight: 'auto', display: 'flex'}}><button className={activeTab==='layer'?'active':''} onClick={()=>setActiveTab('layer')}>Layer order</button><button className={activeTab==='tab'?'active':''} onClick={()=>setActiveTab('tab')}>Tab order</button></div><button title="Collapse Selection pane" aria-label="Collapse Selection pane" onClick={onCollapse}><PanelRightClose size={17}/></button></div>
+    {activeTab==='layer'&&<div className="selectionLayerActions"><button disabled={!hasSelection} onClick={()=>onLayer('front')} title="Bring to front">Front</button><button disabled={!hasSelection} onClick={()=>onLayer('forward')} title="Bring forward">Forward</button><button disabled={!hasSelection} onClick={()=>onLayer('backward')} title="Send backward">Backward</button><button disabled={!hasSelection} onClick={()=>onLayer('back')} title="Send to back">Back</button></div>}
+    {activeTab==='layer'&&<div className="selectionGroupCreator"><div><input aria-label="Group name" value={groupName} onChange={event=>setGroupName(event.target.value)} onKeyDown={event=>{if(event.key==='Enter'&&hasSelection&&groupName.trim()){onCreateGroup(groupName.trim());setGroupName('')}}} placeholder="New group name"/><button disabled={!hasSelection||!groupName.trim()} onClick={()=>{onCreateGroup(groupName.trim());setGroupName('')}}><Layers3 size={13}/>Group</button></div><button className="selectionUngroup" disabled={!canUngroup} onClick={onUngroup}>Ungroup selected</button>{groups.length>0&&<div className="selectionGroupList">{groups.map(group=>{const members=page.visuals.filter(visual=>visual.groupId?.trim()===group);return <button key={group} title={`Select all ${members.length} visuals`} onClick={()=>members.forEach((visual,index)=>onSelect(visual.id,index>0))}><span>{group}</span><small>{members.length}</small></button>})}</div>}</div>}
+    <div className="selectionLayerList">{ordered.map((visual,index)=>{const active=selectedIds.includes(visual.id)||selectedVisualId===visual.id;return <div key={visual.id} draggable className={'selectionLayerRow '+(active?'selected ':'')+(visual.hidden?'hidden ':'')+(draggedId===visual.id?'dragging ':'')} onDragStart={event=>{setDraggedId(visual.id);event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',visual.id)}} onDragEnd={()=>setDraggedId(null)} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect='move'}} onDrop={event=>{event.preventDefault();const sourceId=event.dataTransfer.getData('text/plain')||draggedId;if(sourceId&&sourceId!==visual.id){if(activeTab==='layer')onReorder(sourceId,visual.id);else onReorderTab(sourceId,visual.id);}setDraggedId(null)}} onClick={event=>onSelect(visual.id,event.ctrlKey||event.metaKey||event.shiftKey)}><span className="selectionDragHandle" title="Drag to change order"><GripVertical size={14}/></span><button className="selectionVisibility" title={visual.hidden?'Show visual':'Hide visual'} onClick={event=>{event.stopPropagation();onToggleVisibility(visual.id)}}>{visual.hidden?<EyeOff size={15}/>:<Eye size={15}/>}</button><span className="selectionVisualGlyph">{visualIcon(visual.type)}</span><div><b>{visual.title||visualLabels[visual.type]}</b><small>{visualLabels[visual.type]} · {activeTab==='layer'?'layer '+(orderedLayer.length-index):'tab '+(index+1)}{visual.groupId&&<> · <strong>{visual.groupId}</strong></>}</small></div>{activeTab==='layer'&&<button className="selectionBringFront" disabled={index===0} title={index===0?'Already at front':'Bring this visual to front'} onClick={event=>{event.stopPropagation();onBringToFront(visual.id)}}>{index===0?<em>Front</em>:<ArrowUpCircle size={15}/>}</button>}</div>})}{!ordered.length&&<div className="selectionPaneEmpty">Add a visual to see its order.</div>}</div>
+    <div className="selectionPaneHint">Drag rows to reorder {activeTab==='layer'?'layers':'tabs'}. Use the eye to show or hide a visual. Ctrl or Shift-click to select multiple visuals.</div>
   </aside>
 }
 export default function ReportWorkbench(){
@@ -565,103 +1219,236 @@ export default function ReportWorkbench(){
   const{project,update,selectedVisualId,selectVisual,setView}=useStudio();
   const initial=project?.report.activePageId||project?.report.pages?.[0]?.id||'page-1';
   const[activePage,setActivePage]=useState(initial),[interactionFilterMap,setInteractionFilterMap]=useState<Record<string,VisualFilter>>({}),
+  [buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),
   [dataPaneVisible,setDataPaneVisible]=useState(true),[propertiesVisible,setPropertiesVisible]=useState(true),
-  [filtersVisible,setFiltersVisible]=useState(false),[selectionPaneVisible,setSelectionPaneVisible]=useState(true),
+  [filtersVisible,setFiltersVisible]=useState(false),[selectionPaneVisible,setSelectionPaneVisible]=useState(false),
   [galleryVisible,setGalleryVisible]=useState(true),[pageTabsVisible,setPageTabsVisible]=useState(true),
   [appSidebarVisible,setAppSidebarVisible]=useState(true),[panelMenu,setPanelMenu]=useState(false),
   [designerView,setDesignerView]=useState<'fit'|'actual'|'custom'>('fit'),[designerScale,setDesignerScale]=useState(1),[manualScale,setManualScale]=useState(1),
   [arrangeMenu,setArrangeMenu]=useState(false),
   [selectedVisualIds,setSelectedVisualIds]=useState<string[]>([]),
+  [moreVisualsOpen,setMoreVisualsOpen]=useState(false),[moreVisualsSearch,setMoreVisualsSearch]=useState(''),
+  [visualCategories,setVisualCategories]=useState<Record<string,string[]>>({}),
+  [clipboardCount,setClipboardCount]=useState(0),
+  [formatPainter,setFormatPainter]=useState<{sourceId:string;type:VisualType;format:VisualFormat}|null>(null),
   [ribbonTab,setRibbonTab]=useState<'home'|'insert'|'modeling'|'view'|'optimize'>('home');
+  const [renamingPageId, setRenamingPageId] = useState<string|null>(null);
+  const [draggedPageId, setDraggedPageId] = useState<string|null>(null);
+  const [pageContextMenu,setPageContextMenu]=useState<{pageId:string;x:number;y:number}|null>(null);
   const canvasRef=useRef<HTMLDivElement|null>(null);
+  const pageSurfaceRef=useRef<HTMLDivElement|null>(null);
+  const visualClipboardRef=useRef<Visual[]>([]);
+  const imageVisualInputRef=useRef<HTMLInputElement|null>(null);
+  const pageHistoryRef=useRef<string[]>([]),authorVisibilityDefaultsRef=useRef<Record<string,boolean>>({});
   useEffect(()=>{document.body.classList.toggle('hideAppSidebar',!appSidebarVisible);return()=>document.body.classList.remove('hideAppSidebar')},[appSidebarVisible]);
+  useEffect(()=>{if(!pageContextMenu)return;const close=(event:KeyboardEvent)=>{if(event.key==='Escape')setPageContextMenu(null)};document.addEventListener('keydown',close);return()=>document.removeEventListener('keydown',close)},[pageContextMenu]);
   useEffect(()=>{
     if(!project||designerView==='actual'){setDesignerScale(1);return}
     if(designerView==='custom'){setDesignerScale(manualScale);return}
     const pg=project.report.pages.find(p=>p.id===activePage)||project.report.pages[0];if(!pg)return;
-    const width=pg.settings?.pageWidth||1920,height=pg.settings?.pageHeight||1080;const visualBottom=(pg.visuals||[]).reduce((m,v)=>Math.max(m,(v.y||0)*66+(v.h||2)*50+Math.max(0,(v.h||2)-1)*16),0);const headerH=pg.settings?.header?.visible?(pg.settings?.header?.height||84):0;const contentHeight=Math.max(480,headerH+34+visualBottom+(pg.settings?.footerGap??32));const effectiveHeight=pg.settings?.autoFitHeight?contentHeight:height;const navExtra=pg.settings?.showNavigation?72:0;const wrap=canvasRef.current;if(!wrap)return;
+    const width=pg.settings?.pageWidth||1920,height=pg.settings?.pageHeight||1080;const visualBottom=(pg.visuals||[]).reduce((m,v)=>Math.max(m,(v.y||0)+(v.h||100)),0);const headerH=pg.settings?.header?.visible?(pg.settings?.header?.height||84):0;const contentHeight=Math.max(480,headerH+visualBottom+(pg.settings?.footerGap??32));const effectiveHeight=pg.settings?.autoFitHeight?contentHeight:height;const navExtra=pg.settings?.showNavigation?72:0;const wrap=canvasRef.current;if(!wrap)return;
     const compute=()=>{const r=wrap.getBoundingClientRect();const availW=Math.max(500,r.width-22),availH=Math.max(420,r.height-22);setDesignerScale(Math.max(.1,Math.min(availW/width,availH/(effectiveHeight+navExtra))))};
     compute();const ro=new ResizeObserver(compute);ro.observe(wrap);window.addEventListener('resize',compute);return()=>{ro.disconnect();window.removeEventListener('resize',compute)};
   },[project,activePage,designerView,manualScale,dataPaneVisible,propertiesVisible,filtersVisible,appSidebarVisible,pageTabsVisible]);
   if(!project)return null;
   if(!project.report.pages.length){project.report.pages.push({id:'page-1',name:'Page 1',visuals:[],filters:[],settings:defaultPageSettings()})}
   const page=pageDefaults(project.report.pages.find(p=>p.id===activePage)||project.report.pages[0]);const selected=page.visuals.find(v=>v.id===selectedVisualId);const roleId=project.security?.activeRoleId;project.report.filters=project.report.filters||[];
+  for(const visual of page.visuals)if(visual.type==='button'&&visual.action?.dynamicLabel!==false)visual.buttonLabel=resolveActionButtonLabel(visual,page,project.report.pages);
   const selectedIds=selectedVisualIds.filter(id=>page.visuals.some(v=>v.id===id));
-  const selectOne=(id:string,additive=false)=>{setSelectedVisualIds(previous=>{const valid=previous.filter(x=>page.visuals.some(v=>v.id===x));if(!additive){selectVisual(id);return[id]}const next=valid.includes(id)?valid.filter(x=>x!==id):[...valid,id];selectVisual(next.includes(id)?id:(next[next.length-1]||null));return next})};
+  const focusCanvas=()=>requestAnimationFrame(()=>pageSurfaceRef.current?.focus({preventScroll:true}));
+  const selectOne=(id:string,additive=false)=>{setSelectedVisualIds(previous=>{const valid=previous.filter(x=>page.visuals.some(v=>v.id===x));if(!additive){selectVisual(id);return[id]}const next=valid.includes(id)?valid.filter(x=>x!==id):[...valid,id];selectVisual(next.includes(id)?id:(next[next.length-1]||null));return next});focusCanvas()};
   const interactionFilters=Object.values(interactionFilterMap);
   const allSharedFilters=[...(project.report.filters||[]),...(page.filters||[]),...interactionFilters];
-  const gridFactor=page.settings?.snapToGrid===false?24:12;
-  const layout=page.visuals.map(v=>({i:v.id,x:Math.round(v.x*gridFactor),y:Math.round(v.y*gridFactor),w:Math.round(v.w*gridFactor),h:Math.round(v.h*gridFactor),minW:2*gridFactor,minH:2*gridFactor}));
   const updatePage=(fn:(p:Page)=>void)=>update(p=>{const pg=p.report.pages.find(x=>x.id===page.id)!;pageDefaults(pg);fn(pg);return p});
   const setReportFilters=(filters:VisualFilter[])=>update(p=>{p.report.filters=filters;return p});
-  const syncLayout=(l:Layout[])=>updatePage(pg=>{for(const x of l){const v=pg.visuals.find(z=>z.id===x.i);if(v)Object.assign(v,{x:x.x/gridFactor,y:x.y/gridFactor,w:x.w/gridFactor,h:x.h/gridFactor})}});
+  const syncGeometry=(items:Record<string,{x:number;y:number;w:number;h:number}>)=>updatePage(pg=>{for(const[id,geometry]of Object.entries(items)){const visual=pg.visuals.find(item=>item.id===id);if(visual)Object.assign(visual,geometry)}});
   const newPageSettings=()=>{const settings=defaultPageSettings(),preset=project.appPreferences?.defaultPageSize||'HD 16:9';const sizes:Record<string,[number,number]>={'HD 16:9':[1280,720],'Full HD 16:9':[1920,1080],'A4 Landscape':[1123,794]};[settings.pageWidth,settings.pageHeight]=sizes[preset]||sizes['HD 16:9'];settings.pageSizePreset=preset;settings.snapToGrid=project.appPreferences?.snapToGrid!==false;settings.showGrid=project.appPreferences?.defaultShowGrid!==false;return settings};
-  const newVisual=(type:VisualType):Visual=>{const profile=visualProfile(type);return ({id:crypto.randomUUID(),type,title:visualLabels[type],x:0,y:0,w:profile.w,h:profile.h,text:type==='textbox'?'Add narrative text, notes or instructions here.':undefined,buttonLabel:type==='button'?'Go to page':undefined,action:type==='button'?{type:'none'}:undefined,slicerStyle:type==='slicer'?'list':undefined,bindings:{axis:[],values:[],target:[]},filters:[],sort:[],format:{accent:'#118dff',fontSize:(type==='kpi'||type==='card')?28:12,showTitle:type!=='textbox',dataLabels:false,background:'#ffffff',fontFamily:project.appPreferences?.defaultFont||'Segoe UI',fieldFormats:{},titleFontSize:12,titleColor:'#242424',labelFontSize:10,labelColor:'#242424',labelPosition:'top',legendVisible:true,legendPosition:'bottom',borderVisible:false,borderColor:'#c8c8c8',borderWidth:1,borderStyle:'solid',borderEdges:{top:true,right:true,bottom:true,left:true},cornerRadius:0,cornerLinked:true,cornerRadii:{topLeft:0,topRight:0,bottomRight:0,bottomLeft:0},shadow:false,backgroundTransparency:0,gridLines:true,showDataPoints:true,dataPointSize:6,tooltipEnabled:true,tooltipBackground:'#ffffff',tooltipColor:'#242424',indicatorEnabled:false,favorableDirection:'up',positiveColor:'#107c10',negativeColor:'#d13438',neutralColor:'#616161',subtitle:'',subtitleVisible:false,subtitleColor:'#616161',subtitleFontSize:10,titleFontWeight:400,axisFontSize:9,axisColor:'#616161',axisTitleVisible:false,markerShape:'circle',lineWidth:2,smoothLines:true,barRadius:0,barWidth:42,padding:8,chartOpacity:100}})};
+  const newVisual=(type:VisualType):Visual=>{const profile=visualProfile(type);return ({id:crypto.randomUUID(),type,title:visualLabels[type],x:0,y:0,w:type==='shape'?320:Math.max(120,Math.round(profile.w*(s.pageWidth||1920)/12)),h:type==='shape'?160:Math.max(70,profile.h*66-16),geometryVersion:2,rotation:0,zIndex:page.visuals.length,visible:true,locked:false,text:type==='textbox'?'':undefined,buttonLabel:type==='button'?'Go to page':undefined,action:type==='button'?{type:'none'}:undefined,slicerStyle:type==='slicer'?'list':undefined,bindings:{axis:[],values:[],target:[]},filters:[],sort:[],format:{accent:'#118dff',fontSize:(type==='kpi'||type==='card')?28:12,showTitle:!['textbox','button','image','shape'].includes(type),dataLabels:false,background:'#ffffff',fontFamily:project.appPreferences?.defaultFont||'Segoe UI',fieldFormats:{},titleFontSize:12,titleColor:'#242424',labelFontSize:10,labelColor:'#242424',labelPosition:'top',legendVisible:true,legendPosition:'bottom',borderVisible:false,borderColor:'#c8c8c8',borderWidth:1,borderStyle:'solid',borderEdges:{top:true,right:true,bottom:true,left:true},cornerRadius:0,cornerLinked:true,cornerRadii:{topLeft:0,topRight:0,bottomRight:0,bottomLeft:0},shadow:false,backgroundTransparency:0,gridLines:true,showDataPoints:true,dataPointSize:6,tooltipEnabled:true,tooltipBackground:'#ffffff',tooltipColor:'#242424',indicatorEnabled:false,favorableDirection:'up',positiveColor:'#107c10',negativeColor:'#d13438',neutralColor:'#616161',subtitle:'',subtitleVisible:false,subtitleColor:'#616161',subtitleFontSize:10,titleFontWeight:400,axisFontSize:9,axisColor:'#616161',axisTitleVisible:false,markerShape:'circle',lineWidth:2,smoothLines:true,barRadius:0,barWidth:42,padding:type==='shape'?0:8,chartOpacity:100,...(type==='shape'?{visualHeader:false,backgroundEnabled:false,shapeType:'rectangle' as const,shapeFillVisible:true,shapeFill:'#dbeafe',shapeFillTransparency:0,shapeStrokeVisible:false,shapeStroke:'#2563eb',shapeStrokeWidth:2,shapeStrokeStyle:'solid' as const,shapeCornerRadius:18}: {})}})};
   const findSmartSpot=(visuals:Visual[],w:number,h:number)=>{
     const overlaps=(x:number,y:number,v:Visual)=>x<v.x+v.w&&x+w>v.x&&y<v.y+v.h&&y+h>v.y;
-    for(let y=0;y<120;y++){for(let x=0;x<=12-w;x++){if(!visuals.some(v=>overlaps(x,y,v)))return{x,y}}}
-    const y=visuals.reduce((m,v)=>Math.max(m,v.y+v.h),0);return{x:0,y:y+1};
+    const width=page.settings?.pageWidth||1920;
+    const height=page.settings?.pageHeight||1080;
+    for(let y=0;y<=height-h;y+=8){for(let x=0;x<=width-w;x+=8){if(!visuals.some(v=>overlaps(x,y,v)))return{x,y}}}
+    const cascade = (visuals.length % 10) * 24;
+    return{x:cascade, y:cascade};
   };
   const autoBindField=(payload:string)=>{
     const[prefix,...rest]=payload.split(':'),field=rest.join(':');if(!field)return;
     const bind=(v:Visual)=>{
-      const existingKeys=(['axis','values','target','tooltips','legend'] as VisualWellKey[]).filter(k=>((v.bindings as any)[k]||[]).includes(field));
+      const existingKeys=(['axis','values','target','tooltips','legend','x','size','min','max','location','latitude','longitude','geometry','detail','color','label','path','country','region','postalCode'] as VisualWellKey[]).filter(k=>((v.bindings as any)[k]||[]).includes(field));
       if(existingKeys.length){for(const k of existingKeys)(v.bindings as any)[k]=((v.bindings as any)[k]||[]).filter((x:string)=>x!==field);return}
       if(prefix==='hierarchy'){const h=(project.model.hierarchies||[]).find((x:any)=>x.id===field);if(h&&visualProfile(v.type).wells.some(w=>w.key==='axis')){v.bindings.hierarchy={id:h.id,level:0};v.bindings.axis=[h.levels[0].field]}return}
       const wells=visualProfile(v.type).wells;
-      const preferred:VisualWellKey[]=prefix==='field'?['axis','legend']:['values','target','tooltips'];
+      const preferred:VisualWellKey[]=v.type==='map'?(prefix==='field'?['location','detail','color','label']:['size','tooltips']):(prefix==='field'?['axis','legend']:['values','target','tooltips']);
       let target=preferred.map(k=>wells.find(w=>w.key===k)).find(w=>w&&!((v.bindings as any)[w.key]||[]).length);
       if(!target&&prefix!=='field')target=wells.find(w=>w.key==='values');
       if(!target&&prefix==='field')target=wells.find(w=>w.key==='axis'||w.key==='legend');
       if(target)(v.bindings as any)[target.key]=[...((v.bindings as any)[target.key]||[]),field];
     };
-    if(selected){uv(bind);return}
-    const type:VisualType=prefix==='field'?'table':'column',v=newVisual(type);bind(v);const spot=findSmartSpot(page.visuals,v.w,v.h);v.x=spot.x;v.y=spot.y;updatePage(pg=>pg.visuals.push(v));setTimeout(()=>selectVisual(v.id),0);
+    if(selected){uv(v=>{bind(v);autoNameFromBindings(v);});return}
+    const type:VisualType=prefix==='field'?'table':'column',v=newVisual(type);bind(v);autoNameFromBindings(v);const spot=findSmartSpot(page.visuals,v.w,v.h);v.x=spot.x;v.y=spot.y;updatePage(pg=>pg.visuals.push(v));setTimeout(()=>selectVisual(v.id),0);
   };
-  const addVisual=(type:VisualType)=>{const now=performance.now();const prev=visualAddGuardRef.current;if(prev&&prev.type===type&&(now-prev.at)<350)return;visualAddGuardRef.current={type,at:now};
-    if(selectedVisualId){const current=page.visuals.find(x=>x.id===selectedVisualId);if(current&&current.type!==type){updatePage(pg=>{const v=pg.visuals.find(x=>x.id===selectedVisualId);if(!v)return;const defaults=newVisual(type);const customTitle=v.title!==visualLabels[v.type];v.type=type;v.title=customTitle?v.title:visualLabels[type];v.bindings=sanitizeBindingsForType(type,v.bindings);v.format={...defaults.format,...v.format,fieldFormats:{...(v.format?.fieldFormats||{})}};v.slicerStyle=type==='slicer'?(v.slicerStyle||'list'):undefined;v.text=type==='textbox'?(v.text||defaults.text):undefined;v.buttonLabel=type==='button'?(v.buttonLabel||defaults.buttonLabel):undefined;v.action=type==='button'?(v.action||defaults.action):undefined;formatDefaults(v)});return}}
+    const handleCategoriesLoad=useCallback((id:string,cats:string[])=>{
+    setVisualCategories(prev=>{
+      const p=prev[id]||[];
+      if(p.length===cats.length&&p.every((c,i)=>c===cats[i])) return prev;
+      return {...prev,[id]:cats};
+    });
+  }, []);
+const addVisual=(type:VisualType)=>{const now=performance.now();const prev=visualAddGuardRef.current;if(prev&&prev.type===type&&(now-prev.at)<350)return;visualAddGuardRef.current={type,at:now};
+    if(selectedVisualId){const current=page.visuals.find(x=>x.id===selectedVisualId);if(current&&current.type!==type){updatePage(pg=>{const v=pg.visuals.find(x=>x.id===selectedVisualId);if(!v)return;const defaults=newVisual(type);const customTitle=v.title!==visualLabels[v.type];v.type=type;v.title=customTitle?v.title:visualLabels[type];v.bindings=sanitizeBindingsForType(type,v.bindings);v.format={...defaults.format,...v.format,fieldFormats:{...(v.format?.fieldFormats||{})}};v.slicerStyle=type==='slicer'?(v.slicerStyle||'list'):undefined;v.text=type==='textbox'?(v.text||defaults.text):undefined;v.richText=type==='textbox'?v.richText:undefined;v.richTextRuns=type==='textbox'?v.richTextRuns:undefined;v.buttonLabel=type==='button'?(v.buttonLabel||defaults.buttonLabel):undefined;v.action=type==='button'?(v.action||defaults.action):undefined;formatDefaults(v)});return}}
     const v=newVisual(type);updatePage(pg=>{const spot=findSmartSpot(pg.visuals,v.w,v.h);v.x=spot.x;v.y=spot.y;pg.visuals.push(v)});setTimeout(()=>selectVisual(v.id),0)};
+  const addImageVisual=(file:File)=>uploadBackgroundImage(file,dataUrl=>{const v=newVisual('image');v.imageSrc=dataUrl;v.imageName=file.name;formatDefaults(v);updatePage(pg=>{const spot=findSmartSpot(pg.visuals,v.w,v.h);v.x=spot.x;v.y=spot.y;pg.visuals.push(v)});setTimeout(()=>selectVisual(v.id),0)});
   const addPage=async()=>{const id='page-'+Date.now(),name=(await (window as any).vtabPrompt('Page name','New Page'))||'New Page';update(p=>{p.report.pages.push({id,name,visuals:[],filters:[],settings:newPageSettings()});p.report.activePageId=id;return p});switchPage(id);setInteractionFilterMap({})};
-  const switchPage=(id:string)=>{setActivePage(id);selectVisual(null);setSelectedVisualIds([]);setInteractionFilterMap({});update(p=>{p.report.activePageId=id;return p})};
-  const executeVisualAction=(actionVisual:Visual)=>{const a=actionVisual.action;if(!a||a.type==='none')return;if(a.type==='navigate'&&a.targetPageId){switchPage(a.targetPageId);return}if(a.type==='clearFilters'){clearAll();return}if(a.targetVisualId&&['toggleVisual','showVisual','hideVisual'].includes(a.type||'')){updatePage(pg=>{const target=pg.visuals.find(x=>x.id===a.targetVisualId);if(!target)return;if(a.type==='toggleVisual')target.hidden=!target.hidden;if(a.type==='showVisual')target.hidden=false;if(a.type==='hideVisual')target.hidden=true})}};
+  const switchPage=(id:string,remember=true)=>{if(remember&&id!==page.id)pageHistoryRef.current.push(page.id);setActivePage(id);selectVisual(null);setSelectedVisualIds([]);setInteractionFilterMap({});update(p=>{p.report.activePageId=id;return p})};
+  const deletePage=(pageId:string)=>{
+    const target=project.report.pages.find(item=>item.id===pageId);if(!target){setPageContextMenu(null);return}
+    if(project.report.pages.length<=1){setPageContextMenu(null);alert('A report must contain at least one page. Create another page before deleting this one.');return}
+    if(!confirm(`Delete page "${target.name}"?\n\nThe page and its ${target.visuals.length} visual${target.visuals.length===1?'':'s'} will be permanently removed.`)){setPageContextMenu(null);return}
+    let result={deleted:false,activePageId:page.id,removedIndex:-1};
+    update(state=>{result=removeReportPage(state.report,pageId);return state});
+    setPageContextMenu(null);
+    if(!result.deleted)return;
+    pageHistoryRef.current=pageHistoryRef.current.filter(id=>id!==pageId);
+    if(pageId===page.id){setActivePage(result.activePageId);selectVisual(null);setSelectedVisualIds([]);setInteractionFilterMap({});setButtonSelections({})}
+  };
+  const executeVisualAction=(actionVisual:Visual)=>{
+    if(actionVisual.format.buttonSelectionEnabled!==false){const group=(actionVisual.format.buttonSelectionGroup||'default').trim()||'default';setButtonSelections(previous=>({...previous,[group]:actionVisual.id}))}
+    const a=actionVisual.action;if(!a||a.type==='none')return;
+    if(a.type==='navigate'&&a.targetPageId){switchPage(a.targetPageId);return}
+    if(a.type==='back'){const currentIndex=project.report.pages.findIndex(item=>item.id===page.id),previous=pageHistoryRef.current.pop()||project.report.pages[Math.max(0,currentIndex-1)]?.id;if(previous)switchPage(previous,false);return}
+    if(a.type==='resetState'||a.type==='clearFilters'){clearAll();if(a.type==='resetState'){setButtonSelections({});updatePage(pg=>{for(const target of pg.visuals){if(Object.prototype.hasOwnProperty.call(authorVisibilityDefaultsRef.current,target.id))target.hidden=authorVisibilityDefaultsRef.current[target.id]}})}return}
+    updatePage(pg=>{for(const command of resolveActionCommands(a,pg)){const targets=command.targets;if(!targets.length)continue;for(const target of targets)if(!Object.prototype.hasOwnProperty.call(authorVisibilityDefaultsRef.current,target.id))authorVisibilityDefaultsRef.current[target.id]=!!target.hidden;const allHidden=targets.every(target=>!!target.hidden);for(const target of targets){if(command.operation==='show')target.hidden=false;if(command.operation==='hide')target.hidden=true;if(command.operation==='toggle')target.hidden=!allHidden}}});
+  };
   const idx=project.report.pages.findIndex(p=>p.id===page.id);
   const prev=()=>idx>0&&switchPage(project.report.pages[idx-1].id), next=()=>idx<project.report.pages.length-1&&switchPage(project.report.pages[idx+1].id);
   const uv=(fn:(v:Visual)=>void)=>updatePage(pg=>{const v=pg.visuals.find(x=>x.id===selectedVisualId);if(v){formatDefaults(v);fn(v)}});
   const del=()=>{const ids=new Set(selectedIds.length?selectedIds:(selectedVisualId?[selectedVisualId]:[]));updatePage(pg=>pg.visuals=pg.visuals.filter(v=>!ids.has(v.id)));selectVisual(null);setSelectedVisualIds([])};
-  const dup=()=>{const newId=crypto.randomUUID();updatePage(pg=>{const v=pg.visuals.find(x=>x.id===selectedVisualId);if(v){const n=structuredClone(v);n.id=newId;n.bindings=sanitizeBindingsForType(n.type,structuredClone(v.bindings));n.filters=structuredClone(v.filters||[]);n.sort=structuredClone(v.sort||[]);n.format={...structuredClone(v.format),fieldFormats:{...(structuredClone(v.format?.fieldFormats||{}))}};const spot=findSmartSpot(pg.visuals,n.w,n.h);n.x=spot.x;n.y=spot.y;n.title+=' Copy';pg.visuals.push(n)}});setTimeout(()=>selectVisual(newId),0)};
-  const arrangeSelection=(mode:'left'|'center'|'right'|'top'|'middle'|'bottom'|'distributeH'|'distributeV')=>updatePage(pg=>{const items=pg.visuals.filter(v=>selectedIds.includes(v.id));if(items.length<2)return;const minX=Math.min(...items.map(v=>v.x)),maxX=Math.max(...items.map(v=>v.x+v.w)),minY=Math.min(...items.map(v=>v.y)),maxY=Math.max(...items.map(v=>v.y+v.h));for(const v of items){if(mode==='left')v.x=minX;if(mode==='center')v.x=Math.max(0,Math.min(12-v.w,(minX+maxX-v.w)/2));if(mode==='right')v.x=Math.max(0,maxX-v.w);if(mode==='top')v.y=minY;if(mode==='middle')v.y=Math.max(0,(minY+maxY-v.h)/2);if(mode==='bottom')v.y=Math.max(0,maxY-v.h)}if(mode==='distributeH'&&items.length>2){const sorted=[...items].sort((a,b)=>a.x-b.x),width=sorted.reduce((n,v)=>n+v.w,0),gap=Math.max(0,(maxX-minX-width)/(sorted.length-1));let x=minX;for(const v of sorted){v.x=x;x+=v.w+gap}}if(mode==='distributeV'&&items.length>2){const sorted=[...items].sort((a,b)=>a.y-b.y),height=sorted.reduce((n,v)=>n+v.h,0),gap=Math.max(0,(maxY-minY-height)/(sorted.length-1));let y=minY;for(const v of sorted){v.y=y;y+=v.h+gap}}});
+  const dup=()=>{copySelected();pasteVisuals()};
+  const cutSelected=()=>{copySelected();del()};
+  const copySelected=()=>{const ids=new Set(selectedIds.length?selectedIds:(selectedVisualId?[selectedVisualId]:[]));const copied=page.visuals.filter(v=>ids.has(v.id)).map(v=>structuredClone(v));visualClipboardRef.current=copied;setClipboardCount(copied.length)};
+  const pasteVisuals=()=>{
+    const source=visualClipboardRef.current;if(!source.length)return;const idMap=new Map(source.map(v=>[v.id,crypto.randomUUID()]));const pastedIds=source.map(v=>idMap.get(v.id)!);
+    let finalDx=0,finalDy=0;
+    updatePage(pg=>{const width=pg.settings?.pageWidth||1920,height=pg.settings?.pageHeight||1080,offset=20;const minX=Math.min(...source.map(v=>v.x)),minY=Math.min(...source.map(v=>v.y)),maxRight=Math.max(...source.map(v=>v.x+v.w)),maxBottom=Math.max(...source.map(v=>v.y+v.h));const dx=Math.max(-minX,Math.min(width-maxRight,offset)),dy=Math.max(-minY,Math.min(height-maxBottom,offset));
+      finalDx=dx;finalDy=dy;
+      for(const original of source){const clone=structuredClone(original);clone.id=idMap.get(original.id)!;clone.x=original.x+dx;clone.y=original.y+dy;clone.zIndex=pg.visuals.length;clone.title=original.title.endsWith(' Copy')?original.title:`${original.title} Copy`;clone.bindings=sanitizeBindingsForType(clone.type,structuredClone(original.bindings));clone.filters=structuredClone(original.filters||[]);clone.sort=structuredClone(original.sort||[]);clone.format={...structuredClone(original.format),fieldFormats:{...(structuredClone(original.format?.fieldFormats||{}))}};
+        if(clone.action?.targetVisualId&&idMap.has(clone.action.targetVisualId))clone.action.targetVisualId=idMap.get(clone.action.targetVisualId);
+        if(clone.action?.steps)clone.action.steps=clone.action.steps.map(step=>step.targetType==='visual'&&idMap.has(step.targetId)?{...step,targetId:idMap.get(step.targetId)!}:step);
+        pg.visuals.push(clone);
+      }
+    });
+    setTimeout(()=>{setSelectedVisualIds(pastedIds);selectVisual(pastedIds[pastedIds.length-1]||null);visualClipboardRef.current=visualClipboardRef.current.map(v=>({...v,x:v.x+finalDx,y:v.y+finalDy}));focusCanvas()},0);
+  };
+  useEffect(()=>{
+    const handleKeyDown=(e:KeyboardEvent)=>{
+      const target=e.target as HTMLElement|null;
+      if(target?.closest('input,textarea,select,[contenteditable="true"]'))return;
+      const key=e.key.toLowerCase(),command=e.ctrlKey||e.metaKey;
+      if(command&&key==='c'){if(selectedVisualId){e.preventDefault();copySelected()}return}
+      if(command&&key==='x'){if(selectedVisualId){e.preventDefault();cutSelected()}return}
+      if(command&&key==='v'){e.preventDefault();pasteVisuals();return}
+      if(e.key==='Escape'&&formatPainter){e.preventDefault();setFormatPainter(null);return}
+      if(!selectedVisualId)return;
+      if(e.key==='Delete'||e.key==='Backspace'){if(target?.closest('.rightPane') || window.getSelection()?.toString().length){e.preventDefault();return;}e.preventDefault();del();return}
+      if(command&&key==='d'){e.preventDefault();dup();return}
+      if(e.key==='ArrowUp'){e.preventDefault();nudgeSelected(0,e.shiftKey?-10:-1);return}
+      if(e.key==='ArrowDown'){e.preventDefault();nudgeSelected(0,e.shiftKey?10:1);return}
+      if(e.key==='ArrowLeft'){e.preventDefault();nudgeSelected(e.shiftKey?-10:-1,0);return}
+      if(e.key==='ArrowRight'){e.preventDefault();nudgeSelected(e.shiftKey?10:1,0);return}
+    };
+    document.addEventListener('keydown',handleKeyDown);
+    return ()=>document.removeEventListener('keydown',handleKeyDown);
+  },[selectedVisualId, selectedIds, formatPainter, page.visuals]);
+  const toggleFormatPainter=()=>{if(formatPainter){setFormatPainter(null);return}const source=page.visuals.find(v=>v.id===selectedVisualId);if(source)setFormatPainter({sourceId:source.id,type:source.type,format:structuredClone(source.format)})};
+  const selectCanvasVisual=(id:string,additive=false)=>{if(formatPainter&&id!==formatPainter.sourceId){updatePage(pg=>{const target=pg.visuals.find(v=>v.id===id);if(!target||target.locked)return;if(target.type===formatPainter.type)target.format=structuredClone(formatPainter.format);else for(const key of COMMON_FORMAT_PAINTER_KEYS){const value=formatPainter.format[key];if(value!==undefined)(target.format as any)[key]=structuredClone(value)}});setFormatPainter(null)}selectOne(id,additive)};
+  const arrangeSelection=(mode:'left'|'center'|'right'|'top'|'middle'|'bottom'|'distributeH'|'distributeV')=>updatePage(pg=>{const items=pg.visuals.filter(v=>selectedIds.includes(v.id));if(items.length<2)return;const minX=Math.min(...items.map(v=>v.x)),maxX=Math.max(...items.map(v=>v.x+v.w)),minY=Math.min(...items.map(v=>v.y)),maxY=Math.max(...items.map(v=>v.y+v.h));for(const v of items){if(mode==='left')v.x=minX;if(mode==='center')v.x=Math.max(0,(minX+maxX-v.w)/2);if(mode==='right')v.x=Math.max(0,maxX-v.w);if(mode==='top')v.y=minY;if(mode==='middle')v.y=Math.max(0,(minY+maxY-v.h)/2);if(mode==='bottom')v.y=Math.max(0,maxY-v.h)}if(mode==='distributeH'&&items.length>2){const sorted=[...items].sort((a,b)=>a.x-b.x),width=sorted.reduce((n,v)=>n+v.w,0),gap=Math.max(0,(maxX-minX-width)/(sorted.length-1));let x=minX;for(const v of sorted){v.x=x;x+=v.w+gap}}if(mode==='distributeV'&&items.length>2){const sorted=[...items].sort((a,b)=>a.y-b.y),height=sorted.reduce((n,v)=>n+v.h,0),gap=Math.max(0,(maxY-minY-height)/(sorted.length-1));let y=minY;for(const v of sorted){v.y=y;y+=v.h+gap}}});
   const layerSelection=(mode:'front'|'back'|'forward'|'backward')=>updatePage(pg=>{const chosen=new Set(selectedIds.length?selectedIds:(selectedVisualId?[selectedVisualId]:[]));if(!chosen.size)return;if(mode==='front'||mode==='back'){const selectedPart=pg.visuals.filter(v=>chosen.has(v.id)),others=pg.visuals.filter(v=>!chosen.has(v.id));pg.visuals=mode==='front'?[...others,...selectedPart]:[...selectedPart,...others];return}const next=[...pg.visuals];if(mode==='forward'){for(let i=next.length-2;i>=0;i--)if(chosen.has(next[i].id)&&!chosen.has(next[i+1].id))[next[i],next[i+1]]=[next[i+1],next[i]]}else{for(let i=1;i<next.length;i++)if(chosen.has(next[i].id)&&!chosen.has(next[i-1].id))[next[i],next[i-1]]=[next[i-1],next[i]]}pg.visuals=next});
   const reorderLayer=(sourceId:string,targetId:string)=>updatePage(pg=>{const frontToBack=[...pg.visuals].reverse(),sourceIndex=frontToBack.findIndex(v=>v.id===sourceId),targetIndex=frontToBack.findIndex(v=>v.id===targetId);if(sourceIndex<0||targetIndex<0||sourceIndex===targetIndex)return;const[moved]=frontToBack.splice(sourceIndex,1);frontToBack.splice(targetIndex,0,moved);pg.visuals=frontToBack.reverse()});
-  const reorderTabOrder=(sourceId:string,targetId:string)=>updatePage(pg=>{let hasOrder=pg.visuals.some(v=>v.tabOrder!==undefined);if(!hasOrder)pg.visuals.forEach((v,i)=>v.tabOrder=i);const sorted=[...pg.visuals].sort((a,b)=>(a.tabOrder??0)-(b.tabOrder??0));const sourceIndex=sorted.findIndex(v=>v.id===sourceId);const targetIndex=sorted.findIndex(v=>v.id===targetId);if(sourceIndex<0||targetIndex<0||sourceIndex===targetIndex)return;const[moved]=sorted.splice(sourceIndex,1);sorted.splice(targetIndex,0,moved);sorted.forEach((v,i)=>v.tabOrder=i)});
-    const bringVisualToFront=(id:string)=>updatePage(pg=>{const index=pg.visuals.findIndex(visual=>visual.id===id);if(index<0||index===pg.visuals.length-1)return;const[visual]=pg.visuals.splice(index,1);pg.visuals.push(visual)});
+  const reorderTab=(sourceId:string,targetId:string)=>updatePage(pg=>{pg.visuals.forEach((v,i)=>{if(v.tabOrder===undefined)v.tabOrder=i});const ordered=[...pg.visuals].sort((a,b)=>(a.tabOrder??0)-(b.tabOrder??0));const sIdx=ordered.findIndex(v=>v.id===sourceId);const tIdx=ordered.findIndex(v=>v.id===targetId);if(sIdx<0||tIdx<0||sIdx===tIdx)return;const[moved]=ordered.splice(sIdx,1);ordered.splice(tIdx,0,moved);ordered.forEach((v,i)=>v.tabOrder=i);});
+  const bringVisualToFront=(id:string)=>updatePage(pg=>{const index=pg.visuals.findIndex(visual=>visual.id===id);if(index<0||index===pg.visuals.length-1)return;const[visual]=pg.visuals.splice(index,1);pg.visuals.push(visual)});
   const toggleVisualVisibility=(id:string)=>updatePage(pg=>{const visual=pg.visuals.find(v=>v.id===id);if(visual)visual.hidden=!visual.hidden});
-  const placeSelected=(mode:'left'|'center'|'right'|'top'|'next')=>{if(selectedIds.length>1){arrangeSelection(mode==='next'?'distributeV':mode);return}updatePage(pg=>{const v=pg.visuals.find(x=>x.id===selectedVisualId);if(!v)return;if(mode==='left')v.x=0;if(mode==='center')v.x=Math.max(0,(12-v.w)/2);if(mode==='right')v.x=Math.max(0,12-v.w);if(mode==='top')v.y=0;if(mode==='next'){const others=pg.visuals.filter(x=>x.id!==v.id);v.x=0;v.y=others.reduce((m,x)=>Math.max(m,x.y+x.h),0)+1}})};
-  const widthSelected=(w:number)=>updatePage(pg=>{const v=pg.visuals.find(x=>x.id===selectedVisualId);if(!v)return;v.w=Math.min(12,Math.max(2,w));if(v.x+v.w>12)v.x=Math.max(0,12-v.w)});
-  const nudgeSelected=(dx:number,dy:number)=>updatePage(pg=>{const ids=new Set(selectedIds.length?selectedIds:(selectedVisualId?[selectedVisualId]:[]));for(const v of pg.visuals.filter(x=>ids.has(x.id))){v.x=Math.max(0,Math.min(12-v.w,v.x+dx));v.y=Math.max(0,v.y+dy)}});
-  const handleDesignerKeyDown=(e:any)=>{const target=e.target as HTMLElement|null;if(!selectedVisualId||target?.matches('input,textarea,select,[contenteditable="true"]'))return;if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();del();return}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='d'){e.preventDefault();dup();return}const step=e.shiftKey?2:(page.settings?.snapToGrid===false ? .25 : 1);if(e.key==='ArrowLeft'){e.preventDefault();nudgeSelected(-step,0)}if(e.key==='ArrowRight'){e.preventDefault();nudgeSelected(step,0)}if(e.key==='ArrowUp'){e.preventDefault();nudgeSelected(0,-step)}if(e.key==='ArrowDown'){e.preventDefault();nudgeSelected(0,step)}};
-  const autoArrangePremium=()=>updatePage(pg=>{const kpis=pg.visuals.filter(v=>['kpi','card','progress'].includes(v.type));const charts=pg.visuals.filter(v=>!['kpi','card','progress','table','matrix'].includes(v.type));const details=pg.visuals.filter(v=>['table','matrix'].includes(v.type));let y=0;kpis.forEach((v,i)=>{v.x=(i%4)*3;v.y=Math.floor(i/4)*3;v.w=3;v.h=3});if(kpis.length)y=Math.ceil(kpis.length/4)*3;charts.forEach((v,i)=>{v.x=(i%2)*6;v.y=y+Math.floor(i/2)*6;v.w=6;v.h=6});if(charts.length)y+=Math.ceil(charts.length/2)*6;details.forEach(v=>{v.x=0;v.y=y;v.w=12;v.h=7;y+=7})});
-  const clearAll=()=>{setInteractionFilterMap({});update(p=>{p.report.filters=[];const pg=p.report.pages.find(x=>x.id===page.id);if(pg)pg.filters=[];return p})};
+  const groupSelection=(name:string)=>{const clean=name.trim();if(!clean)return;const ids=new Set(selectedIds.length?selectedIds:(selectedVisualId?[selectedVisualId]:[]));updatePage(pg=>{for(const visual of pg.visuals)if(ids.has(visual.id))visual.groupId=clean})};
+  const ungroupSelection=()=>{const ids=new Set(selectedIds.length?selectedIds:(selectedVisualId?[selectedVisualId]:[]));updatePage(pg=>{for(const visual of pg.visuals)if(ids.has(visual.id))visual.groupId=undefined})};
+  const placeSelected=(mode:'left'|'center'|'right'|'top'|'next')=>{if(selectedIds.length>1){arrangeSelection(mode==='next'?'distributeV':mode);return}updatePage(pg=>{const v=pg.visuals.find(x=>x.id===selectedVisualId);if(!v)return;const width=pg.settings?.pageWidth||1920;if(mode==='left')v.x=0;if(mode==='center')v.x=Math.max(0,(width-v.w)/2);if(mode==='right')v.x=Math.max(0,width-v.w);if(mode==='top')v.y=0;if(mode==='next'){const others=pg.visuals.filter(x=>x.id!==v.id);v.x=0;v.y=others.reduce((m,x)=>Math.max(m,x.y+x.h),0)+8}})};
+  const widthSelected=(w:number)=>updatePage(pg=>{const v=pg.visuals.find(x=>x.id===selectedVisualId);if(!v)return;const width=pg.settings?.pageWidth||1920;v.w=Math.min(width,Math.max(40,w));if(v.x+v.w>width)v.x=Math.max(0,width-v.w)});
+  const nudgeSelected=(dx:number,dy:number)=>updatePage(pg=>{const ids=new Set(selectedIds.length?selectedIds:(selectedVisualId?[selectedVisualId]:[]));const width=pg.settings?.pageWidth||1920,height=pg.settings?.pageHeight||1080;for(const v of pg.visuals.filter(x=>ids.has(x.id)&&!x.locked)){v.x=Math.max(0,Math.min(width-v.w,v.x+dx));v.y=Math.max(0,Math.min(height-v.h,v.y+dy))}});
+  const autoArrangePremium=()=>updatePage(pg=>{
+    const canvasWidth=pg.settings?.pageWidth||1920;
+    const gap=16;
+    const isVisible=(v:Visual)=>v.visible!==false&&!v.hidden;
+    const movable=pg.visuals.filter(v=>isVisible(v)&&!v.locked);
+    if(!movable.length)return;
+
+    // --- Step 1: cluster visuals into rows by overlapping Y-ranges ---
+    const sorted=[...movable].sort((a,b)=>a.y-b.y||a.x-b.x);
+    const rows:Visual[][]=[];
+    for(const v of sorted){
+      const rowMatch=rows.find(row=>{
+        const rowTop=Math.min(...row.map(r=>r.y));
+        const rowBottom=Math.max(...row.map(r=>r.y+r.h));
+        const vMid=v.y+v.h/2;
+        return vMid>rowTop&&vMid<rowBottom;
+      });
+      if(rowMatch)rowMatch.push(v);
+      else rows.push([v]);
+    }
+
+    // --- Step 2: sort visuals within each row by their original X position ---
+    for(const row of rows)row.sort((a,b)=>a.x-b.x);
+
+    // --- Step 3: lay rows out top-to-bottom, items left-to-right ---
+    let cursorY=0;
+    for(const row of rows){
+      let cursorX=0;
+      let currentRowHeight=0;
+      for(const v of row){
+        if(cursorX+v.w>canvasWidth && cursorX>0){
+          cursorY+=currentRowHeight+gap;
+          cursorX=0;
+          currentRowHeight=0;
+        }
+        v.x=Math.round(cursorX);
+        v.y=Math.round(cursorY);
+        currentRowHeight=Math.max(currentRowHeight, v.h);
+        cursorX+=v.w+gap;
+      }
+      cursorY+=currentRowHeight+gap;
+    }
+  });
+  const clearAll=()=>{
+    setInteractionFilterMap({});
+    update(p=>{
+      p.report.filters=[];
+      const pg=p.report.pages.find(x=>x.id===page.id);
+      if(pg){
+        pg.filters=[];
+        pg.visuals.forEach(v=>{v.drillLevel=0;v.drillFilters=[]})
+      }
+      return p
+    })
+  };
   const s=page.settings||defaultPageSettings();
   const layoutMode=s.layoutMode||'guided';
-  const designerVisualBottom=(page.visuals||[]).reduce((m,v)=>Math.max(m,(v.y||0)*66+(v.h||2)*50+Math.max(0,(v.h||2)-1)*16),0);
-  const designerHeaderHeight=s.header.visible?(s.header.height||84):0;
+  const designerVisualBottom=(page.visuals||[]).reduce((m,v)=>Math.max(m,(v.y||0)+(v.h||100)),0);
+  const designerHeaderHeight=0;
   const designerContentHeight=Math.max(480,designerHeaderHeight+34+designerVisualBottom+(s.footerGap??32));
   const designerEffectiveHeight=s.autoFitHeight?designerContentHeight:(s.pageHeight||1080);
-  return <div className="reportWorkspaceGlass" onKeyDown={handleDesignerKeyDown}>
+  return <div className={'reportWorkspaceGlass '+(formatPainter?'formatPainterActive':'')}>
+    <input ref={imageVisualInputRef} className="insertVisualFileInput" type="file" accept="image/*" onChange={e=>{const file=e.target.files?.[0];if(file)addImageVisual(file);e.currentTarget.value=''}}/>
     <nav className="reportContextTabs" aria-label="Report command tabs">
       {(['home','insert','modeling','view','optimize'] as const).map(tab=><button key={tab} className={ribbonTab===tab?'active':''} onClick={()=>setRibbonTab(tab)}>{tab[0].toUpperCase()+tab.slice(1)}</button>)}
     </nav>
     <div className="reportRibbonGlass reportCommandRibbon">
-      {ribbonTab==='home'&&<><button className="btnGlass" onClick={()=>setView('data')}><FileSpreadsheet size={17}/>Get data</button><button className="btnGlass" onClick={()=>setView('transform')}><SlidersHorizontal size={17}/>Transform data</button><button className="btnGlass" onClick={()=>{setPropertiesVisible(true);setGalleryVisible(true)}}><BarChart3 size={17}/>New visual</button><button className="btnGlass" onClick={()=>setView('measures')}><Hash size={17}/>New measure</button><button className="btnGlass" onClick={clearAll}><Eraser size={17}/>Clear filters</button></>}
-      {ribbonTab==='insert'&&<><button className="btnGlass" onClick={addPage}><Plus size={17}/>New page</button><button className="btnGlass" onClick={()=>addVisual('textbox')}><TextCursorInput size={17}/>Text box</button><button className="btnGlass" onClick={()=>addVisual('button')}><MousePointerClick size={17}/>Button</button><button className="btnGlass" onClick={()=>addVisual('card')}><Hash size={17}/>Card</button><button className="btnGlass" onClick={()=>addVisual('table')}><Table2 size={17}/>Table</button><button className="btnGlass" onClick={()=>addVisual('slicer')}><Filter size={17}/>Slicer</button><button className="btnGlass" onClick={()=>{setPropertiesVisible(true);setGalleryVisible(true)}}><BarChart3 size={17}/>More visuals</button></>}
+      {ribbonTab==='home'&&<><button className="btnGlass" disabled={!selectedVisualId} onClick={copySelected} title="Copy selected visual(s) (Ctrl+C)"><Copy size={17}/>Copy</button><button className="btnGlass" disabled={!clipboardCount} onClick={pasteVisuals} title="Paste visual(s) (Ctrl+V)"><Clipboard size={17}/>Paste</button><button className={'btnGlass '+(formatPainter?'active':'')} disabled={!selectedVisualId} onClick={toggleFormatPainter} title={formatPainter?'Cancel format painter (Esc)':'Copy formatting, then click another visual'}><PaintBucket size={17}/>Format painter</button><button className="btnGlass" onClick={()=>setView('data')}><FileSpreadsheet size={17}/>Get data</button><button className="btnGlass" onClick={()=>setView('transform')}><SlidersHorizontal size={17}/>Transform data</button><button className="btnGlass" onClick={()=>setView('measures')}><Hash size={17}/>New measure</button><button className="btnGlass" onClick={clearAll}><Eraser size={17}/>Clear filters</button></>}
+      {ribbonTab==='insert'&&<><button className="btnGlass" onClick={addPage}><Plus size={17}/>New page</button><button className="btnGlass" onClick={()=>{update(p=>{ensurePaginatedReports(p).push(createPaginatedReport(`Paginated Report ${ensurePaginatedReports(p).length+1}`));return p});setView('paginated')}}><FileJson size={17}/>Paginated report</button><button className="btnGlass" onClick={()=>addVisual('textbox')}><TextCursorInput size={17}/>Text box</button><button className="btnGlass" onClick={()=>imageVisualInputRef.current?.click()}><ImageIcon size={17}/>Image</button><button className="btnGlass" onClick={()=>addVisual('shape')}><LayoutDashboard size={17}/>Shapes</button><button className="btnGlass" onClick={()=>addVisual('button')}><MousePointerClick size={17}/>Button</button><button className="btnGlass" onClick={()=>addVisual('card')}><Hash size={17}/>Card</button><button className="btnGlass" onClick={()=>addVisual('table')}><Table2 size={17}/>Table</button><button className="btnGlass" onClick={()=>addVisual('slicer')}><Filter size={17}/>Slicer</button><button className="btnGlass" onClick={()=>{setMoreVisualsOpen(true);setMoreVisualsSearch('')}}><BarChart3 size={17}/>More visuals</button></>}
       {ribbonTab==='modeling'&&<><button className="btnGlass" onClick={()=>setView('model')}><GitBranch size={17}/>Model view</button><button className="btnGlass" onClick={()=>setView('model')}><Settings2 size={17}/>Relationships</button><button className="btnGlass" onClick={()=>setView('measures')}><Hash size={17}/>Measures</button><button className="btnGlass" onClick={()=>setView('ai-measures')}><Sparkles size={17}/>AI measures</button></>}
-      {ribbonTab==='view'&&<><div className="panelMenuWrap"><button className="btnGlass" onClick={()=>setPanelMenu(x=>!x)}><Settings2 size={17}/>Show panes</button>{panelMenu&&<div className="panelMenuGlass"><label className="checkboxGlass"><input type="checkbox" checked={appSidebarVisible} onChange={e=>setAppSidebarVisible(e.target.checked)}/>Application navigation</label><label className="checkboxGlass"><input type="checkbox" checked={dataPaneVisible} onChange={e=>setDataPaneVisible(e.target.checked)}/>Data pane</label><label className="checkboxGlass"><input type="checkbox" checked={propertiesVisible} onChange={e=>setPropertiesVisible(e.target.checked)}/>Visualizations pane</label><label className="checkboxGlass"><input type="checkbox" checked={filtersVisible} onChange={e=>setFiltersVisible(e.target.checked)}/>Filters pane</label><label className="checkboxGlass"><input type="checkbox" checked={pageTabsVisible} onChange={e=>setPageTabsVisible(e.target.checked)}/>Page tabs</label></div>}</div><button className={'btnGlass '+(designerView==='fit'?'active':'')} onClick={()=>setDesignerView('fit')}><Maximize2 size={17}/>Fit page</button><button className={'btnGlass '+(designerView==='actual'?'active':'')} onClick={()=>setDesignerView('actual')}><Eye size={17}/>Actual size</button><button className="btnGlass" onClick={()=>{setAppSidebarVisible(false);setDataPaneVisible(false);setPropertiesVisible(false);setFiltersVisible(false)}}><Maximize2 size={17}/>Focus canvas</button></>}
-      {ribbonTab==='view'&&<button className={'btnGlass '+(selectionPaneVisible?'active':'')} onClick={()=>setSelectionPaneVisible(value=>!value)}><Layers3 size={17}/>Selection pane</button>}
-      {ribbonTab==='optimize'&&<><button className="btnGlass" onClick={autoArrangePremium}><LayoutDashboard size={17}/>Arrange visuals</button><button className={'btnGlass '+(s.snapToGrid!==false?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.snapToGrid=p.settings!.snapToGrid===false})}><LayoutDashboard size={17}/>Snap to grid</button><button className={'btnGlass '+(s.allowOverlap!==true?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.allowOverlap=!p.settings!.allowOverlap})}><Layers3 size={17}/>Prevent overlap</button><button className={'btnGlass '+(s.header.visible?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.header.visible=!p.settings!.header.visible})}><Heading1 size={17}/>Report header</button></>}
-      {ribbonTab==='optimize'&&<div className="arrangeSelectionRibbon"><span>{selectedIds.length||0} selected</span><button className="btnGlass" disabled={!selectedVisualId} onClick={()=>layerSelection('front')}>Bring to front</button><button className="btnGlass" disabled={!selectedVisualId} onClick={()=>layerSelection('forward')}>Bring forward</button><button className="btnGlass" disabled={!selectedVisualId} onClick={()=>layerSelection('backward')}>Send backward</button><button className="btnGlass" disabled={!selectedVisualId} onClick={()=>layerSelection('back')}>Send to back</button><button className="btnGlass" disabled={selectedIds.length<2} onClick={()=>arrangeSelection('left')}>Align left</button><button className="btnGlass" disabled={selectedIds.length<2} onClick={()=>arrangeSelection('center')}>Align center</button><button className="btnGlass" disabled={selectedIds.length<2} onClick={()=>arrangeSelection('right')}>Align right</button><button className="btnGlass" disabled={selectedIds.length<2} onClick={()=>arrangeSelection('top')}>Align top</button><button className="btnGlass" disabled={selectedIds.length<2} onClick={()=>arrangeSelection('middle')}>Align middle</button><button className="btnGlass" disabled={selectedIds.length<2} onClick={()=>arrangeSelection('bottom')}>Align bottom</button><button className="btnGlass" disabled={selectedIds.length<3} onClick={()=>arrangeSelection('distributeH')}>Distribute horizontally</button><button className="btnGlass" disabled={selectedIds.length<3} onClick={()=>arrangeSelection('distributeV')}>Distribute vertically</button></div>}
+      {ribbonTab==='view'&&<><div className="panelMenuWrap"><button className="btnGlass" onClick={()=>setPanelMenu(x=>!x)}><Settings2 size={17}/>Show panes</button>{panelMenu&&<><div style={{position:'fixed',inset:0,zIndex:998}} onPointerDown={(e)=>{e.stopPropagation();setPanelMenu(false)}} /><div className="panelMenuGlass" style={{position:'absolute',zIndex:999}}><label className="checkboxGlass"><input type="checkbox" checked={appSidebarVisible} onChange={e=>setAppSidebarVisible(e.target.checked)}/>Application navigation</label><label className="checkboxGlass"><input type="checkbox" checked={dataPaneVisible} onChange={e=>setDataPaneVisible(e.target.checked)}/>Data pane</label><label className="checkboxGlass"><input type="checkbox" checked={propertiesVisible} onChange={e=>setPropertiesVisible(e.target.checked)}/>Visualizations pane</label><label className="checkboxGlass"><input type="checkbox" checked={filtersVisible} onChange={e=>setFiltersVisible(e.target.checked)}/>Filters pane</label><label className="checkboxGlass"><input type="checkbox" checked={pageTabsVisible} onChange={e=>setPageTabsVisible(e.target.checked)}/>Page tabs</label></div></>}</div><button className={'btnGlass '+(designerView==='fit'?'active':'')} onClick={()=>setDesignerView('fit')}><Maximize2 size={17}/>Fit page</button><button className={'btnGlass '+(designerView==='actual'?'active':'')} onClick={()=>setDesignerView('actual')}><Eye size={17}/>Actual size</button><button className="btnGlass" onClick={()=>{setAppSidebarVisible(false);setDataPaneVisible(false);setPropertiesVisible(false);setFiltersVisible(false)}}><Maximize2 size={17}/>Focus canvas</button></>}
+      {ribbonTab==='view'&&<><button className={'btnGlass '+(selectionPaneVisible?'active':'')} onClick={()=>setSelectionPaneVisible(value=>!value)}><Layers3 size={17}/>Selection pane</button><button className={'btnGlass '+(s.showGrid!==false?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.showGrid=p.settings!.showGrid===false})}><LayoutDashboard size={17}/>Gridlines</button><button className={'btnGlass '+(s.snapToGrid!==false?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.snapToGrid=p.settings!.snapToGrid===false})}><Move size={17}/>Snap to grid</button></>}
+      {ribbonTab==='optimize'&&<><div className="panelMenuWrap arrangeMenuWrap"><button className="btnGlass" onClick={()=>setArrangeMenu(x=>!x)}><LayoutDashboard size={17}/>Align & arrange</button>{arrangeMenu&&<><div style={{position:'fixed',inset:0,zIndex:998}} onPointerDown={(e)=>{e.stopPropagation();setArrangeMenu(false)}} /><div className="panelMenuGlass arrangeCommandMenu" style={{position:'absolute',zIndex:999}}><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('left');setArrangeMenu(false)}}>Align left</button><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('center');setArrangeMenu(false)}}>Align center</button><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('right');setArrangeMenu(false)}}>Align right</button><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('top');setArrangeMenu(false)}}>Align top</button><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('middle');setArrangeMenu(false)}}>Align middle</button><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('bottom');setArrangeMenu(false)}}>Align bottom</button><button disabled={selectedIds.length<3} onClick={()=>{arrangeSelection('distributeH');setArrangeMenu(false)}}>Distribute horizontally</button><button disabled={selectedIds.length<3} onClick={()=>{arrangeSelection('distributeV');setArrangeMenu(false)}}>Distribute vertically</button><hr/><button disabled={!selectedVisualId} onClick={()=>{layerSelection('front');setArrangeMenu(false)}}>Bring to front</button><button disabled={!selectedVisualId} onClick={()=>{layerSelection('forward');setArrangeMenu(false)}}>Bring forward</button><button disabled={!selectedVisualId} onClick={()=>{layerSelection('backward');setArrangeMenu(false)}}>Send backward</button><button disabled={!selectedVisualId} onClick={()=>{layerSelection('back');setArrangeMenu(false)}}>Send to back</button></div></>}</div><button className="btnGlass" onClick={autoArrangePremium}><LayoutDashboard size={17}/>Auto arrange</button><button className={'btnGlass '+(s.allowOverlap!==true?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.allowOverlap=!p.settings!.allowOverlap})}><Layers3 size={17}/>Prevent overlap</button></>}
     </div>
     <div className="reportRibbonGlass legacyReportRibbon" aria-hidden="true">
-      <div className="panelMenuWrap"><button className="btnGlass" onClick={()=>setPanelMenu(x=>!x)}><Settings2 size={14}/>Panels</button>{panelMenu&&<div className="panelMenuGlass">
+      <div className="panelMenuWrap"><button className="btnGlass" onClick={()=>setPanelMenu(x=>!x)}><Settings2 size={14}/>Panels</button>{panelMenu&&<><div style={{position:'fixed',inset:0,zIndex:998}} onPointerDown={(e)=>{e.stopPropagation();setPanelMenu(false)}} /><div className="panelMenuGlass" style={{position:'absolute',zIndex:999}}>
         <label className="checkboxGlass"><input type="checkbox" checked={appSidebarVisible} onChange={e=>setAppSidebarVisible(e.target.checked)}/>Application navigation</label>
         <label className="checkboxGlass"><input type="checkbox" checked={dataPaneVisible} onChange={e=>setDataPaneVisible(e.target.checked)}/>Data / Fields pane</label>
         <label className="checkboxGlass"><input type="checkbox" checked={propertiesVisible} onChange={e=>setPropertiesVisible(e.target.checked)}/>Right authoring pane</label>
@@ -670,36 +1457,65 @@ export default function ReportWorkbench(){
         <label className="checkboxGlass"><input type="checkbox" checked={pageTabsVisible} onChange={e=>setPageTabsVisible(e.target.checked)}/>Page tabs</label>
         <button className="btnGlass" onClick={()=>{setAppSidebarVisible(true);setDataPaneVisible(true);setPropertiesVisible(true);setFiltersVisible(true);setGalleryVisible(true);setPageTabsVisible(true)}}>Show all panels</button>
         <button className="btnGlass" onClick={()=>{setAppSidebarVisible(false);setDataPaneVisible(false);setPropertiesVisible(false);setFiltersVisible(false);setGalleryVisible(false);setPageTabsVisible(false)}}>Focus canvas</button>
-      </div>}</div>
+      </div></>}</div>
       <button className={'btnGlass paneQuickToggle navigationQuickToggle '+(appSidebarVisible?'active':'')} onClick={()=>setAppSidebarVisible(!appSidebarVisible)} title="Show or hide application navigation"><Navigation size={14}/>Navigation</button>
       <button className={'btnGlass paneQuickToggle '+(dataPaneVisible?'active':'')} onClick={()=>setDataPaneVisible(!dataPaneVisible)}>{dataPaneVisible?<PanelLeftClose size={14}/>:<PanelLeftOpen size={14}/>}Fields</button>
       <button className={'btnGlass paneQuickToggle '+(propertiesVisible?'active':'')} onClick={()=>setPropertiesVisible(!propertiesVisible)}>{propertiesVisible?<PanelRightClose size={14}/>:<PanelRightOpen size={14}/>}Properties</button>
       <button className={'btnGlass paneQuickToggle '+(filtersVisible?'active':'')} onClick={()=>setFiltersVisible(!filtersVisible)}><Filter size={14}/>Filters</button>
       <button className="btnGlass" onClick={()=>{setAppSidebarVisible(false);setDataPaneVisible(false);setPropertiesVisible(false);setFiltersVisible(false);setGalleryVisible(false)}} title="Hide navigation and authoring panes to maximize the canvas"><Maximize2 size={14}/>Focus Canvas</button>
-      <div className="ribbonSpacerGlass"/><div className="designerViewToggleGlass"><button className={'btnGlass '+(designerView==='fit'?'active':'')} onClick={()=>setDesignerView('fit')}><Maximize2 size={14}/>Fit Report</button><button className={'btnGlass '+(designerView==='actual'?'active':'')} onClick={()=>setDesignerView('actual')}><Eye size={14}/>Actual Size</button><div className="zoomControls"><button className="iconGlass" onClick={()=>{setDesignerView('custom');setManualScale(s=>Math.max(0.25,s-0.25))}}>-</button><span className="zoomLabel">{Math.round((designerView==='custom'?manualScale:designerScale)*100)}%</span><button className="iconGlass" onClick={()=>{setDesignerView('custom');setManualScale(s=>Math.min(3,s+0.25))}}>+</button></div></div><div className="layoutModeToggleGlass"><button className={'btnGlass '+(s.layoutMode==='guided'?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.layoutMode='guided';p.settings!.allowOverlap=false;p.settings!.snapToGrid=true})}>Guided</button><button className={'btnGlass '+(s.layoutMode!=='guided'?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.layoutMode='freeform';p.settings!.allowOverlap=true;p.settings!.snapToGrid=false})}>Freeform</button></div><div className="arrangeMenuWrap"><button className="btnGlass" onClick={()=>setArrangeMenu(x=>!x)}><LayoutDashboard size={14}/>Arrange</button>{arrangeMenu&&<div className="arrangeMenuGlass"><button className="btnGlass" onClick={()=>{autoArrangePremium();setArrangeMenu(false)}}>Premium layout</button><button className="btnGlass" disabled={!selected} onClick={()=>{placeSelected('left');setArrangeMenu(false)}}>Align left</button><button className="btnGlass" disabled={!selected} onClick={()=>{placeSelected('center');setArrangeMenu(false)}}>Center</button><button className="btnGlass" disabled={!selected} onClick={()=>{placeSelected('right');setArrangeMenu(false)}}>Align right</button><button className="btnGlass" disabled={!selected} onClick={()=>{placeSelected('next');setArrangeMenu(false)}}>Move next</button></div>}</div><button className={'btnGlass '+(s.header.visible?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.header.visible=!p.settings!.header.visible})}><Heading1 size={14}/>Header</button><button className="btnGlass" onClick={clearAll}><Eraser size={14}/>Clear Filters</button><button className="btnGlass" onClick={prev} disabled={idx===0}><ChevronLeft size={14}/></button><button className="btnGlass" onClick={next} disabled={idx===project.report.pages.length-1}><ChevronRight size={14}/></button><button className="btnGlass primary" onClick={addPage}><Plus size={14}/>New Page</button></div>
+      <div className="ribbonSpacerGlass"/><div className="designerViewToggleGlass"><button className={'btnGlass '+(designerView==='fit'?'active':'')} onClick={()=>setDesignerView('fit')}><Maximize2 size={14}/>Fit Report</button><button className={'btnGlass '+(designerView==='actual'?'active':'')} onClick={()=>setDesignerView('actual')}><Eye size={14}/>Actual Size</button><div className="zoomControls"><button className="iconGlass" onClick={()=>{setDesignerView('custom');setManualScale(s=>Math.max(0.25,s-0.25))}}>-</button><span className="zoomLabel">{Math.round((designerView==='custom'?manualScale:designerScale)*100)}%</span><button className="iconGlass" onClick={()=>{setDesignerView('custom');setManualScale(s=>Math.min(3,s+0.25))}}>+</button></div></div><div className="layoutModeToggleGlass"><button className={'btnGlass '+(s.layoutMode==='guided'?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.layoutMode='guided';p.settings!.allowOverlap=false;p.settings!.snapToGrid=true})}>Guided</button><button className={'btnGlass '+(s.layoutMode!=='guided'?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.layoutMode='freeform';p.settings!.allowOverlap=true;p.settings!.snapToGrid=false})}>Freeform</button></div><div className="arrangeMenuWrap"><button className="btnGlass" onClick={()=>setArrangeMenu(x=>!x)}><LayoutDashboard size={14}/>Arrange</button>{arrangeMenu&&<><div style={{position:'fixed',inset:0,zIndex:998}} onPointerDown={(e)=>{e.stopPropagation();setArrangeMenu(false)}} /><div className="arrangeMenuGlass" style={{position:'absolute',zIndex:999}}><button className="btnGlass" onClick={()=>{autoArrangePremium();setArrangeMenu(false)}}>Premium layout</button><button className="btnGlass" disabled={!selected} onClick={()=>{placeSelected('left');setArrangeMenu(false)}}>Align left</button><button className="btnGlass" disabled={!selected} onClick={()=>{placeSelected('center');setArrangeMenu(false)}}>Center</button><button className="btnGlass" disabled={!selected} onClick={()=>{placeSelected('right');setArrangeMenu(false)}}>Align right</button><button className="btnGlass" disabled={!selected} onClick={()=>{placeSelected('next');setArrangeMenu(false)}}>Move next</button></div></>}</div><button className="btnGlass" onClick={clearAll}><Eraser size={14}/>Clear Filters</button><button className="btnGlass" onClick={prev} disabled={idx===0} aria-label="Action"><ChevronLeft size={14}/></button><button className="btnGlass" onClick={next} disabled={idx===project.report.pages.length-1} aria-label="Action"><ChevronRight size={14}/></button><button className="btnGlass primary" onClick={addPage}><Plus size={14}/>New Page</button></div>
     <div className={'reportBodyGlass '+(!dataPaneVisible?'dataPaneHidden ':'')+(!propertiesVisible?'propertiesPaneHidden ':'')+(!filtersVisible?'filtersPaneHidden ':'')}>
       {dataPaneVisible&&<Fields project={project} selectedBindings={selected?.bindings} onAutoBind={autoBindField} onCollapse={()=>setDataPaneVisible(false)}/>}<div className="canvasStageGlass"><div className="canvasToplineGlass"><div><b>{page.name}</b><span>{s.pageWidth||1920} × {s.pageHeight||1080} · {designerView==='fit'?'Fit view':'Actual size'}</span></div>{s.showNavigation&&<div className="navControlsGlass"><button className="btnGlass" onClick={prev} disabled={idx===0}><ChevronLeft size={14}/>Previous</button><button className="btnGlass" onClick={clearAll}><Eraser size={14}/>Clear Filters</button><span>Page {idx+1} of {project.report.pages.length}</span><button className="btnGlass" onClick={next} disabled={idx===project.report.pages.length-1}>Next<ChevronRight size={14}/></button></div>}<div className="filterSummaryGlass"><Filter size={12}/>{(project.report.filters?.length||0)+(page.filters?.length||0)+interactionFilters.length} active</div></div>
       <div className={'canvasWrapGlass align-'+(s.pageAlignment||'center')+' valign-'+(s.pageVerticalAlignment||'top')+' '+(s.showGrid!==false?'showDesignerGrid':'hideDesignerGrid')} ref={canvasRef} style={{backgroundColor:'transparent'}}>
         <div className="designerScaleFrameGlass" style={{width:(s.pageWidth||1920)*designerScale,height:designerEffectiveHeight*designerScale}}>
-        <div className="reportPageSurfaceGlass" role="application" aria-label={`${page.name} report canvas`} tabIndex={0} onMouseDown={e=>{if(!(e.target as HTMLElement).closest('.visualCard')){selectVisual(null);setSelectedVisualIds([])}}} style={{background:s.background,width:s.pageWidth||1920,height:designerEffectiveHeight,minHeight:designerEffectiveHeight,transform:`scale(${designerScale})`,transformOrigin:'top left'}}>
+        <div ref={pageSurfaceRef} className="reportPageSurfaceGlass" role="application" aria-label={`${page.name} report canvas`} onMouseDown={e=>{if(!(e.target as HTMLElement).closest('.visualCard')){selectVisual(null);setSelectedVisualIds([]);setFormatPainter(null)}}} style={{background:s.background,width:s.pageWidth||1920,height:designerEffectiveHeight,minHeight:designerEffectiveHeight,transform:`scale(${designerScale})`,transformOrigin:'top left'}}>
           {s.backgroundImage&&<div className={'pageBackgroundImage fit-'+(s.backgroundImageFit||'cover')} style={{backgroundImage:`url(${s.backgroundImage})`,opacity:(s.backgroundImageOpacity??24)/100}}/>}
           <div className="pageContentLayer">
-          {s.header.visible&&<div className="dashboardHeaderGlass" style={{background:s.header.background,textAlign:s.header.alignment,'--header-bg':s.header.background,'--header-height':`${s.header.height||84}px`,'--header-pad-top':`${s.header.paddingTop??12}px`,'--header-pad-bottom':`${s.header.paddingBottom??12}px`,'--header-pad-left':`${s.header.paddingLeft??24}px`,'--header-pad-right':`${s.header.paddingRight??24}px`,'--header-radius':`${s.header.borderRadius??14}px`} as any}><div className="dashboardHeaderCopyGlass"><h1 style={{fontSize:s.header.fontSize,color:s.header.titleColor}}>{s.header.title}</h1><p style={{fontSize:s.header.subtitleFontSize??12,color:s.header.subtitleColor}}>{s.header.subtitle}</p></div>{s.header.showGeneratedInfo!==false&&<div className="designerGeneratedInfoGlass" style={{background:s.header.generatedInfoBackground||'#f8fbff'}}><CalendarDays size={18}/><div><small>REPORT GENERATED</small><b>{new Date().toLocaleDateString()}</b></div></div>}</div>}
-          <GridLayout className="layout pleasantLayout" layout={layout} cols={12*gridFactor} rowHeight={50/gridFactor} width={Math.max(840,(s.pageWidth||1920))} margin={[16/gridFactor,16/gridFactor]} containerPadding={[0,0]} style={{height:Math.max(520,designerEffectiveHeight-designerHeaderHeight-72),minHeight:Math.max(520,designerEffectiveHeight-designerHeaderHeight-72)}} autoSize={false} isBounded={true} transformScale={designerScale} onDragStop={syncLayout} onResizeStop={syncLayout} draggableHandle=".visualMoveZone" draggableCancel=".visualHeaderActions, .visualHeaderActions *, button, button *, input, select, textarea, .slicerList, .slicerList *, .echarts-for-react, .echarts-for-react *" compactType={null} preventCollision={s.allowOverlap!==true} resizeHandles={['se','s','e','sw','w','n','ne','nw']}>{page.visuals.map((v, i)=><div key={v.id} style={{zIndex: i, opacity: v.hidden ? 0 : 1, pointerEvents: v.hidden ? 'none' : 'auto'}} tabIndex={v.tabOrder ?? i}><VisualCard v={v} model={project.model} project={project} selected={selectedIds.includes(v.id)||selectedVisualId===v.id} onSelect={additive=>selectOne(v.id,additive)} roleId={roleId} extraFilters={[...(project.report.filters||[]),...(page.filters||[]),...Object.entries(interactionFilterMap).filter(([owner])=>owner!==v.id).map(([,f])=>f)]} onSlicer={f=>setInteractionFilterMap(prev=>{const next={...prev};if(f)next[v.id]=f;else delete next[v.id];return next})} onChange={fn=>updatePage(pg=>{const vv=pg.visuals.find(x=>x.id===v.id);if(vv)fn(vv)})} onAction={executeVisualAction} onDuplicate={()=>{const newId=crypto.randomUUID();updatePage(pg=>{const src=pg.visuals.find(x=>x.id===v.id);if(src){const n=structuredClone(src);n.id=newId;n.bindings=sanitizeBindingsForType(n.type,structuredClone(src.bindings));n.filters=structuredClone(src.filters||[]);n.format={...structuredClone(src.format),fieldFormats:{...(structuredClone(src.format?.fieldFormats||{}))}};const spot=findSmartSpot(pg.visuals,n.w,n.h);n.x=spot.x;n.y=spot.y;n.title+=' Copy';pg.visuals.push(n)}});setTimeout(()=>selectOne(newId),0)}} onDelete={()=>{updatePage(pg=>{pg.visuals=pg.visuals.filter(x=>x.id!==v.id)});setSelectedVisualIds(ids=>ids.filter(id=>id!==v.id));if(selectedVisualId===v.id)selectVisual(null)}}/></div>)}</GridLayout>
+
+          <CanvasObjectInteractionManager visuals={page.visuals} selectedIds={selectedIds} primaryId={selectedVisualId} scale={designerScale} canvasWidth={s.pageWidth||1920} canvasHeight={Math.max(520,designerEffectiveHeight-designerHeaderHeight)} snapToGrid={s.snapToGrid!==false} preventOverlap={s.allowOverlap!==true} onSelect={selectCanvasVisual} onGeometry={syncGeometry} render={v=><VisualCard v={v} model={project.model} project={project} selected={selectedIds.includes(v.id)||selectedVisualId===v.id} actionSelected={buttonSelections[(v.format.buttonSelectionGroup||'default').trim()||'default']===v.id} onSelect={additive=>selectCanvasVisual(v.id,additive)} roleId={roleId} extraFilters={[...(project.report.filters||[]),...(page.filters||[]),...Object.entries(interactionFilterMap).filter(([owner])=>owner!==v.id).map(([,f])=>f)]} activeInteractionFilter={interactionFilterMap[v.id]} onDrillThrough={(pid, f) => { switchPage(pid); update(p => { const targetPage = p.report.pages.find(x=>x.id===pid); if (targetPage) { targetPage.filters = [...(targetPage.filters||[]).filter(z=>z.field!==f.field), f]; } return p; }); }} onSlicer={f=>setInteractionFilterMap(prev=>{const next={...prev};if(f)next[v.id]=f;else delete next[v.id];return next})} onChange={fn=>updatePage(pg=>{const vv=pg.visuals.find(x=>x.id===v.id);if(vv)fn(vv)})} onAction={executeVisualAction} onDuplicate={()=>{const newId=crypto.randomUUID();updatePage(pg=>{const src=pg.visuals.find(x=>x.id===v.id);if(src){const n=structuredClone(src);n.id=newId;n.zIndex=pg.visuals.length;n.bindings=sanitizeBindingsForType(n.type,structuredClone(src.bindings));n.filters=structuredClone(src.filters||[]);n.format={...structuredClone(src.format),fieldFormats:{...(structuredClone(src.format?.fieldFormats||{}))}};const spot=findSmartSpot(pg.visuals,n.w,n.h);n.x=spot.x;n.y=spot.y;n.title+=' Copy';pg.visuals.push(n)}});setTimeout(()=>selectOne(newId),0)}} onDelete={()=>{if(selectedIds.includes(v.id)||selectedVisualId===v.id)del();else{updatePage(pg=>{pg.visuals=pg.visuals.filter(x=>x.id!==v.id)});setSelectedVisualIds(ids=>ids.filter(id=>id!==v.id));if(selectedVisualId===v.id)selectVisual(null)}}} onCategoriesLoad={handleCategoriesLoad}/>}/>
           
           </div>
         </div>
         </div>
       </div></div>
-      {selectionPaneVisible&&<SelectionPane page={page} selectedIds={selectedIds} selectedVisualId={selectedVisualId} onSelect={selectOne} onLayer={layerSelection} onReorder={reorderLayer} onReorderTab={reorderTabOrder} onBringToFront={bringVisualToFront} onToggleVisibility={toggleVisualVisibility} onCollapse={()=>setSelectionPaneVisible(false)}/>} 
-      {!selectionPaneVisible&&<button className="collapsedDockTab selection" title="Expand Selection pane" onClick={()=>setSelectionPaneVisible(true)}><ChevronLeft size={16}/><Layers3 size={16}/><span>Selection</span></button>}
+      {selectionPaneVisible&&<SelectionPane page={page} selectedIds={selectedIds} selectedVisualId={selectedVisualId} onSelect={selectOne} onLayer={layerSelection} onReorder={reorderLayer} onReorderTab={reorderTab} onBringToFront={bringVisualToFront} onToggleVisibility={toggleVisualVisibility} onCreateGroup={groupSelection} onUngroup={ungroupSelection} onCollapse={()=>setSelectionPaneVisible(false)}/>} 
       {filtersVisible&&<FiltersDock model={project.model} visual={selected} updateVisual={uv} page={page} updatePage={updatePage} reportFilters={project.report.filters||[]} setReportFilters={setReportFilters} onCollapse={()=>setFiltersVisible(false)}/>} 
-      {!filtersVisible&&<button className="collapsedDockTab filters" title="Expand Filters pane" onClick={()=>setFiltersVisible(true)}><ChevronLeft size={16}/><Filter size={16}/><span>Filters</span></button>}
-      {propertiesVisible&&<RightPane model={{...project.model,__pages:project.report.pages}} visual={selected} updateVisual={uv} removeVisual={del} duplicate={dup} page={page} updatePage={updatePage} reportFilters={project.report.filters||[]} setReportFilters={setReportFilters} addVisual={addVisual} galleryVisible={galleryVisible} onCollapse={()=>setPropertiesVisible(false)}/>} 
-      {!propertiesVisible&&<button className="collapsedDockTab visualizations" title="Expand Visualizations pane" onClick={()=>setPropertiesVisible(true)}><ChevronLeft size={16}/><BarChart3 size={16}/><span>Visualizations</span></button>}
-      {!dataPaneVisible&&<button className="collapsedDockTab data" title="Expand Data pane" onClick={()=>setDataPaneVisible(true)}><ChevronLeft size={16}/><Table2 size={16}/><span>Data</span></button>}
+      {propertiesVisible&&<RightPane model={{...project.model,__pages:project.report.pages}} visual={selected} updateVisual={uv} removeVisual={del} duplicate={dup} page={page} updatePage={updatePage} reportFilters={project.report.filters||[]} setReportFilters={setReportFilters} addVisual={addVisual} galleryVisible={galleryVisible} onCollapse={()=>setPropertiesVisible(false)} selectedIds={selectedIds}/>} 
     </div>
     {(allSharedFilters.length>0)&&<div className="activeFilterStripGlass"><b>Active filters</b>{allSharedFilters.map((f,i)=><span key={i}>{f.field} {f.operator} {String(f.value)}</span>)}<button className="btnGlass" onClick={clearAll}>Clear all</button></div>}
-    {pageTabsVisible&&<div className="pageTabsGlass"><button className="iconGlass navMini" title="Previous page" onClick={prev} disabled={idx===0}><ChevronLeft size={14}/></button><button className="iconGlass navMini" title="Next page" onClick={next} disabled={idx===project.report.pages.length-1}><ChevronRight size={14}/></button>{project.report.pages.map(p=><button key={p.id} onClick={()=>switchPage(p.id)} className={'pageTabGlass '+(page.id===p.id?'active':'')}>{p.name}</button>)}<button className="iconGlass addPageTab" title="New page" onClick={addPage}><Plus size={16}/></button><div className="reportStatusSpacer"/><span className="reportStatusText">Page {idx+1} of {project.report.pages.length} · {page.visuals.length} visuals</span><div className="powerBiZoomBar"><button title="Zoom out" onClick={()=>{const current=designerView==='custom'?manualScale:designerScale;setManualScale(Math.max(.25,current-.05));setDesignerView('custom')}}>−</button><input className="statusZoomSlider" aria-label="Canvas zoom" type="range" min="25" max="200" step="5" value={Math.round((designerView==='custom'?manualScale:designerScale)*100)} onChange={e=>{setManualScale(+e.target.value/100);setDesignerView('custom')}}/><button title="Zoom in" onClick={()=>{const current=designerView==='custom'?manualScale:designerScale;setManualScale(Math.min(2,current+.05));setDesignerView('custom')}}>+</button><span className="reportStatusZoom">{Math.round((designerView==='custom'?manualScale:designerScale)*100)}%</span><button className="statusFitButton" title="Fit page to available space" onClick={()=>setDesignerView('fit')}><Maximize2 size={14}/><span>Fit page</span></button></div></div>}
+    {pageTabsVisible&&<div className="pageTabsGlass"><button className="iconGlass navMini" title="Previous page" onClick={prev} disabled={idx===0} aria-label="Action"><ChevronLeft size={14}/></button><button className="iconGlass navMini" title="Next page" onClick={next} disabled={idx===project.report.pages.length-1} aria-label="Action"><ChevronRight size={14}/></button>{project.report.pages.map(p=>renamingPageId===p.id?<input key={p.id} className="pageTabGlass active" autoFocus defaultValue={p.name} onBlur={e=>{update(state=>{const pg=state.report.pages.find(x=>x.id===p.id);if(pg)pg.name=e.target.value||'Page';return state});setRenamingPageId(null)}} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur();if(e.key==='Escape')setRenamingPageId(null)}} />:<button key={p.id} draggable onDragStart={e=>{setPageContextMenu(null);setDraggedPageId(p.id);e.dataTransfer.effectAllowed='move'}} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='move'}} onDrop={e=>{e.preventDefault();if(!draggedPageId||draggedPageId===p.id)return;update(state=>{const from=state.report.pages.findIndex(x=>x.id===draggedPageId),to=state.report.pages.findIndex(x=>x.id===p.id);if(from>=0&&to>=0){const[moved]=state.report.pages.splice(from,1);state.report.pages.splice(to,0,moved)}return state});setDraggedPageId(null)}} onClick={()=>{setPageContextMenu(null);switchPage(p.id)}} onDoubleClick={()=>{setPageContextMenu(null);setRenamingPageId(p.id)}} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPageContextMenu({pageId:p.id,x:Math.min(e.clientX,Math.max(8,window.innerWidth-196)),y:Math.max(8,Math.min(e.clientY-94,window.innerHeight-120))})}} className={'pageTabGlass '+(page.id===p.id?'active':'')+(draggedPageId===p.id?' dragging':'')}>{p.name}</button>)}<button className="iconGlass addPageTab" title="New page" onClick={addPage} aria-label="Action"><Plus size={16}/></button><div className="reportStatusSpacer"/><span className="reportStatusText">Page {idx+1} of {project.report.pages.length}  {page.visuals.length} visuals</span><div className="powerBiZoomBar"><button title="Zoom out" onClick={()=>{const current=designerView==='custom'?manualScale:designerScale;setManualScale(Math.max(.25,current-.05));setDesignerView('custom')}}>-</button><input className="statusZoomSlider" aria-label="Canvas zoom" type="range" min="25" max="200" step="5" value={Math.round((designerView==='custom'?manualScale:designerScale)*100)} onChange={e=>{setManualScale(+e.target.value/100);setDesignerView('custom')}}/><button title="Zoom in" onClick={()=>{const current=designerView==='custom'?manualScale:designerScale;setManualScale(Math.min(2,current+.05));setDesignerView('custom')}}>+</button><span className="reportStatusZoom">{Math.round((designerView==='custom'?manualScale:designerScale)*100)}%</span><button className="statusFitButton" title="Fit page to available space" onClick={()=>setDesignerView('fit')}><Maximize2 size={14}/><span>Fit page</span></button></div></div>}
+    {pageContextMenu&&createPortal(<div className="pageTabContextBackdrop" onPointerDown={()=>setPageContextMenu(null)} onContextMenu={e=>{e.preventDefault();setPageContextMenu(null)}}><div className="pageTabContextMenu" role="menu" aria-label="Page options" style={{left:pageContextMenu.x,top:pageContextMenu.y}} onPointerDown={e=>e.stopPropagation()}><b>{project.report.pages.find(item=>item.id===pageContextMenu.pageId)?.name||'Page'}</b><button role="menuitem" onClick={()=>{setRenamingPageId(pageContextMenu.pageId);setPageContextMenu(null)}}><Type size={14}/>Rename page</button><button role="menuitem" className="danger" disabled={project.report.pages.length<=1} title={project.report.pages.length<=1?'A report must contain at least one page':''} onClick={()=>deletePage(pageContextMenu.pageId)}><Trash2 size={14}/>Delete page</button>{project.report.pages.length<=1&&<small>Create another page before deleting this one.</small>}</div></div>,document.body)}
+    {moreVisualsOpen&&createPortal(
+      <div className="moreVisualsOverlay" role="dialog" aria-modal="true" aria-label="More visuals" onClick={e=>{if((e.target as HTMLElement).classList.contains('moreVisualsOverlay'))setMoreVisualsOpen(false)}}>
+        <div className="moreVisualsDialog">
+          <div className="moreVisualsHeader">
+            <div><b>More visuals</b><small>Choose a visual type to add to the canvas</small></div>
+            <button className="iconGlass" onClick={()=>setMoreVisualsOpen(false)} title="Close"><X size={16}/></button>
+          </div>
+          <div className="moreVisualsSearch">
+            <Search size={13}/>
+            <input autoFocus placeholder="Search visuals…" value={moreVisualsSearch} onChange={e=>setMoreVisualsSearch(e.target.value)} onKeyDown={e=>{if(e.key==='Escape')setMoreVisualsOpen(false)}}/>
+          </div>
+          <div className="moreVisualsGrid">
+            {visualTypes.filter(t=>!moreVisualsSearch||visualLabels[t].toLowerCase().includes(moreVisualsSearch.toLowerCase())).map(type=>(
+              <button key={type} className="moreVisualsItem" title={visualLabels[type]} onClick={()=>{addVisual(type);setMoreVisualsOpen(false)}}>
+                {visualIcon(type)}
+                <span>{visualLabels[type]}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
   </div>;
 }
+
+
+
+
+
+
+
+
+

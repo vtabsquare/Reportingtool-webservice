@@ -1,0 +1,58 @@
+/* Saved Visual and General properties are authoritative over decorative themes. */
+[data-theme] .view-report .visualCard,[data-theme] .view-report .advancedReport .visualCard{background:var(--visual-background,#fff)!important;border-top:var(--visual-border-top,0)!important;border-right:var(--visual-border-right,0)!important;border-bottom:var(--visual-border-bottom,0)!important;border-left:var(--visual-border-left,0)!important;border-radius:var(--visual-radius,0)!important;box-shadow:var(--visual-shadow,none)!important}
+[data-theme] .view-report .visualCard:hover,[data-theme] .view-report .visualCard.selected,[data-theme] .view-report .advancedReport .visualCard:hover,[data-theme] .view-report .advancedReport .visualCard.selected{border-radius:var(--visual-radius,0)!important;box-shadow:var(--visual-shadow,none)!important}
+[data-theme] .view-report .visualCard .visualTitle,[data-theme] .view-report .premiumVisualCard .visualTitle,[data-theme] .view-report .advancedReport .visualTitle{background:var(--visual-title-background,transparent)!important;color:var(--visual-title-color,#242424)!important}
+[data-theme] .view-report .visualCard .visualTitleText>span:not(.drillPath){font-family:var(--visual-title-font,'Segoe UI')!important;font-size:var(--visual-title-size,12px)!important;font-weight:var(--visual-title-weight,700)!important;font-style:var(--visual-title-style,normal)!important;text-decoration:var(--visual-title-decoration,none)!important;text-align:var(--visual-title-align,left)!important;white-space:var(--visual-title-wrap,normal)!important;color:var(--visual-title-color,#242424)!important}
+[data-theme] .view-report .visualCard .visualTitleText>small{font-family:var(--visual-subtitle-font,'Segoe UI')!important;font-size:var(--visual-subtitle-size,10px)!important;font-weight:var(--visual-subtitle-weight,400)!important;font-style:var(--visual-subtitle-style,normal)!important;text-decoration:var(--visual-subtitle-decoration,none)!important;text-align:var(--visual-subtitle-align,left)!important;white-space:var(--visual-subtitle-wrap,normal)!important;color:var(--visual-subtitle-color,#616161)!important}
+[data-theme] .view-report .visualCard .visualBody{background:transparent!important;padding-top:var(--visual-padding-top,8px)!important;padding-right:var(--visual-padding-right,8px)!important;padding-bottom:var(--visual-padding-bottom,8px)!important;padding-left:var(--visual-padding-left,8px)!important}
+
+.slicerVisual .slicerList,.slicerVisual .slicerDropdownMulti,.slicerVisual .slicerDropdown,.viewerVisual-slicer .viewerSlicerChips,.viewerVisual-slicer .viewerSlicerDropdown{font-family:var(--slicer-font,'Segoe UI')!important;font-size:var(--slicer-size,11px)!important;font-weight:var(--slicer-weight,400)!important;font-style:var(--slicer-style,normal)!important;color:var(--slicer-text,#242424)!important;text-align:var(--slicer-align,left)!important;background:var(--slicer-bg,#fff)!important}
+.slicerVisual .slicerListItem,.slicerVisual .slicerList button,.slicerVisual .slicerDropdownMulti .slicerListItem,.viewerVisual-slicer .slicerListItem,.viewerVisual-slicer .viewerSlicerChips button{font:inherit!important;color:var(--slicer-text,#242424)!important;text-align:var(--slicer-align,left)!important;white-space:var(--slicer-wrap,nowrap)!important;padding-top:var(--slicer-row-padding,8px)!important;padding-bottom:var(--slicer-row-padding,8px)!important}
+.slicerVisual .slicerListItem:nth-child(even),.slicerVisual .slicerList button:nth-child(even),.viewerVisual-slicer .slicerListItem:nth-child(even),.viewerVisual-slicer .viewerSlicerChips button:nth-child(even){background:var(--slicer-alt,#f8fafc)!important}
+
+.viewerVisual{background:var(--viewer-background,var(--published-background,#fff))!important;border-top:var(--viewer-border-top,var(--published-border-top,0))!important;border-right:var(--viewer-border-right,var(--published-border-right,0))!important;border-bottom:var(--viewer-border-bottom,var(--published-border-bottom,0))!important;border-left:var(--viewer-border-left,var(--published-border-left,0))!important;border-radius:var(--viewer-radius,var(--published-radius,0))!important;box-shadow:var(--viewer-shadow,var(--published-shadow,none))!important}
+.viewerVisual:hover{transform:none!important;box-shadow:var(--viewer-shadow,var(--published-shadow,none))!important}
+.viewerVisual .viewerVisualTitle{background:var(--viewer-title-background,transparent)!important;color:var(--viewer-title-color,var(--published-title-color,#111827))!important}
+.viewerVisual .viewerVisualBody{background:transparent!important;padding-top:var(--viewer-padding-top,var(--published-pad-top,8px))!important;padding-right:var(--viewer-padding-right,var(--published-pad-right,8px))!important;padding-bottom:var(--viewer-padding-bottom,var(--published-pad-bottom,8px))!important;padding-left:var(--viewer-padding-left,var(--published-pad-left,8px))!important}
+.viewerVisualTitle, .viewerVisual .visualTitle{display:flex!important;align-items:center!important;justify-content:space-between!important}
+.viewerVisualTitleLabel, .viewerVisual .visualTitleText{display:flex!important;flex-direction:column!important;align-items:stretch!important;justify-content:center!important;min-width:0!important;flex:1 1 auto!important;text-align:var(--visual-title-align,left)!important}
+.viewerVisualTitleLabel>span, .viewerVisual .visualTitleText>span, .viewerVisualTitleLabel>div>span{display:block!important;width:100%!important;text-align:var(--visual-title-align,left)!important;overflow-wrap:anywhere;text-overflow:ellipsis}
+.viewerVisualTitleLabel small, .viewerVisual .visualTitleText>small{display:block!important;width:100%!important;text-align:var(--visual-subtitle-align,var(--visual-title-align,left))!important;overflow-wrap:anywhere;text-overflow:ellipsis}
+
+.viewerGrid.pixelLayout{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;padding:0!important;margin:0!important;display:block!important}
+.viewerPage.pixelPublishedPage .viewerPageLayer{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;padding:0!important;margin:0!important;display:block!important}
+
+.viewerVisual-slicer .viewerVisualBody{padding:0!important;display:flex!important;flex-direction:column!important;justify-content:center!important;flex:1!important;min-height:0!important}
+.viewerVisual-slicer .viewerSlicerContents{flex:1!important;display:flex!important;flex-direction:column!important;justify-content:center!important;min-height:0!important;padding:2px 8px!important;box-sizing:border-box!important}
+.viewerVisual-slicer .viewerSlicerDropdown{margin:0!important;width:100%!important;height:28px!important;min-height:28px!important;box-sizing:border-box!important}
+.viewerVisual-card .viewerVisualBody{padding:4px 8px!important;display:flex!important;flex-direction:column!important;justify-content:center!important;flex:1!important;min-height:0!important}
+.viewerVisual-card .powerCardGrid{overflow:hidden!important;height:100%!important;align-content:center!important}
+.viewerVisual-card .powerCardItem{min-height:0!important;height:100%!important;padding:4px 8px!important;box-sizing:border-box!important}
+.viewerVisual-card .advancedCardValue{line-height:1.15!important}
+.viewerVisual-card .powerCardCategory{margin-top:2px!important;line-height:1.15!important}
+.viewerVisual-textbox .viewerVisualBody{padding:0!important;overflow:hidden!important;flex:1!important;min-height:0!important}
+.viewerVisual-textbox .viewerTextBox{padding:var(--viewer-padding-top,8px) var(--viewer-padding-right,12px) var(--viewer-padding-bottom,8px) var(--viewer-padding-left,12px)!important;width:100%!important;height:100%!important;box-sizing:border-box!important;overflow:auto!important}
+.viewerVisual-button .viewerVisualBody{padding:0!important;overflow:hidden!important;flex:1!important;min-height:0!important}
+.viewerVisual-button .viewerActionButtonWrap{width:100%!important;height:100%!important;display:flex!important;align-items:stretch!important}
+.viewerVisual-button .viewerActionButton{width:100%!important;height:100%!important;min-height:0!important;margin:0!important;box-sizing:border-box!important;border-radius:var(--button-radius,6px)!important}
+
+/* Visual & Dashboard Loading Animation Styles */
+.viewerStage{position:relative!important}
+.viewerVisualLoading{display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;width:100%!important;height:100%!important;min-height:48px!important;gap:8px!important;color:#64748b!important;text-align:center!important;box-sizing:border-box!important;pointer-events:none!important;user-select:none!important}
+.viewerVisualLoading b{font-size:11px!important;font-weight:600!important;color:#64748b!important;letter-spacing:0.01em!important;margin:0!important;font-family:inherit!important}
+.viewerSpinner{width:24px!important;height:24px!important;border:2.5px solid rgba(203,213,225,0.6)!important;border-top-color:#2563eb!important;border-right-color:#60a5fa!important;border-radius:50%!important;animation:viewerSpin 0.75s linear infinite!important;flex-shrink:0!important;display:inline-block!important;box-sizing:border-box!important}
+.viewerVisual-slicer .viewerVisualLoading,.viewerVisual.visualCompact .viewerVisualLoading{flex-direction:row!important;gap:6px!important}
+.viewerVisual-slicer .viewerSpinner,.viewerVisual.visualCompact .viewerSpinner{width:14px!important;height:14px!important;border-width:2px!important}
+.viewerVisual-slicer .viewerVisualLoading b,.viewerVisual.visualCompact .viewerVisualLoading b{font-size:10px!important}
+.viewerPageLoadNotice{position:absolute!important;top:18px!important;left:20px!important;z-index:1000!important;display:flex!important;align-items:center!important;gap:12px!important;padding:10px 16px!important;background:rgba(255,255,255,0.96)!important;backdrop-filter:blur(12px)!important;-webkit-backdrop-filter:blur(12px)!important;border:1px solid #cbd5e1!important;border-radius:10px!important;box-shadow:0 10px 28px rgba(15,23,42,0.14),0 2px 6px rgba(15,23,42,0.08)!important;color:#0f172a!important;pointer-events:auto!important;animation:viewerNoticeIn 0.22s cubic-bezier(0.16,1,0.3,1)!important;max-width:380px!important}
+.viewerPageLoadNotice.error{border-color:#fca5a5!important;background:rgba(254,242,242,0.98)!important;color:#991b1b!important}
+.viewerPageLoadNotice .viewerSpinner{width:20px!important;height:20px!important;border-width:2.5px!important}
+.viewerPageLoadNoticeContent{display:flex!important;flex-direction:column!important;gap:2px!important;min-width:0!important}
+.viewerPageLoadNoticeContent b{font-size:12px!important;font-weight:700!important;color:#0f172a!important;line-height:1.3!important}
+.viewerPageLoadNoticeContent span{font-size:11px!important;color:#64748b!important;line-height:1.25!important}
+.viewerPageLoadNotice.error b{color:#991b1b!important}
+.viewerPageLoadNotice.error span{color:#b91c1c!important}
+.viewerPageLoadNotice button{margin-left:8px!important;padding:5px 12px!important;border-radius:6px!important;border:1px solid #cbd5e1!important;background:#2563eb!important;color:#ffffff!important;font-size:11px!important;font-weight:600!important;cursor:pointer!important;transition:background 0.15s ease!important}
+.viewerPageLoadNotice button:hover{background:#1d4ed8!important}
+@keyframes viewerSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+@keyframes viewerNoticeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}

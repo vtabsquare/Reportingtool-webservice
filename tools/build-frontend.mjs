@@ -20,13 +20,14 @@ function parseDotEnv(filePath) {
   return result;
 }
 
+const webEnv = parseDotEnv(resolve(process.cwd(), 'web.env'));
 const rootEnv = parseDotEnv(resolve(process.cwd(), '.env'));
 // desktop.env is the single Desktop configuration used by both the compiled
 // interface and the packaged local backend. The example file must never be
 // compiled because its non-empty placeholders look like a valid Supabase setup.
 const desktopEnv = parseDotEnv(resolve(process.cwd(), 'desktop.env'));
 const processViteEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('VITE_')));
-const env = { ...rootEnv, ...desktopEnv, ...processViteEnv };
+const env = { ...webEnv, ...rootEnv, ...desktopEnv, ...processViteEnv };
 const packageMetadata = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8'));
 env.VITE_APP_VERSION ||= String(packageMetadata.version || '');
 

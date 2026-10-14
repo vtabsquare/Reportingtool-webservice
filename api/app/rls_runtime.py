@@ -90,6 +90,17 @@ def resolve_published_rls(report_id: str, project: dict[str, Any], access_token:
                 _rls_key_locks.pop(oldest, None)
         return resolved
 
+
+def resolve_published_rls_for_user(report_id: str, project: dict[str, Any], user_id: str) -> dict[str, Any]:
+    """Resolve Services RLS for a trusted background job without storing a user JWT."""
+    sb = _admin_client()
+    rows = sb.table("vtab_users").select("id,email,display_name").eq("id", user_id).limit(1).execute().data or []
+    if not rows:
+        raise PermissionError("The subscription or alert owner no longer has an active VTAB account.")
+    row = rows[0]
+    user = {"id": user_id, "email": row.get("email"), "user_metadata": {"display_name": row.get("display_name")}}
+    return _resolve_published_rls_impl(report_id, project, "", user, user_id)
+
 def _resolve_published_rls_impl(report_id: str, project: dict[str, Any], access_token: str, user: dict, user_id: str) -> dict[str, Any]:
     sb = _admin_client()
     report_rows = sb.table("published_reports").select("id,workspace_id,semantic_model_id").eq("id", report_id).limit(1).execute().data or []
