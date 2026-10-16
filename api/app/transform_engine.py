@@ -278,7 +278,16 @@ def compile_steps(source, steps, preview_limit=200):
             order=', '.join(f'{quote(s["field"])} {"DESC" if s.get("direction")=="desc" else "ASC"}' for s in specs)
             sql=f'SELECT * FROM {current} ORDER BY {order}'
         elif typ=='top_n':sql=f'SELECT * FROM {current} LIMIT {min(max(int(st.get("value",100)),1),5000)}'
-        elif typ=='distinct':sql=f'SELECT DISTINCT * FROM {current}'
+        elif typ=='distinct':
+            target_cols = st.get('columns') or ([st.get('field')] if st.get('field') else [])
+            valid_target_cols = [c for c in target_cols if c in cols]
+            if valid_target_cols and len(valid_target_cols) < len(cols):
+                on_cols = ', '.join(quote(c) for c in valid_target_cols)
+                sql = f'SELECT DISTINCT ON ({on_cols}) * FROM {current}'
+                message = f'Deduplicated by {", ".join(valid_target_cols)}'
+            else:
+                sql = f'SELECT DISTINCT * FROM {current}'
+                message = 'Deduplicated all columns'
         elif typ=='replace':
             field=st['field'];old=st.get('oldValue');new=st.get('newValue');mode=st.get('mode','value')
             expr=[]

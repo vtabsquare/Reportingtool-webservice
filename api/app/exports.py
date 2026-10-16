@@ -32,14 +32,15 @@ def _insights(page:dict)->list[str]:
     return result[:5]
 
 def _narratives(page:dict)->list[dict]:
-    result=[];point_count=0
+    result=[];point_count=0;seen=set()
     for item in (page or {}).get('narratives') or []:
         if not isinstance(item,dict):continue
         title=' '.join(str(item.get('title') or 'Visual').split())[:70]
         points=[]
         for value in item.get('points') or []:
             text=' '.join(str(value).split())[:150]
-            if text and text not in points:
+            if text and text not in seen and text not in points:
+                seen.add(text)
                 points.append(text);point_count+=1
             if len(points)>=2 or point_count>=8:break
         if points:result.append({'title':title,'points':points})
@@ -573,7 +574,7 @@ def _render_page_visuals(c, colors, model: dict | None, page: dict, content_box:
 def report_pdf(project:dict,rendered_pages:list[dict]|None=None)->bytes:
     try:
         from reportlab.lib import colors
-        from reportlab.lib.pagesizes import landscape, A4
+        from reportlab.lib.pagesizes import landscape, portrait, A4
         from reportlab.pdfgen import canvas
     except ImportError as e:
         raise RuntimeError(f'PDF export is unavailable: reportlab is not installed in the desktop bundle. ({e})') from e
@@ -584,6 +585,12 @@ def report_pdf(project:dict,rendered_pages:list[dict]|None=None)->bytes:
         total=len(rendered_pages)
         for index,page in enumerate(rendered_pages,1):
             image=ImageReader(BytesIO(_rendered_image(page)));iw,ih=image.getSize()
+            if ih > iw:
+                c.setPageSize(portrait(A4))
+                W, H = portrait(A4)
+            else:
+                c.setPageSize(landscape(A4))
+                W, H = landscape(A4)
             c.setFillColor(colors.white);c.rect(0,0,W,H,stroke=0,fill=1)
             c.setFillColor(colors.HexColor('#0f172a'));c.setFont('Helvetica-Bold',16);c.drawString(24,H-30,name[:90])
             c.setFillColor(colors.HexColor('#64748b'));c.setFont('Helvetica',9);c.drawRightString(W-24,H-29,generated)
@@ -599,6 +606,18 @@ def report_pdf(project:dict,rendered_pages:list[dict]|None=None)->bytes:
     pages=_pages(project) or [{'name':'Page 1','visuals':[]}]
     model=project.get('model')
     for i,p in enumerate(pages,1):
+        ps = p.get('settings') or {}
+        pw = float(ps.get('pageWidth') or 1280)
+        ph = float(ps.get('pageHeight') or 720)
+        if ps.get('autoFitHeight'):
+            vbot = max([float((v.get('y') or 0) + (v.get('h') or 100)) for v in p.get('visuals', [])] + [ph])
+            ph = max(ph, vbot + 32)
+        if ph > pw:
+            c.setPageSize(portrait(A4))
+            W, H = portrait(A4)
+        else:
+            c.setPageSize(landscape(A4))
+            W, H = landscape(A4)
         c.setFillColor(colors.white);c.rect(0,0,W,H,stroke=0,fill=1)
         c.setFillColor(colors.HexColor('#0f172a'));c.setFont('Helvetica-Bold',16);c.drawString(28,H-30,name[:90])
         c.setFillColor(colors.HexColor('#64748b'));c.setFont('Helvetica',9);c.drawRightString(W-28,H-29,generated)
@@ -630,19 +649,21 @@ def report_pptx(project:dict,rendered_pages:list[dict]|None=None)->bytes:
             date_box=slide.shapes.add_textbox(Inches(9.0),Inches(.19),Inches(3.9),Inches(.3));dt=date_box.text_frame;dt.text=generated;dt.paragraphs[0].alignment=PP_ALIGN.RIGHT;dt.paragraphs[0].font.size=Pt(9);dt.paragraphs[0].font.color.rgb=RGBColor(100,116,139)
             divider=slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,Inches(.42),Inches(.69),Inches(12.48),Inches(.018));divider.fill.solid();divider.fill.fore_color.rgb=RGBColor(203,213,225);divider.line.fill.background()
             raw=_rendered_image(page);image=Image.open(BytesIO(raw));iw,ih=image.size
-            max_w,max_h=8.55,6.12;ratio=min(max_w/iw,max_h/ih);pic_w,pic_h=iw*ratio,ih*ratio
-            slide.shapes.add_picture(BytesIO(raw),Inches(.42+(max_w-pic_w)/2),Inches(.84+(max_h-pic_h)/2),width=Inches(pic_w),height=Inches(pic_h))
-            panel=slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,Inches(9.2),Inches(.84),Inches(3.7),Inches(6.12));panel.fill.solid();panel.fill.fore_color.rgb=RGBColor(248,250,252);panel.line.color.rgb=RGBColor(226,232,240)
-            accent=slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,Inches(9.2),Inches(.84),Inches(.055),Inches(6.12));accent.fill.solid();accent.fill.fore_color.rgb=RGBColor(37,99,235);accent.line.fill.background()
-            label=slide.shapes.add_textbox(Inches(9.48),Inches(1.08),Inches(3.05),Inches(.3));lt=label.text_frame;lt.text='SMART NARRATIVE';lt.paragraphs[0].font.size=Pt(10);lt.paragraphs[0].font.bold=True;lt.paragraphs[0].font.color.rgb=RGBColor(37,99,235)
-            narrative_box=slide.shapes.add_textbox(Inches(9.48),Inches(1.5),Inches(3.05),Inches(5.05));nt=narrative_box.text_frame;nt.clear();nt.word_wrap=True
             narratives=_narratives(page)
-            if not narratives:
-                paragraph=nt.paragraphs[0];paragraph.text='No numeric findings are available for this page.';paragraph.font.size=Pt(10);paragraph.font.color.rgb=RGBColor(71,85,105)
-            for narrative_index,narrative in enumerate(narratives):
-                heading_paragraph=nt.paragraphs[0] if narrative_index==0 else nt.add_paragraph();heading_paragraph.text=narrative['title'];heading_paragraph.font.size=Pt(11);heading_paragraph.font.bold=True;heading_paragraph.font.color.rgb=RGBColor(15,23,42);heading_paragraph.space_before=Pt(2 if narrative_index==0 else 8);heading_paragraph.space_after=Pt(3)
-                for point in narrative['points']:
-                    paragraph=nt.add_paragraph();paragraph.text='• '+point;paragraph.font.size=Pt(9.5);paragraph.font.color.rgb=RGBColor(51,65,85);paragraph.space_after=Pt(5)
+            if narratives:
+                max_w,max_h=8.55,6.12;ratio=min(max_w/iw,max_h/ih);pic_w,pic_h=iw*ratio,ih*ratio
+                slide.shapes.add_picture(BytesIO(raw),Inches(.42+(max_w-pic_w)/2),Inches(.84+(max_h-pic_h)/2),width=Inches(pic_w),height=Inches(pic_h))
+                panel=slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,Inches(9.2),Inches(.84),Inches(3.7),Inches(6.12));panel.fill.solid();panel.fill.fore_color.rgb=RGBColor(248,250,252);panel.line.color.rgb=RGBColor(226,232,240)
+                accent=slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,Inches(9.2),Inches(.84),Inches(.055),Inches(6.12));accent.fill.solid();accent.fill.fore_color.rgb=RGBColor(37,99,235);accent.line.fill.background()
+                label=slide.shapes.add_textbox(Inches(9.48),Inches(1.08),Inches(3.05),Inches(.3));lt=label.text_frame;lt.text='SMART NARRATIVE';lt.paragraphs[0].font.size=Pt(10);lt.paragraphs[0].font.bold=True;lt.paragraphs[0].font.color.rgb=RGBColor(37,99,235)
+                narrative_box=slide.shapes.add_textbox(Inches(9.48),Inches(1.5),Inches(3.05),Inches(5.05));nt=narrative_box.text_frame;nt.clear();nt.word_wrap=True
+                for narrative_index,narrative in enumerate(narratives):
+                    heading_paragraph=nt.paragraphs[0] if narrative_index==0 else nt.add_paragraph();heading_paragraph.text=narrative['title'];heading_paragraph.font.size=Pt(11);heading_paragraph.font.bold=True;heading_paragraph.font.color.rgb=RGBColor(15,23,42);heading_paragraph.space_before=Pt(2 if narrative_index==0 else 8);heading_paragraph.space_after=Pt(3)
+                    for point in narrative['points']:
+                        paragraph=nt.add_paragraph();paragraph.text='• '+point;paragraph.font.size=Pt(9.5);paragraph.font.color.rgb=RGBColor(51,65,85);paragraph.space_after=Pt(5)
+            else:
+                max_w,max_h=12.48,6.12;ratio=min(max_w/iw,max_h/ih);pic_w,pic_h=iw*ratio,ih*ratio
+                slide.shapes.add_picture(BytesIO(raw),Inches(.42+(max_w-pic_w)/2),Inches(.84+(max_h-pic_h)/2),width=Inches(pic_w),height=Inches(pic_h))
             page_label=slide.shapes.add_textbox(Inches(.42),Inches(7.17),Inches(8.0),Inches(.2));pt=page_label.text_frame;pt.text=str(page.get('name') or f'Page {index}');pt.paragraphs[0].font.size=Pt(8);pt.paragraphs[0].font.color.rgb=RGBColor(100,116,139)
             footer=slide.shapes.add_textbox(Inches(10.2),Inches(7.17),Inches(2.7),Inches(.2));ft=footer.text_frame;ft.text=f'Page {index} of {len(rendered_pages)}';ft.paragraphs[0].alignment=PP_ALIGN.RIGHT;ft.paragraphs[0].font.size=Pt(8);ft.paragraphs[0].font.color.rgb=RGBColor(100,116,139)
         buf=BytesIO();prs.save(buf);return buf.getvalue()

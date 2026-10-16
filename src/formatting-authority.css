@@ -22,9 +22,75 @@
 .viewerGrid.pixelLayout{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;padding:0!important;margin:0!important;display:block!important}
 .viewerPage.pixelPublishedPage .viewerPageLayer{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;padding:0!important;margin:0!important;display:block!important}
 
-.viewerVisual-slicer .viewerVisualBody{padding:0!important;display:flex!important;flex-direction:column!important;justify-content:center!important;flex:1!important;min-height:0!important}
-.viewerVisual-slicer .viewerSlicerContents{flex:1!important;display:flex!important;flex-direction:column!important;justify-content:center!important;min-height:0!important;padding:2px 8px!important;box-sizing:border-box!important}
-.viewerVisual-slicer .viewerSlicerDropdown{margin:0!important;width:100%!important;height:28px!important;min-height:28px!important;box-sizing:border-box!important}
+.viewerVisual,
+.viewerVisual-slicer,
+.viewerVisual-card,
+.viewerVisual-kpi,
+.viewerVisual-textbox,
+.viewerVisual-button {
+  width: 100% !important;
+  height: 100% !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+.canvasObject,
+.viewerVisualWrapper {
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+.viewerVisual-slicer .viewerVisualTitle,
+.viewerVisual-slicer .visualTitle {
+  min-height: 20px !important;
+  max-height: 24px !important;
+  height: 22px !important;
+  padding: 2px 8px !important;
+  border-bottom: none !important;
+  box-sizing: border-box !important;
+}
+.viewerVisual-slicer .viewerVisualTitleLabel,
+.viewerVisual-slicer .visualTitleText {
+  min-height: 0 !important;
+  height: auto !important;
+}
+.viewerVisual-slicer .viewerVisualTitleLabel > span,
+.viewerVisual-slicer .visualTitleText > span {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  line-height: 1.15 !important;
+}
+.viewerVisual-slicer .viewerVisualTitle .viewerVisualFocus {
+  width: 18px !important;
+  height: 18px !important;
+  min-height: 18px !important;
+}
+.viewerVisual-slicer .viewerVisualBody {
+  padding: 0 8px 4px 8px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  flex: 1 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+.viewerVisual-slicer .viewerSlicerContents {
+  flex: 1 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+.viewerVisual-slicer .viewerSlicerDropdown {
+  margin: 0 !important;
+  width: 100% !important;
+  height: 26px !important;
+  min-height: 26px !important;
+  box-sizing: border-box !important;
+}
 .viewerVisual-card .viewerVisualBody{padding:4px 8px!important;display:flex!important;flex-direction:column!important;justify-content:center!important;flex:1!important;min-height:0!important}
 .viewerVisual-card .powerCardGrid{overflow:hidden!important;height:100%!important;align-content:center!important}
 .viewerVisual-card .powerCardItem{min-height:0!important;height:100%!important;padding:4px 8px!important;box-sizing:border-box!important}
@@ -56,3 +122,15 @@
 .viewerPageLoadNotice button:hover{background:#1d4ed8!important}
 @keyframes viewerSpin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
 @keyframes viewerNoticeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Ensure chart tooltips never stretch to full width/height of the visual container */
+.viewerVisualBody .echarts-for-react > div:not(:first-child),
+.echarts-for-react > div[style*="position: absolute"],
+.echarts-for-react > div[style*="z-index: 9999999"],
+div[style*="z-index: 9999999"] {
+  width: auto !important;
+  height: auto !important;
+  min-height: unset !important;
+  max-width: 420px !important;
+  pointer-events: none !important;
+}

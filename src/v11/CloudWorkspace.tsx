@@ -13,7 +13,7 @@ import {
   Home, Plus, Compass, Layers, User, Search, Settings, HelpCircle, 
   X, ChevronDown, Star, Share2, RefreshCw, Trash2, 
   MoreHorizontal, BarChart2, Database, FileText, Check, Folder, Users, 
-  SlidersHorizontal, LogOut, Filter, Sparkles, ArrowLeft, Grid,
+  SlidersHorizontal, LogOut, Filter, ArrowLeft, Grid,
   Shield, ExternalLink
 } from 'lucide-react';
 
@@ -432,9 +432,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
             <span>Admin Portal</span>
             <ExternalLink size={12} style={{ opacity: 0.7 }} />
           </a>
-          <button className="pbi-header-icon-btn" title="Copilot">
-            <Sparkles size={17} color="#0f6cbd" />
-          </button>
+
           <NotificationCenter userId={session?.user?.id}/>
           <button className="pbi-header-icon-btn" title="Settings" onClick={() => setNotificationSettingsOpen(true)}>
             <Settings size={17} />
@@ -1256,7 +1254,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                 {(activeWorkspace?.members || []).map((m: any, idx: number) => {
                   const email = m.email || m.user_email || 'Member';
                   const name = m.display_name || email.split('@')[0];
-                  const canRemove = activeWorkspace.role === 'Admin' && m.user_id && m.user_id !== session?.user?.id;
+                  const canRemove = activeWorkspace?.role === 'Admin' && m.user_id && m.user_id !== session?.user?.id;
                   return (
                     <div key={m.user_id || idx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "#f8fafc", borderRadius: 6, border: "1px solid #edebe9" }}>
                       <div className="pbi-avatar-btn" style={{ margin: 0, width: 30, height: 30, fontSize: 12 }}>

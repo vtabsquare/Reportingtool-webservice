@@ -1,4 +1,4 @@
-import{Search,Undo2,Redo2,Save,Download,Settings,RotateCcw,Database,LayoutDashboard,Bot,HardDrive,Paintbrush,UploadCloud}from'lucide-react';
+import{Search,Undo2,Redo2,Save,Settings,RotateCcw,Database,LayoutDashboard,Bot,HardDrive,Paintbrush,UploadCloud}from'lucide-react';
 import{useEffect,useState}from'react';
 import{useStudio}from'../store';
 
@@ -33,7 +33,7 @@ export default function Topbar(){
      <div className="commandSearch"><div className="searchGlass"><Search size={15} className="searchIcon"/><input value={command} onFocus={()=>setCommandOpen(true)} onBlur={()=>setTimeout(()=>setCommandOpen(false),140)} onChange={e=>{setCommand(e.target.value);setCommandOpen(true)}} onKeyDown={e=>{if(e.key==='Enter'&&matches[0])runCommand(matches[0][0]);if(e.key==='Escape')setCommandOpen(false)}} placeholder="Search commands and workspaces" aria-label="Search commands and workspaces"/></div>{commandOpen&&command.trim()&&<div className="commandMenu">{matches.map(([target,label])=><button key={target} onMouseDown={e=>e.preventDefault()} onClick={()=>runCommand(target)}><Search size={13}/><span>{label}</span><small>Open</small></button>)}{!matches.length&&<div className="commandEmpty">No matching workspace</div>}</div>}</div>
      <div className="actionGroupGlass"><button className="btnIconGlass" title="Undo" disabled={!canUndo} onClick={undo}><Undo2 size={15}/></button><button className="btnIconGlass" title="Redo" disabled={!canRedo} onClick={redo}><Redo2 size={15}/></button></div>
      <button className={'btnGlass saveState '+saveStatus} onClick={()=>void save().catch(()=>{})} title={saveError||'Save report'}><Save size={15}/>{saveStatus==='saving'?'Saving…':saveStatus==='pending'?'Changes pending':saveStatus==='error'?'Retry save':saveStatus==='saved'?'Saved':'Save'}</button>
-     {reportContext&&<button className="btnGlass"><Download size={15}/>Export</button>}
+     
      {project&&<button className="btnGlass primary publishTopbarButton" onClick={openPublish} title="Publish this report to VTAB Services"><UploadCloud size={15}/>Publish</button>}
    </div>
    {settingsOpen&&<div className="settingsModalBackdrop" onMouseDown={()=>setSettingsOpen(false)}><section className="settingsPowerBiDialog" role="dialog" aria-modal="true" aria-label="Settings" onMouseDown={e=>e.stopPropagation()}>

@@ -140,17 +140,42 @@ export async function captureViewerPage(element:HTMLElement,width:number,height:
    backgroundColor:'#ffffff',
    width,height,
    scale:1,
+   scrollX:0,
+   scrollY:0,
+   windowWidth:width,
+   windowHeight:height,
    useCORS:true,
    allowTaint:false,
    logging:false,
    imageTimeout:8000,
    removeContainer:true,
    onclone:documentClone=>{
+     // Hide pages panel so it doesn't consume horizontal space during capture
+     const pagesPanel=documentClone.querySelector<HTMLElement>('.viewerPagesPanel');
+     if(pagesPanel){pagesPanel.style.display='none';}
+     // Make viewerBody full-width so stage isn't constrained by flex layout
+     const viewerBody=documentClone.querySelector<HTMLElement>('.viewerBody');
+     if(viewerBody){viewerBody.style.width=`${width}px`;viewerBody.style.overflow='visible';viewerBody.style.display='block';}
+     const stage=documentClone.querySelector<HTMLElement>('.viewerStage');
+     if(stage){
+       stage.style.overflow='visible';
+       stage.style.width=`${width}px`;
+       stage.style.height=`${height}px`;
+       stage.style.padding='0';
+       stage.style.flex='none';
+     }
+     const frame=documentClone.querySelector<HTMLElement>('.viewerScaleFrame');
+     if(frame){
+       frame.style.width=`${width}px`;
+       frame.style.height=`${height}px`;
+       frame.style.transform='none';
+       frame.style.overflow='visible';
+     }
      const clone=documentClone.querySelector<HTMLElement>('.viewerPage');if(!clone)return;
-     clone.style.transform='none';clone.style.transformOrigin='top left';clone.style.margin='0';clone.style.boxShadow='none';clone.style.borderRadius='0';clone.style.width=`${width}px`;clone.style.height=`${height}px`;
+     clone.style.transform='none';clone.style.transformOrigin='top left';clone.style.margin='0';clone.style.boxShadow='none';clone.style.borderRadius='0';clone.style.width=`${width}px`;clone.style.height=`${height}px`;clone.style.overflow='visible';
      makeCloneColorsCanvasSafe(documentClone,clone);
      for(const image of Array.from(clone.querySelectorAll<HTMLImageElement>('img'))){image.crossOrigin='anonymous';image.referrerPolicy='no-referrer'}
-   }
+    }
  });
  return canvas.toDataURL('image/png');
 }
@@ -223,6 +248,12 @@ function ViewerVisual({v,result,loading,selected,onCrossFilter,onAction}:{v:Visu
   })():<Chart visual={displayVisual} rows={rows} conditionalValues={conditionalValues} onPointClick={(field,value)=>onCrossFilter({field,operator:'equals',value})}/>;
   const narrative=visualExportNarrative(v,rows);
   const cardStyle:any={
+    width:'100%',
+    height:'100%',
+    boxSizing:'border-box',
+    overflow:'hidden',
+    display:'flex',
+    flexDirection:'column',
     background,
     border:'0',
     borderTop:edges.top?border:'0',
@@ -335,6 +366,11 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
   }catch{}
  };
  useEffect(()=>{
+  const onDone=()=>setExporting('');
+  window.addEventListener('vtab-export-paginated-done',onDone);
+  return()=>window.removeEventListener('vtab-export-paginated-done',onDone);
+ },[]);
+ useEffect(()=>{
   const onFsChange=()=>{setFull(!!document.fullscreenElement);};
   document.addEventListener('fullscreenchange',onFsChange);
   return()=>document.removeEventListener('fullscreenchange',onFsChange);
@@ -366,6 +402,9 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
   api<any>('/auth/status').then(s=>{setAuthRequired(!!s.required);if(s.required){api('/auth/me').then(()=>{setSignedIn(true);load()}).catch(()=>setSignedIn(false))}else load()})
  },[reportId,initialItem?.id]);
  const project=item?.project,report=project?.report,pages=report?.pages||[],page=pages[pageIndex]||pages[0],s=page?.settings||{},paginatedReports=project?.paginatedReports||[];
+ const effectiveRole = userRole || item?.role || initialItem?.role;
+ const isViewer = !effectiveRole || effectiveRole === 'Viewer' || effectiveRole?.toLowerCase() === 'viewer';
+ const canExport = !isViewer;
  const visibleVisuals=useMemo<Visual[]>(()=>page?.visuals?.filter((v:Visual)=>v.visible!==false&&!v.hidden&&!runtimeHidden[v.id])||[],[page,runtimeHidden]);
  const queryVisualIds=useMemo(()=>visibleVisuals.filter(v=>!['textbox','button','image','shape'].includes(v.type)).map(v=>v.id),[visibleVisuals]);
  const combinedFilters=useMemo<VisualFilter[]>(()=>[...(report?.filters||[]),...(page?.filters||[]),...interactionFilters],[report,page,interactionFilters]);
@@ -391,7 +430,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  // A geometry-v2 report owns an explicit canvas size (for example 960x720,
  // 4:3). Never grow that canvas from visual-content heuristics because doing
  // so changes the orientation that was authored in Desktop.
- const effectiveHeight=pixelLayout?height:Math.max(height,contentHeight);
+ const effectiveHeight=s.autoFitHeight ? Math.max(height,contentHeight) : (pixelLayout ? height : Math.max(height,contentHeight));
  useEffect(()=>{
    if(!item||!page)return;
    const stage=stageRef.current;if(!stage)return;
@@ -415,12 +454,26 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  if(!item)return <div className="viewerLoading">Opening published report…</div>;
  if(!page)return <div className="viewerLoading">This published report has no pages.</div>;
  const exportFile=async(fmt:'pdf'|'pptx')=>{
-   if(item?.role==='Viewer'||item?.role?.toLowerCase()==='viewer'){alert('Viewers are strictly prohibited from downloading or exporting reports.');return;}
-  if(exporting)return;const originalPage=pageIndex;setExporting(fmt);
+   if (isViewer) { alert('Viewers are strictly prohibited from downloading or exporting reports.'); return; }
+  if(exporting)return;
+  if(publishedMode==='paginated'){
+   if(fmt==='pptx') return;
+   setExporting(fmt);
+   window.dispatchEvent(new CustomEvent('vtab-export-paginated',{detail:{fmt}}));
+   setTimeout(()=>setExporting(cur=>cur===fmt?'':cur),8000);
+   return;
+  }
+  const originalPage=pageIndex;setExporting(fmt);
   try{
    const rendered=[] as Array<{name:string,image:string,insights:string[],narratives:ExportNarrative[]}>;
    for(let index=0;index<pages.length;index++){
-    const pageDefinition=pages[index],pageSettings=pageDefinition.settings||{},pageWidth=pageSettings.pageWidth||1600,pageHeight=pageSettings.pageHeight||900;
+    const pageDefinition=pages[index],pageSettings=pageDefinition.settings||{},pageWidth=pageSettings.pageWidth||1600;
+    const pageVisuals=pageDefinition.visuals||[];
+    const pagePixelLayout=pageVisuals.some((visual:Visual)=>visual.geometryVersion===2);
+    const pageVisualBottom=pageVisuals.reduce((m:any,v:any)=>Math.max(m,v.geometryVersion===2?(v.y||0)+(v.h||100):(v.y||0)*70+(v.h||2)*54+Math.max(0,(v.h||2)-1)*16),0);
+    const pageHeaderHeight=pageSettings.header?.visible!==false?(pageSettings.header?.height||84):0;
+    const pageContentHeight=Math.max(480,pageVisualBottom+(pageSettings.footerGap??96)+(pagePixelLayout?0:pageHeaderHeight+34));
+    const pageHeight=pageSettings.autoFitHeight?Math.max(pageSettings.pageHeight||900,pageContentHeight):(pagePixelLayout?(pageSettings.pageHeight||900):Math.max(pageSettings.pageHeight||900,pageContentHeight));
     setPageIndex(index);const stage=stageRef.current;if(!stage)throw new Error('The report canvas is not available for export.');
     const reportPage=await waitForExportPage(stage,String(pageDefinition.id||''),pageDefinition.name||`Page ${index+1}`);
     const insights=Array.from(reportPage.querySelectorAll<HTMLElement>('[data-export-insights]')).flatMap(node=>{try{return JSON.parse(node.dataset.exportInsights||'[]')}catch{return[]}}).filter((value,index,array)=>value&&array.indexOf(value)===index).slice(0,6);
@@ -445,11 +498,10 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
   setRuntimeHidden(hidden=>{const next={...hidden};for(const command of commands){const allHidden=command.targets.length>0&&command.targets.every((target:Visual)=>visualIsHidden(target,next));for(const target of command.targets){if(!Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,target.id))runtimeVisibilityDefaultsRef.current[target.id]=!!target.hidden;const value=command.operation==='show'?false:command.operation==='hide'?true:!allHidden;target.hidden=value;next[target.id]=value}}return next});
  };
  for(const visual of page.visuals||[])if(visual.type==='button'&&visual.action?.dynamicLabel!==false)visual.buttonLabel=resolveActionButtonLabel(visual,page,pages,runtimeHidden);
- const effectiveRole = userRole || item?.role || initialItem?.role;
- const isViewer = effectiveRole === 'Viewer' || effectiveRole?.toLowerCase() === 'viewer';
+
 
   const downloadThisFile = async () => {
-    if (isViewer) { alert('Viewers are strictly prohibited from downloading reports.'); return; }
+    if (!canExport || isViewer) { alert('Viewers are strictly prohibited from downloading reports.'); return; }
     try {
       const safe = (report?.name || 'VTAB_Report').replace(/[^a-zA-Z0-9_-]+/g, '_');
       try {
@@ -524,25 +576,31 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
            <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setSaveAsName(`${report.name} - Copy`); setSaveAsModalOpen(true); }}>
              <div className="pbi-menu-item-left"><Copy size={15} /> Save as...</div>
            </button>
-           <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); void downloadThisFile(); }}>
-             <div className="pbi-menu-item-left"><Download size={15} /> Download this file</div>
-           </button>
-           <div style={{ position: 'relative' }} onMouseEnter={() => { setExportSubmenuOpen(true); setEmbedSubmenuOpen(false); }}>
-             <button className="pbi-menu-item">
-               <div className="pbi-menu-item-left"><FileDown size={15} /> Export</div>
-               <ChevronRight size={14} className="pbi-menu-chevron" />
-             </button>
-             {exportSubmenuOpen && (
-               <div className="pbi-submenu">
-                 <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pptx'); }}>
-                   <div className="pbi-menu-item-left"><Presentation size={15} /> PowerPoint</div>
+           {canExport && (
+             <>
+               <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); void downloadThisFile(); }}>
+                 <div className="pbi-menu-item-left"><Download size={15} /> Download this file</div>
+               </button>
+               <div style={{ position: 'relative' }} onMouseEnter={() => { setExportSubmenuOpen(true); setEmbedSubmenuOpen(false); }}>
+                 <button className="pbi-menu-item">
+                   <div className="pbi-menu-item-left"><FileDown size={15} /> Export</div>
+                   <ChevronRight size={14} className="pbi-menu-chevron" />
                  </button>
-                 <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pdf'); }}>
-                   <div className="pbi-menu-item-left"><FileDown size={15} /> PDF</div>
-                 </button>
+                 {exportSubmenuOpen && (
+                   <div className="pbi-submenu">
+                      {publishedMode !== 'paginated' && (
+                        <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pptx'); }}>
+                          <div className="pbi-menu-item-left"><Presentation size={15} /> PowerPoint</div>
+                        </button>
+                      )}
+                     <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pdf'); }}>
+                       <div className="pbi-menu-item-left"><FileDown size={15} /> PDF</div>
+                     </button>
+                   </div>
+                 )}
                </div>
-             )}
-           </div>
+             </>
+           )}
            <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); window.print(); }}>
              <div className="pbi-menu-item-left"><Printer size={15} /> Print this page</div>
            </button>
@@ -606,13 +664,19 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    {/* Home Ribbon Command Bar */}
    {!full && activeRibbonTab === 'Home' && (
      <div className="pbi-ribbon-command-bar">
-       <button className="pbi-cmd-btn" onClick={() => exportFile('pdf')} disabled={isViewer || !!exporting}>
-         <FileDown size={15} color="#dc2626" /> PDF
-       </button>
-       <button className="pbi-cmd-btn" onClick={() => exportFile('pptx')} disabled={isViewer || !!exporting}>
-         <Presentation size={15} color="#ea580c" /> PPT
-       </button>
-       <div className="pbi-cmd-divider" />
+       {canExport && (
+         <>
+           <button className="pbi-cmd-btn" onClick={() => exportFile('pdf')} disabled={!!exporting}>
+             <FileDown size={15} color="#dc2626" /> PDF
+           </button>
+           {publishedMode !== 'paginated' && (
+             <button className="pbi-cmd-btn" onClick={() => exportFile('pptx')} disabled={!!exporting}>
+               <Presentation size={15} color="#ea580c" /> PPT
+             </button>
+           )}
+           <div className="pbi-cmd-divider" />
+         </>
+       )}
        <button className="pbi-cmd-btn" onClick={onManageAccess || shareEmail}>
          <Share2 size={15} color="#0f6cbd" /> Share
        </button>
@@ -665,23 +729,27 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
            <div className="pbi-cmd-divider" />
          </>
        )}
-       <button className={`pbi-cmd-btn ${viewMode === 'fitPage' ? 'active' : ''}`} onClick={() => setViewMode('fitPage')}>
-         <Scaling size={15} /> Fit to page
-       </button>
-       <button className={`pbi-cmd-btn ${viewMode === 'fitWidth' ? 'active' : ''}`} onClick={() => setViewMode('fitWidth')}>
-         <MonitorUp size={15} /> Fit to width
-       </button>
-       <button className={`pbi-cmd-btn ${viewMode === 'actual' ? 'active' : ''}`} onClick={() => setViewMode('actual')}>
-         <Expand size={15} /> Actual size
-       </button>
-       <div className="pbi-cmd-divider" />
+       {publishedMode !== 'paginated' && (
+         <>
+           <button className={`pbi-cmd-btn ${viewMode === 'fitPage' ? 'active' : ''}`} onClick={() => setViewMode('fitPage')}>
+             <Scaling size={15} /> Fit to page
+           </button>
+           <button className={`pbi-cmd-btn ${viewMode === 'fitWidth' ? 'active' : ''}`} onClick={() => setViewMode('fitWidth')}>
+             <MonitorUp size={15} /> Fit to width
+           </button>
+           <button className={`pbi-cmd-btn ${viewMode === 'actual' ? 'active' : ''}`} onClick={() => setViewMode('actual')}>
+             <Expand size={15} /> Actual size
+           </button>
+           <div className="pbi-cmd-divider" />
+         </>
+       )}
        <button className={`pbi-cmd-btn ${full ? 'active' : ''}`} onClick={toggleFullScreen}>
          {full ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
          {full ? 'Exit full screen' : 'Full screen'}
        </button>
      </div>
    )}
-  {publishedMode==='paginated'?<PaginatedReportViewer reportId={reportId} project={project} filters={combinedFilters} cloudMode={cloudMode||WORKSPACE_ONLY} initialDefinitionId={initialPaginatedId} isViewer={isViewer}/>:<div className="viewerBody">
+  {publishedMode==='paginated'?<PaginatedReportViewer reportId={reportId} project={project} filters={combinedFilters} cloudMode={cloudMode||WORKSPACE_ONLY} initialDefinitionId={initialPaginatedId} isViewer={isViewer || !canExport}/>:<div className="viewerBody">
    {/* Left Pages Side Panel */}
    <nav className={`viewerPagesPanel${pagesPanelCollapsed?' collapsed':''}`}>
      <div className="viewerPagesPanelHeader">
@@ -729,7 +797,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
      {s.backgroundImage&&<div className="viewerPageBg" style={{backgroundImage:`url(${s.backgroundImage})`,backgroundSize:s.backgroundImageFit||'cover',opacity:(s.backgroundImageOpacity??24)/100}}/>}
      <div className="viewerPageLayer">
       {s.header?.visible!==false&&<div className="viewerDashboardHeader" style={{background:s.header?.background||'#fff','--viewer-header-bg':s.header?.background||'#fff','--viewer-header-height':`${s.header?.height||84}px`,'--viewer-header-pad-top':`${s.header?.paddingTop??12}px`,'--viewer-header-pad-bottom':`${s.header?.paddingBottom??12}px`,'--viewer-header-pad-left':`${s.header?.paddingLeft??24}px`,'--viewer-header-pad-right':`${s.header?.paddingRight??24}px`,'--viewer-header-radius':`${s.header?.borderRadius??14}px`,'--viewer-header-title-size':`${s.header?.fontSize||28}px`,'--viewer-header-title-color':s.header?.titleColor||'#111827','--viewer-header-subtitle-size':`${s.header?.subtitleFontSize||12}px`,'--viewer-header-subtitle-color':s.header?.subtitleColor||'#475569'} as any}><div className="viewerDashboardHeaderCopy" style={{textAlign:s.header?.alignment||'left'}}><h1 style={{color:s.header?.titleColor||'#111827'}}>{s.header?.title||''}</h1><p style={{color:s.header?.subtitleColor||'#475569'}}>{s.header?.subtitle||''}</p></div>{s.header?.showGeneratedInfo!==false&&<div className="viewerReportMeta" style={{background:s.header?.generatedInfoBackground||'#f8fbff'}}><CalendarDays size={20}/><div><small>REPORT GENERATED</small><b>{new Date(item.updated_at||item.published_at).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}</b><span>{new Date(item.updated_at||item.published_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span></div></div>}</div>}
-      <div className={'viewerGrid '+(pixelLayout?'pixelLayout':'legacyLayout')}>{visibleVisuals.map((v:Visual,index:number)=><div key={v.id} style={v.geometryVersion===2?{position:'absolute',left:v.x,top:v.y,width:v.w,height:v.h,zIndex:v.zIndex??index,transform:`rotate(${v.rotation||0}deg)`,transformOrigin:'center',display:'flex',flexDirection:'column'}:{gridColumn:`${v.x+1} / span ${v.w}`,gridRow:`${v.y+1} / span ${v.h}`}}><ViewerVisual v={v} result={visualResults[v.id]||(visualLoadError?{rows:[],error:visualLoadError}:undefined)} loading={!['textbox','button','image','shape'].includes(v.type)&&visualLoading} selected={buttonSelections[(v.format?.buttonSelectionGroup||'default').trim()||'default']===v.id} onCrossFilter={f=>setInteractionFilters(f?[f]:[])} onAction={executeAction}/></div>)}{visibleVisuals.length===0&&<div className="viewerEmptyPage"><b>No visible visuals on this published page</b><span>Open this page in Report Designer, verify visual visibility, save the report, and publish again.</span></div>}</div>
+      <div className={'viewerGrid '+(pixelLayout?'pixelLayout':'legacyLayout')}>{visibleVisuals.map((v:Visual,index:number)=><div key={v.id} className={`viewerVisualWrapper ${v.geometryVersion===2?'canvasObject':''}`} style={v.geometryVersion===2?{position:'absolute',left:v.x,top:v.y,width:v.w,height:v.h,zIndex:v.zIndex??index,transform:`rotate(${v.rotation||0}deg)`,transformOrigin:'center',display:'flex',flexDirection:'column',boxSizing:'border-box',overflow:'hidden'}:{gridColumn:`${v.x+1} / span ${v.w}`,gridRow:`${v.y+1} / span ${v.h}`}}><ViewerVisual v={v} result={visualResults[v.id]||(visualLoadError?{rows:[],error:visualLoadError}:undefined)} loading={!['textbox','button','image','shape'].includes(v.type)&&visualLoading} selected={buttonSelections[(v.format?.buttonSelectionGroup||'default').trim()||'default']===v.id} onCrossFilter={f=>setInteractionFilters(f?[f]:[])} onAction={executeAction}/></div>)}{visibleVisuals.length===0&&<div className="viewerEmptyPage"><b>No visible visuals on this published page</b><span>Open this page in Report Designer, verify visual visibility, save the report, and publish again.</span></div>}</div>
      </div>
     </div>
     </div>

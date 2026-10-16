@@ -380,7 +380,19 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
       xAxisIndex:horizontal?undefined:0,yAxisIndex:horizontal?0:undefined,
       zoomLock:true,moveOnMouseWheel:true,moveOnMouseMove:false}];
   };
-  const tooltipBase:any={show:visual.format.tooltipEnabled!==false,backgroundColor:visual.format.tooltipBackground||'#ffffff',borderColor:visual.format.tooltipColor||'#242424',borderWidth:1,textStyle:{color:visual.format.tooltipColor||'#242424',fontFamily,fontSize:12},extraCssText:'box-shadow:0 6px 18px rgba(0,0,0,.16);border-radius:3px;'};
+  const tooltipBg = visual.format.tooltipBackground || '#ffffff';
+  let tooltipTxtColor = visual.format.tooltipColor || '#242424';
+  if (tooltipBg.toLowerCase() === tooltipTxtColor.toLowerCase()) {
+    tooltipTxtColor = tooltipBg.toLowerCase() === '#ffffff' ? '#242424' : '#ffffff';
+  }
+  const tooltipBase:any={
+    show: visual.format.tooltipEnabled !== false,
+    backgroundColor: tooltipBg,
+    borderColor: tooltipTxtColor,
+    borderWidth: 1,
+    textStyle: { color: tooltipTxtColor, fontFamily, fontSize: 12 },
+    extraCssText: 'box-shadow:0 6px 18px rgba(0,0,0,.16);border-radius:3px;width:auto!important;height:auto!important;max-width:380px;pointer-events:none;'
+  };
   const allValueFields=visual.bindings.values||[];
   const premiumPalette=[accent,...['#118dff','#12239e','#e66c37','#6b007b','#e044a7','#744ec2','#d9b300','#d64550','#197278','#1aab40'].filter(color=>color.toLowerCase()!==accent.toLowerCase())];
   const configuredSeriesColor=(field:string|undefined,index:number,fallback?:string)=>field&&visual.format.seriesColors?.[field]||fallback||premiumPalette[index%premiumPalette.length];
@@ -394,7 +406,8 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
   // only the displayed axis label is reformatted.
   const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const fmtCategoryLabel = (val: any): string => {
-    const s = String(val ?? '');
+    if (val === undefined || val === null || val === 'undefined' || val === 'null') return '';
+    const s = String(val);
     if (/^\d{4}-\d{2}$/.test(s)) {
       const [yr, mo] = s.split('-');
       return `${MONTH_ABBR[+mo - 1]} '${yr.slice(2)}`;
@@ -1219,15 +1232,15 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     }));
     const allValuesForGap = seriesData.flatMap((s:any) => s.data.map((d:any) => d));
     const maxValW = Math.max(0, ...allValuesForGap.map((v:any) => String(fmt(parseFloat(Number(v||0).toFixed(3)))).length)) * (axisSize * 0.55);
-      const yMargin = (legendPosition === 'left' ? 85 : 15) + (showYAxisTitle ? 25 : 0);
-      const xMargin = (legendPosition === 'bottom' ? 45 : 15) + (showXAxisTitle ? 25 : 0);
       const estLabelW = horizontal ? maxCatW : maxValW;
       const estLabelH = horizontal ? 15 : (maxCatW > 40 ? maxCatW * 0.7 + 5 : 15);
-      const yNameGap = estLabelW + yMargin / 2;
-      const xNameGap = estLabelH + xMargin / 2;
+      const yNameGap = Math.max(40, estLabelW + 28);
+      const xNameGap = estLabelH + 20;
+      const yMargin = (legendPosition === 'left' ? 85 : 15) + (showYAxisTitle ? yNameGap + 18 : Math.max(15, estLabelW + 8));
+      const xMargin = (legendPosition === 'bottom' ? 45 : 15) + (showXAxisTitle ? 32 : 0);
 
-    const categoryAxis:any={show:horizontal?(showYAxis||showYAxisTitle):(showXAxis||showXAxisTitle),type:'category',data:categories,name:(horizontal?showYAxisTitle:showXAxisTitle)?((horizontal?visual.format.yAxisTitle:visual.format.xAxisTitle)||axis||'Category'):'',nameTextStyle:axisTitleStyle,nameLocation:'middle',nameGap:horizontal?yNameGap:xNameGap,axisLabel:{show:horizontal?showYAxis:showXAxis,color:axisColor,fontSize:axisSize,fontFamily,formatter:(v:any)=>fmtCategoryLabel(v)},axisTick:{show:false,lineStyle:{color:axisColor}},axisLine:{show:horizontal?showYAxis:showXAxis,lineStyle:{color:axisColor}}};
-    const valueAxis:any={show:horizontal?(showXAxis||showXAxisTitle):(showYAxis||showYAxisTitle),type:'value',name:(horizontal?showXAxisTitle:showYAxisTitle)?((horizontal?visual.format.xAxisTitle:visual.format.yAxisTitle)||valueField||'Value'):'',nameTextStyle:axisTitleStyle,nameLocation:'middle',nameGap:horizontal?xNameGap:yNameGap,axisLabel:{show:horizontal?showXAxis:showYAxis,color:axisColor,fontSize:axisSize,fontFamily,formatter:(x:number)=>fmt(x)},axisLine:{show:false},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}};
+    const categoryAxis:any={show:horizontal?(showYAxis||showYAxisTitle):(showXAxis||showXAxisTitle),type:'category',data:categories,name:(horizontal?showYAxisTitle:showXAxisTitle)?((horizontal?visual.format.yAxisTitle:visual.format.xAxisTitle)||axis||'Category'):'',nameTextStyle:axisTitleStyle,nameLocation:'middle',nameGap:horizontal?yNameGap:xNameGap,axisLabel:{show:horizontal?showYAxis:showXAxis,color:axisColor,fontSize:axisSize,fontFamily,formatter:(v:any)=>fmtCategoryLabel(v),overflow:'truncate',width:horizontal?Math.max(60,estLabelW):undefined},axisTick:{show:false,lineStyle:{color:axisColor}},axisLine:{show:horizontal?showYAxis:showXAxis,lineStyle:{color:axisColor}}};
+    const valueAxis:any={show:horizontal?(showXAxis||showXAxisTitle):(showYAxis||showYAxisTitle),type:'value',name:(horizontal?showXAxisTitle:showYAxisTitle)?((horizontal?visual.format.xAxisTitle:visual.format.yAxisTitle)||valueField||'Value'):'',nameTextStyle:axisTitleStyle,nameLocation:'middle',nameGap:horizontal?xNameGap:yNameGap,axisLabel:{show:horizontal?showXAxis:showYAxis,color:axisColor,fontSize:axisSize,fontFamily,formatter:(x:number)=>fmt(x),overflow:'truncate',width:!horizontal?Math.max(60,estLabelW):undefined},axisLine:{show:false},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}};
     const isLine=visual.type==='line'||visual.type==='area';
     const stacked=(visual.type==='stackedbar'||visual.type==='stackedcolumn')&&seriesNames.length>1;
     return <ChartScrollerWrapper echartsKey={formatRefreshKey} events={chartEvents} categories={categories} horizontal={horizontal} visibleCount={visual.format.visibleCategoryCount||12} option={{
@@ -1254,12 +1267,12 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     
   const maxCatW = Math.max(0, ...names.map(c => String(fmtCategoryLabel(c)).length)) * (axisSize * 0.6);
   const maxValW = Math.max(0, ...values.map(v => String(fmt(parseFloat(Number(v||0).toFixed(3)))).length)) * (axisSize * 0.55);
-    const yMargin = (legendVisible && legendPosition === 'left' ? 85 : 15) + (showYAxisTitle ? 25 : 0);
-    const xMargin = (legendVisible && legendPosition === 'bottom' ? 45 : 15) + (showXAxisTitle ? 25 : 0);
     const estLabelW = horizontal ? maxCatW : maxValW;
     const estLabelH = horizontal ? 15 : (maxCatW > 40 ? maxCatW * 0.7 + 5 : 15);
-    const yNameGap = estLabelW + yMargin / 2;
-    const xNameGap = estLabelH + xMargin / 2;
+    const yNameGap = Math.max(40, estLabelW + 28);
+    const xNameGap = estLabelH + 20;
+    const yMargin = (legendVisible && legendPosition === 'left' ? 85 : 15) + (showYAxisTitle ? yNameGap + 18 : Math.max(15, estLabelW + 8));
+    const xMargin = (legendVisible && legendPosition === 'bottom' ? 45 : 15) + (showXAxisTitle ? 32 : 0);
 
   const categoryAxis: any = {
     show: horizontal ? (showYAxis || showYAxisTitle) : (showXAxis || showXAxisTitle),
@@ -1268,7 +1281,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     name:(horizontal ? showYAxisTitle : showXAxisTitle) ? ((horizontal?visual.format.yAxisTitle:visual.format.xAxisTitle)||axis||'Category') : '',
     nameTextStyle:axisTitleStyle,
     nameLocation:'middle',nameGap:horizontal?yNameGap:xNameGap,
-    axisLabel: { show: horizontal ? showYAxis : showXAxis, color: axisColor, fontSize: axisSize, fontFamily, formatter: (v: any) => fmtCategoryLabel(v) },
+    axisLabel: { show: horizontal ? showYAxis : showXAxis, color: axisColor, fontSize: axisSize, fontFamily, formatter: (v: any) => fmtCategoryLabel(v), overflow: 'truncate', width: horizontal ? Math.max(60, estLabelW) : undefined },
     axisLine: { show: horizontal ? showYAxis : showXAxis, lineStyle: { color: axisColor } },
     axisTick: { show: false, lineStyle: { color: axisColor } }
   };
@@ -1284,7 +1297,9 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
       color: axisColor,
       fontSize: axisSize,
       fontFamily,
-      formatter: (x: number) => fmt(x)
+      formatter: (x: number) => fmt(x),
+      overflow: 'truncate',
+      width: !horizontal ? Math.max(60, estLabelW) : undefined
     },
     axisLine: { show: false },
     splitLine: {

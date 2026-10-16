@@ -224,6 +224,7 @@ def parse_measure_definition(expression:str):
     name=first_line[:separator].strip()
     body=(first_line[separator+1:]+'\n'+'\n'.join(text.splitlines()[1:])).strip()
     if not name or not body:return None
+    if name.upper().startswith('VAR ') or name.upper() == 'VAR':return None
     return name,body
 
 def normalize(s):return re.sub(r'[^a-z0-9]','',s.lower())
@@ -424,12 +425,23 @@ def parse_field(expr):
 
 def _context_predicate(model,table,filters,alias):
     parts=[]
+    table=resolve_table(model,table)
+    table_meta=model.get('tables',{}).get(table,{})
     for f in filters or []:
         sf=f.get('field','')
         if '.' not in sf:continue
         t,c=sf.split('.',1);c=c.split('::',1)[0]
-        if t!=table or c not in model['tables'][table].get('columns',{}):continue
-        col=resolve_field(model,t,c,alias);op=f.get('operator','equals');val=f.get('value')
+        try:
+            resolved_t=resolve_table(model,t)
+        except Exception:
+            resolved_t=t
+        if resolved_t!=table:continue
+        cols=table_meta.get('columns',{})
+        if c not in cols:
+            matched=next((k for k in cols if k.lower()==c.lower()),None)
+            if not matched:continue
+            c=matched
+        col=resolve_field(model,table,c,alias);op=f.get('operator','equals');val=f.get('value')
         if op=='equals':parts.append(f'{col}={sql_literal(val)}')
         elif op=='not_equals':parts.append(f'{col}<>{sql_literal(val)}')
         elif op=='gt':parts.append(f'{col}>{sql_literal(val)}')
@@ -442,9 +454,17 @@ def _context_predicate(model,table,filters,alias):
     return ' AND '.join(parts)
 
 def _selected_aggregate(model,func,table,column,filters):
-    alias='__ctx';physical=model['tables'][table]['physical'];col=resolve_field(model,table,column,alias)
+    table=resolve_table(model,table,column)
+    tbl_meta=model.get('tables',{}).get(table,{})
+    physical=tbl_meta.get('physical') or table
+    alias='__ctx'
+    col=resolve_field(model,table,column,alias)
     pred=_context_predicate(model,table,filters,alias)
-    sql=f'(SELECT {func}({col}) FROM {qi(physical)} {qi(alias)}'
+    fn='AVG' if func=='AVERAGE' else func
+    if fn=='DISTINCTCOUNT':
+        sql=f'(SELECT COUNT(DISTINCT {col}) FROM {qi(physical)} {qi(alias)}'
+    else:
+        sql=f'(SELECT {fn}({col}) FROM {qi(physical)} {qi(alias)}'
     if pred:sql+=' WHERE '+pred
     return sql+')'
 
@@ -497,8 +517,10 @@ def _compile_var_value(expr,model,vars_sql,filters,measure_resolver=None):
     try:return _mapping_value(vars_sql,expr)
     except KeyError:pass
     # MAX/MIN with context filter (date range subqueries)
-    m=re.fullmatch(r"(?is)(MAX|MIN)\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*\[\s*([^\]]+)\]\s*\)",expr)
-    if m:return _selected_aggregate(model,m.group(1).upper(),m.group(2).strip(),m.group(3).strip(),filters)
+    m=re.fullmatch(r"(?is)(MAX|MIN)\s*\(\s*(?:'?([A-Za-z_][\w ]*)'?\s*)?\[\s*([^\]]+)\]\s*\)",expr)
+    if m:
+        tbl = m.group(2).strip() if m.group(2) else resolve_table(model, '', m.group(3).strip())
+        return _selected_aggregate(model,m.group(1).upper(),tbl,m.group(3).strip(),filters)
 
     # VAR dates commonly use IF(ISBLANK(MAX(...)), TODAY(), MAX(...)). Compile
     # every branch through the VAR-aware path so aggregates from another table
@@ -562,7 +584,7 @@ def _compile_var_value(expr,model,vars_sql,filters,measure_resolver=None):
     
     # For all other expressions, use _compile_simple
     try:
-        return _compile_simple(expr,model,var_aware_resolver,filters)
+        return _compile_simple(expr,model,var_aware_resolver,filters,in_filter=True)
     except DaxError:
         raise DaxError(f'Unsupported VAR expression: {expr}')
 
@@ -640,10 +662,10 @@ def _is_wrapped(expr):
         if depth == 0 and i < len(expr) - 1: return False
     return depth == 0
 
-def _compile_simple(expr,model,measure_resolver=None,filters=None):
+def _compile_simple(expr,model,measure_resolver=None,filters=None,in_filter=False):
     expr=expr.strip()
     if _is_wrapped(expr):
-        return '(' + _compile_simple(expr[1:-1],model,measure_resolver,filters) + ')'
+        return '(' + _compile_simple(expr[1:-1],model,measure_resolver,filters,in_filter=in_filter) + ')'
     if re.fullmatch(r'-?\d+(?:\.\d+)?',expr):return expr
     if (expr.startswith('"') and expr.endswith('"')) or (expr.startswith("'") and expr.endswith("'")):return sql_literal(expr[1:-1])
     if re.fullmatch(r'(?i)BLANK\s*\(\s*\)',expr):return 'NULL'
@@ -654,7 +676,12 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
     m=re.fullmatch(r'(-?\d+(?:\.\d+)?)\s*%',expr)
     if m:return str(float(m.group(1))/100.0)
     m=re.fullmatch(r'\[([^\]]+)\]',expr)
-    if m and measure_resolver:return measure_resolver(m.group(1).strip())
+    if m and measure_resolver:
+        resolved = measure_resolver(m.group(1).strip())
+        if in_filter and isinstance(resolved, str) and not resolved.strip().startswith('('):
+            if re.match(r'(?is)^\s*(SUM|AVG|MIN|MAX|COUNT|MEDIAN)\s*\(', resolved):
+                return f'(SELECT {resolved})'
+        return resolved
     field_ref=parse_field(expr)
     if field_ref:return resolve_field(model,*field_ref)
     # Handle naked variables like _Occupied
@@ -666,7 +693,7 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
     # as SUMX(...) + AVERAGEX(...) or EDATE(...) + 1.
     concat_parts=_split_logical(expr,'&')
     if concat_parts:
-        return '('+' || '.join(f'CAST({_compile_simple(x,model,measure_resolver,filters)} AS VARCHAR)' for x in concat_parts)+')'
+        return '('+' || '.join(f'CAST({_compile_simple(x,model,measure_resolver,filters,in_filter=in_filter)} AS VARCHAR)' for x in concat_parts)+')'
     tokens=[];start=0;depth=0;quote=None
     for i,ch in enumerate(expr):
         if quote:
@@ -679,16 +706,19 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
             left=expr[start:i].strip()
             if not left and ch in '+-':continue
             if not left:raise DaxError(f'Incomplete expression before {ch}.')
-            tokens.append(_compile_simple(left,model,measure_resolver,filters));tokens.append(ch);start=i+1
+            tokens.append(_compile_simple(left,model,measure_resolver,filters,in_filter=in_filter));tokens.append(ch);start=i+1
     if tokens:
         tail=expr[start:].strip()
         if not tail:raise DaxError('Arithmetic expression is incomplete.')
-        tokens.append(_compile_simple(tail,model,measure_resolver,filters))
+        tokens.append(_compile_simple(tail,model,measure_resolver,filters,in_filter=in_filter))
         return ' '.join(tokens)
 
-    m=re.fullmatch(r"(?is)(SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN)\s*\(\s*('[^']+'|[A-Za-z_][\w ]*)\s*\[\s*([^\]]+)\]\s*\)",expr)
+    m=re.fullmatch(r"(?is)(SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN)\s*\(\s*(?:('[^']+'|[A-Za-z_][\w ]*)\s*)?\[\s*([^\]]+)\]\s*\)",expr)
     if m:
-        fn,t,c=m.groups();fn=fn.upper();field=resolve_field(model,t.strip("'"),c)
+        fn,t,c=m.groups();fn=fn.upper();tbl=t.strip("'") if t else resolve_table(model,'',c.strip());col=c.strip()
+        if in_filter:
+            return _selected_aggregate(model,fn,tbl,col,filters)
+        field=resolve_field(model,tbl,col)
         if fn=='AVERAGE':fn='AVG'
         if fn=='DISTINCTCOUNT':return f'COUNT(DISTINCT {field})'
         if fn=='MEDIAN':return f'MEDIAN({field})'
@@ -779,7 +809,9 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
         return f'(STRPOS(CAST({hay} AS VARCHAR),CAST({needle} AS VARCHAR)) > 0)'
         
     m=re.fullmatch(r'(?is)ISBLANK\s*\((.*)\)',expr)
-    if m:return f'({_compile_simple(m.group(1),model,measure_resolver,filters)} IS NULL)'
+    if m:
+        csql=_compile_simple(m.group(1),model,measure_resolver,filters,in_filter=in_filter)
+        return f'({csql} IS NULL OR TRIM(CAST({csql} AS VARCHAR)) = \'\')'
     m=re.fullmatch(r'(?is)NOT\s*\((.*)\)',expr)
     if m:return f'(NOT ({_condition(m.group(1),model,measure_resolver,filters)}))'
     m=re.fullmatch(r'(?is)(POWER)\s*\((.*)\)',expr)
@@ -788,16 +820,16 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
         if len(args)!=2:raise DaxError('POWER requires value and exponent.')
         return f'POWER({_compile_simple(args[0],model,measure_resolver,filters)},{_compile_simple(args[1],model,measure_resolver,filters)})'
     m=re.fullmatch(r'(?is)SQRT\s*\((.*)\)',expr)
-    if m:return f'SQRT({_compile_simple(m.group(1),model,measure_resolver,filters)})'
+    if m:return f'SQRT({_compile_simple(m.group(1),model,measure_resolver,filters,in_filter=in_filter)})'
     m=re.fullmatch(r'(?is)DATE\s*\((.*)\)',expr)
     if m:
         args=split_top(m.group(1))
         if len(args)!=3:raise DaxError('DATE requires year, month and day.')
-        yy,mm,dd=[_compile_simple(a,model,measure_resolver,filters) for a in args]
+        yy,mm,dd=[_compile_simple(a,model,measure_resolver,filters,in_filter=in_filter) for a in args]
         return f'make_date(CAST({yy} AS INTEGER),CAST({mm} AS INTEGER),CAST({dd} AS INTEGER))'
     m=re.fullmatch(r'(?is)(YEAR|MONTH|DAY)\s*\((.*)\)',expr)
     if m:
-        part=m.group(1).lower();value=_compile_simple(m.group(2),model,measure_resolver,filters)
+        part=m.group(1).lower();value=_compile_simple(m.group(2),model,measure_resolver,filters,in_filter=in_filter)
         return f'CAST(EXTRACT({part} FROM CAST({value} AS DATE)) AS INTEGER)'
 
     m=re.fullmatch(r'(?is)DATEDIFF\s*\((.*)\)',expr)
@@ -807,15 +839,15 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
         unit=args[2].strip().upper()
         if unit not in {'DAY','WEEK','MONTH','QUARTER','YEAR'}:
             raise DaxError('DATEDIFF interval must be DAY, WEEK, MONTH, QUARTER, or YEAR.')
-        start=_compile_simple(args[0],model,measure_resolver,filters)
-        end=_compile_simple(args[1],model,measure_resolver,filters)
+        start=_compile_simple(args[0],model,measure_resolver,filters,in_filter=in_filter)
+        end=_compile_simple(args[1],model,measure_resolver,filters,in_filter=in_filter)
         return f"date_diff('{unit.lower()}',CAST({start} AS DATE),CAST({end} AS DATE))"
 
     m=re.fullmatch(r'(?is)(EDATE|EOMONTH)\s*\((.*)\)',expr)
     if m:
         args=split_top(m.group(2))
         if len(args)!=2:raise DaxError(f'{m.group(1).upper()} requires a date and month offset.')
-        base=_compile_simple(args[0],model,measure_resolver,filters)
+        base=_compile_simple(args[0],model,measure_resolver,filters,in_filter=in_filter)
         try:months=int(args[1].strip())
         except ValueError:raise DaxError(f'{m.group(1).upper()} month offset must be an integer.')
         shifted=f"(CAST({base} AS DATE) + INTERVAL '{months} months')"
@@ -823,7 +855,7 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None):
 
     m=re.fullmatch(r'(?is)(STARTOFMONTH|ENDOFMONTH)\s*\((.*)\)',expr)
     if m:
-        base=_compile_simple(m.group(2),model,measure_resolver,filters)
+        base=_compile_simple(m.group(2),model,measure_resolver,filters,in_filter=in_filter)
         if m.group(1).upper()=='STARTOFMONTH':return f"date_trunc('month',CAST({base} AS DATE))"
         return f'last_day(CAST({base} AS DATE))'
 
@@ -917,36 +949,42 @@ def _split_logical(expr,operator):
     if parts:parts.append(expr[start:].strip())
     return parts
 
-def _condition(expr,model,measure_resolver=None,filters=None):
+def _condition(expr,model,measure_resolver=None,filters=None,in_filter=False):
     e=expr.strip()
-    if _is_wrapped(e):return '('+_condition(e[1:-1],model,measure_resolver,filters)+')'
+    if _is_wrapped(e):return '('+_condition(e[1:-1],model,measure_resolver,filters,in_filter=in_filter)+')'
     for op,sqlop in (('||','OR'),('&&','AND')):
         parts=_split_logical(e,op)
-        if parts:return '('+f' {sqlop} '.join(_condition(x,model,measure_resolver,filters) for x in parts)+')'
+        if parts:return '('+f' {sqlop} '.join(_condition(x,model,measure_resolver,filters,in_filter=in_filter) for x in parts)+')'
     m=re.fullmatch(r'(?is)(AND|OR)\s*\((.*)\)',e)
     if m:
         args=split_top(m.group(2))
         if len(args)<2:raise DaxError(f'{m.group(1).upper()} requires at least two conditions.')
-        return '('+f' {m.group(1).upper()} '.join(_condition(x,model,measure_resolver,filters) for x in args)+')'
+        return '('+f' {m.group(1).upper()} '.join(_condition(x,model,measure_resolver,filters,in_filter=in_filter) for x in args)+')'
     m=re.fullmatch(r'(?is)NOT\s*\((.*)\)',e)
-    if m:return f'(NOT ({_condition(m.group(1),model,measure_resolver,filters)}))'
+    if m:return f'(NOT ({_condition(m.group(1),model,measure_resolver,filters,in_filter=in_filter)}))'
     m=re.fullmatch(r'(?is)NOT\s+(.+)',e)
-    if m:return f'(NOT ({_condition(m.group(1),model,measure_resolver,filters)}))'
+    if m:return f'(NOT ({_condition(m.group(1),model,measure_resolver,filters,in_filter=in_filter)}))'
     m=re.fullmatch(r'(?is)ISBLANK\s*\((.*)\)',e)
-    if m:return f'({_compile_simple(m.group(1),model,measure_resolver,filters)} IS NULL)'
+    if m:
+        csql=_compile_simple(m.group(1),model,measure_resolver,filters,in_filter=in_filter)
+        return f'({csql} IS NULL OR TRIM(CAST({csql} AS VARCHAR)) = \'\')'
     # DAX membership syntax: Table[Column] IN {"A", "B"}
     m=re.fullmatch(r'(?is)(.*?)\s+IN\s*\{(.*)\}',e)
     if m:
         left=m.group(1).strip();values=split_top(m.group(2));lf=parse_field(left)
-        lsql=resolve_field(model,*lf) if lf else _compile_simple(left,model,measure_resolver,filters)
+        lsql=resolve_field(model,*lf) if lf else _compile_simple(left,model,measure_resolver,filters,in_filter=in_filter)
         if not values:raise DaxError('IN requires one or more values.')
-        return f"{lsql} IN ("+','.join(_compile_simple(v,model,measure_resolver,filters) for v in values)+')'
+        return f"{lsql} IN ("+','.join(_compile_simple(v,model,measure_resolver,filters,in_filter=in_filter) for v in values)+')'
     if re.fullmatch(r'(?i)TRUE\s*\(\s*\)|TRUE',e):return 'TRUE'
     if re.fullmatch(r'(?i)FALSE\s*\(\s*\)|FALSE',e):return 'FALSE'
-    if re.match(r'(?is)^CONTAINSSTRING(?:EXACT)?\s*\(',e):return _compile_simple(e,model,measure_resolver,filters)
-    return _comparison(e,model,measure_resolver,filters)
+    if re.match(r'(?is)^CONTAINSSTRING(?:EXACT)?\s*\(',e):return _compile_simple(e,model,measure_resolver,filters,in_filter=in_filter)
+    return _comparison(e,model,measure_resolver,filters,in_filter=in_filter)
 
-def _comparison(expr,model,measure_resolver=None,filters=None):
+def _is_date_sql(s):
+    s_low = str(s).lower()
+    return 'current_date' in s_low or 'as date' in s_low or 'make_date' in s_low or 'date_trunc' in s_low or 'interval' in s_low
+
+def _comparison(expr,model,measure_resolver=None,filters=None,in_filter=False):
     depth=0;quote=None
     for i,ch in enumerate(expr):
         if quote:
@@ -960,8 +998,12 @@ def _comparison(expr,model,measure_resolver=None,filters=None):
                 if expr.startswith(op,i):
                     left=expr[:i].strip();right=expr[i+len(op):].strip()
                     lf=parse_field(left)
-                    lsql=resolve_field(model,*lf) if lf else _compile_simple(left,model,measure_resolver,filters)
-                    rsql=_compile_simple(right,model,measure_resolver,filters)
+                    lsql=resolve_field(model,*lf) if lf else _compile_simple(left,model,measure_resolver,filters,in_filter=in_filter)
+                    rsql=_compile_simple(right,model,measure_resolver,filters,in_filter=in_filter)
+                    if _is_date_sql(rsql) and not _is_date_sql(lsql):
+                        lsql = f'TRY_CAST({lsql} AS DATE)'
+                    elif _is_date_sql(lsql) and not _is_date_sql(rsql):
+                        rsql = f'TRY_CAST({rsql} AS DATE)'
                     return f'{lsql} {op} {rsql}'
     raise DaxError(f'Unsupported condition: {expr}')
 
@@ -984,10 +1026,10 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
     if m:
         t = (m.group(1) or m.group(2)).strip("'")
         cond = m.group(3).strip()
-        return _condition(cond,model,resolve_filter_value,filters), {t+'.*'} if m.group(1) else set()
+        return _condition(cond,model,resolve_filter_value,filters,in_filter=True), {t+'.*'} if m.group(1) else set()
         
     m=re.fullmatch(r'(?is)KEEPFILTERS\s*\((.*)\)',e)
-    if m:return _condition(m.group(1),model,resolve_filter_value,filters),set()
+    if m:return _condition(m.group(1),model,resolve_filter_value,filters,in_filter=True),set()
     m=re.fullmatch(r'(?is)DATESBETWEEN\s*\((.*)\)',e)
     if m:
         args=split_top(m.group(1))
@@ -995,8 +1037,8 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         field_ref=parse_field(args[0])
         if not field_ref:raise DaxError('DATESBETWEEN first argument must be Table[DateColumn].')
         t,c=field_ref;field=resolve_field(model,t,c)
-        start=_compile_simple(args[1],model,resolve_filter_value,filters)
-        end=_compile_simple(args[2],model,resolve_filter_value,filters)
+        start=_compile_simple(args[1],model,resolve_filter_value,filters,in_filter=True)
+        end=_compile_simple(args[2],model,resolve_filter_value,filters,in_filter=True)
         predicate=f'(CAST({start} AS DATE) IS NULL OR CAST({field} AS DATE) >= CAST({start} AS DATE)) AND (CAST({end} AS DATE) IS NULL OR CAST({field} AS DATE) <= CAST({end} AS DATE))'
         return predicate,{semantic_field(t,c)}
     m=re.fullmatch(r'(?is)DATESINPERIOD\s*\((.*)\)',e)
@@ -1009,7 +1051,7 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         except ValueError:raise DaxError('DATESINPERIOD interval count must be an integer.')
         unit=args[3].strip().upper()
         if unit not in {'DAY','MONTH','QUARTER','YEAR'}:raise DaxError('DATESINPERIOD interval must be DAY, MONTH, QUARTER, or YEAR.')
-        t,c=field_ref;field=resolve_field(model,t,c);anchor=_compile_simple(args[1],model,resolve_filter_value,filters)
+        t,c=field_ref;field=resolve_field(model,t,c);anchor=_compile_simple(args[1],model,resolve_filter_value,filters,in_filter=True)
         sql_unit='month' if unit=='QUARTER' else unit.lower();sql_num=num*3 if unit=='QUARTER' else num
         shifted=f"(CAST({anchor} AS DATE) + INTERVAL '{sql_num} {sql_unit}')"
         lower,upper=(shifted,f'CAST({anchor} AS DATE)') if num<=0 else (f'CAST({anchor} AS DATE)',shifted)
@@ -1019,13 +1061,40 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         t,c=m.groups(); t = t.strip().strip("'"); c = c.strip()
         mn,mx=_selected_bounds(model,t,c,filters)
         field=resolve_field(model,t,c)
-        return f"CAST({field} AS DATE) BETWEEN (CAST({mn} AS DATE)-INTERVAL '1 year') AND (CAST({mx} AS DATE)-INTERVAL '1 year')",{semantic_field(t,c)}
+        return f"TRY_CAST({field} AS DATE) BETWEEN (TRY_CAST({mn} AS DATE)-INTERVAL '1 year') AND (TRY_CAST({mx} AS DATE)-INTERVAL '1 year')",{semantic_field(t,c)}
+    m=re.fullmatch(r'(?is)(PREVIOUSMONTH|PREVIOUSYEAR|PREVIOUSQUARTER)\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)',e)
+    if m:
+        kind,t,c=m.groups(); t = t.strip().strip("'"); c = c.strip(); kind = kind.upper()
+        mx=_selected_aggregate(model,'MAX',t,c,filters)
+        field=resolve_field(model,t,c)
+        if kind=='PREVIOUSMONTH':
+            start=f"date_trunc('month', CAST({mx} AS DATE) - INTERVAL '1 month')"
+            end=f"last_day(CAST({mx} AS DATE) - INTERVAL '1 month')"
+        elif kind=='PREVIOUSQUARTER':
+            start=f"date_trunc('quarter', CAST({mx} AS DATE) - INTERVAL '3 month')"
+            end=f"(date_trunc('quarter', CAST({mx} AS DATE)) - INTERVAL '1 day')"
+        else:
+            start=f"date_trunc('year', CAST({mx} AS DATE) - INTERVAL '1 year')"
+            end=f"(date_trunc('year', CAST({mx} AS DATE)) - INTERVAL '1 day')"
+        return f"TRY_CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({end} AS DATE)",{semantic_field(t,c)}
+    m=re.fullmatch(r'(?is)PARALLELPERIOD\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*,\s*(-?\d+)\s*,\s*(YEAR|QUARTER|MONTH)\s*\)',e)
+    if m:
+        t,c,num,unit=m.groups(); t = t.strip().strip("'"); c = c.strip(); num = int(num); unit = unit.lower()
+        mx=_selected_aggregate(model,'MAX',t,c,filters)
+        field=resolve_field(model,t,c)
+        sql_unit = 'month' if unit=='quarter' else unit
+        mult = 3 if unit=='quarter' else 1
+        shift_start = num * mult
+        shift_end = (num + 1) * mult
+        start=f"date_trunc('{unit}', CAST({mx} AS DATE) + INTERVAL '{shift_start} {sql_unit}')"
+        end=f"(date_trunc('{unit}', CAST({mx} AS DATE) + INTERVAL '{shift_end} {sql_unit}') - INTERVAL '1 day')"
+        return f"TRY_CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({end} AS DATE)",{semantic_field(t,c)}
     m=re.fullmatch(r'(?is)DATEADD\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*,\s*(-?\d+)\s*,\s*(YEAR|QUARTER|MONTH|DAY)\s*\)',e)
     if m:
         t,c,num,unit=m.groups(); t = t.strip().strip("'"); c = c.strip(); num = int(num); unit = unit.lower()
         mn,mx=_selected_bounds(model,t,c,filters)
         field=resolve_field(model,t,c)
-        return f"CAST({field} AS DATE) BETWEEN (CAST({mn} AS DATE) + INTERVAL '{num} {unit}') AND (CAST({mx} AS DATE) + INTERVAL '{num} {unit}')",{semantic_field(t,c)}
+        return f"TRY_CAST({field} AS DATE) BETWEEN (TRY_CAST({mn} AS DATE) + INTERVAL '{num} {unit}') AND (TRY_CAST({mx} AS DATE) + INTERVAL '{num} {unit}')",{semantic_field(t,c)}
     m=re.fullmatch(r'(?is)(DATESYTD|DATESQTD|DATESMTD)\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)',e)
     if m:
         kind,t,c=m.groups(); t = t.strip().strip("'"); c = c.strip(); kind = kind.upper()
@@ -1034,14 +1103,14 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         if kind=='DATESYTD':start=f"date_trunc('year',CAST({mx} AS DATE))"
         elif kind=='DATESQTD':start=f"date_trunc('quarter',CAST({mx} AS DATE))"
         else:start=f"date_trunc('month',CAST({mx} AS DATE))"
-        return f"CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({mx} AS DATE)",{semantic_field(t,c)}
+        return f"TRY_CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({mx} AS DATE)",{semantic_field(t,c)}
     m=re.fullmatch(r"(?is)FILTER\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*,\s*(.*)\)",e)
     if m:
         table=m.group(1).strip();condition=m.group(2).strip()
         table=resolve_table(model,table)
-        return _condition(condition,model,resolve_filter_value,filters),set()
+        return _condition(condition,model,resolve_filter_value,filters,in_filter=True),set()
     # Direct Table[Column] comparison / logical condition.
-    return _condition(e,model,resolve_filter_value,filters),set()
+    return _condition(e,model,resolve_filter_value,filters,in_filter=True),set()
 
 def _attach_filter(base_sql,predicate):
     if not predicate:return base_sql

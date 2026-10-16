@@ -350,7 +350,7 @@ async function queryVisual(v:Visual,project:any,roleId?:string|null,extraFilters
   // For table: axis fields with aggregation suffix (::sum etc.) act as measures; plain fields are dimensions
   let axisDimensions = activeAxis;
   if (v.type === 'table') {
-    const isMeasureField = (f: string) => f.includes('::') || (project?.model?.measures && project.model.measures[f]);
+    const isMeasureField = (f: string) => f.includes('::') || !!(project?.model?.measures && (project.model.measures[f] || project.model.measures[f.split('.').slice(-1)[0]]));
     const axisWithAgg = activeAxis.filter(isMeasureField);
     axisDimensions = activeAxis.filter(f => !isMeasureField(f));
     measures = Array.from(new Set([...measures, ...axisWithAgg]));
@@ -359,30 +359,26 @@ async function queryVisual(v:Visual,project:any,roleId?:string|null,extraFilters
   if(v.type==='map'){
     const mapFields=['location','latitude','longitude','geometry','detail','color','label','path','country','region','postalCode'].flatMap(key=>(v.bindings as any)[key]||[]);
     const flexible=[...(v.bindings.size||[]),...(v.bindings.tooltips||[]),...(v.bindings.values||[])];
-    const isMeasure=(field:string)=>field.includes('::')||!!project?.model?.measures?.[field];
-    dimensions=Array.from(new Set([...mapFields,...flexible.filter(field=>!isMeasure(field))]));
-    measures=Array.from(new Set(flexible.filter(isMeasure)));
+    const isMeasure=(field:string)=>field.includes('::')||!!(project?.model?.measures?.[field]||project?.model?.measures?.[field.split('.').slice(-1)[0]]);
+    const allMapFields = [...mapFields, ...flexible];
+    dimensions=Array.from(new Set(allMapFields.filter(field=>!isMeasure(field))));
+    measures=Array.from(new Set(allMapFields.filter(field=>isMeasure(field))));
   }
   const configuredFilters=[...(v.filters||[]),...(v.drillFilters||[]),...extraFilters];
-  const topFilter=configuredFilters.find(f=>f.operator==='top_n');
   const filters=configuredFilters.filter(f=>{
-    if (f.operator === 'top_n') return false;
     if (f.operator === 'in' && (!Array.isArray(f.value) || f.value.length === 0)) return false;
-    if (f.operator !== 'is_blank' && f.operator !== 'is_not_blank' && (f.value === '' || f.value === null || f.value === undefined)) return false;
+    if (f.operator === 'top_n' && (!f.value || !f.rankingField)) return false;
+    if (f.operator !== 'is_blank' && f.operator !== 'is_not_blank' && f.operator !== 'top_n' && (f.value === '' || f.value === null || f.value === undefined)) return false;
     return true;
   });
-  const rankingField=topFilter?.rankingField||v.bindings.values?.[0];
-  const hiddenRanking=!!(topFilter&&rankingField&&!measures.includes(rankingField)&&!dimensions.includes(rankingField));
-  if(hiddenRanking)measures.push(rankingField!);
-  let sort=topFilter&&rankingField?[{field:rankingField,direction:'desc' as const},...(v.sort||[]).filter(s=>s.field!==rankingField)]:v.sort||[];
+  let sort = v.sort || [];
   const axisDim = activeAxis[0] || '';
   if (!sort.length && axisDim.includes('::')) {
     sort = [{ field: axisDim, direction: 'asc' as const }];
   }
-  const defaultLimit=v.type==='map'?5000:(v.type==='table'||v.type==='matrix')?500:(v.type==='histogram'?2000:500);
-  const limit=topFilter?Math.max(1,Math.min(5000,Number(topFilter.value)||10)):defaultLimit;
-  const result=await api<any>('/query-snapshot',{method:'POST',body:JSON.stringify({project,dimensions,measures,filters,sort,limit,roleId})});
-  if(hiddenRanking&&rankingField)result.rows=(result.rows||[]).map((row:any)=>{const clean={...row};delete clean[rankingField];return clean});
+  const defaultLimit=(v.type==='map'||v.type==='table'||v.type==='matrix')?5000:(v.type==='histogram'?2000:500);
+  const limit=defaultLimit;
+  const result=await api<any>('/query-snapshot',{method:'POST',body:JSON.stringify({project,dimensions,measures,filters,sort,limit,roleId,distinct:v.type==='slicer'})});
   return result;
 }
 
@@ -804,7 +800,7 @@ function FilterCard({f,onRemove,onUpdate,model}: {f:VisualFilter,onRemove:()=>vo
 
   const operatorLabels:Record<string,string>={'equals':'is','not_equals':'is not','contains':'contains','gt':'is greater than','gte':'is greater than or equal to','lt':'is less than','lte':'is less than or equal to','is_blank':'is blank','is_not_blank':'is not blank','starts_with':'starts with','does_not_start_with':'does not start with'};
   const shortName = f.field.includes('.') ? f.field.split('.').slice(-1)[0] : f.field;
-  const summary = f.operator==='top_n' ? `Top ${f.value}` : f.operator==='in' ? (Array.isArray(f.value)&&f.value.length ? `is ${f.value.length>1?'multiple':f.value[0]}` : 'is (All)') : (!f.value&&f.value!==0) ? 'is (All)' : `${operatorLabels[f.operator]||f.operator} ${f.value}`;
+  const summary = f.operator==='top_n' ? `${(f.rankingDirection||'top')==='bottom'?'Bottom':'Top'} ${f.value||10}${f.rankingField ? ` by ${f.rankingField.split('.').slice(-1)[0]}` : ''}` : f.operator==='in' ? (Array.isArray(f.value)&&f.value.length ? `is ${f.value.length>1?'multiple':f.value[0]}` : 'is (All)') : (!f.value&&f.value!==0) ? 'is (All)' : `${operatorLabels[f.operator]||f.operator} ${f.value}`;
   
   const filterType = draft.operator === 'top_n' ? 'top_n' : (['in_last','in_next','is_in_this'].includes(draft.operator) ? 'relative' : (draft.operator === 'in' ? 'basic' : 'advanced'));
   const cleanKey = (f.field||'').replace(/^(field:|numericField:|hierarchy:|measure:)/, '');
@@ -867,7 +863,7 @@ function FilterCard({f,onRemove,onUpdate,model}: {f:VisualFilter,onRemove:()=>vo
         <label className="pbFilterLabel">Filter type <Info size={12}/></label>
         <select className="pbFilterSelect" value={filterType} onChange={e=>{
           const type = e.target.value;
-          if (type === 'top_n') setDraft({...draft, operator: 'top_n', value: '10', condition: undefined, operator2: undefined, value2: undefined});
+          if (type === 'top_n') setDraft({...draft, operator: 'top_n', value: draft.value || '10', rankingDirection: draft.rankingDirection || 'top', rankingField: draft.rankingField || rankingFields[0] || '', condition: undefined, operator2: undefined, value2: undefined});
           else if (type === 'basic') setDraft({...draft, operator: 'in', value: [], condition: undefined, operator2: undefined, value2: undefined});
           else if (type === 'relative') setDraft({...draft, operator: 'in_last', value: '30', value2: 'days', condition: undefined, operator2: undefined, rankingField: undefined});
           else setDraft({...draft, operator: 'equals', value: '', rankingField: undefined});
@@ -934,7 +930,15 @@ function FilterCard({f,onRemove,onUpdate,model}: {f:VisualFilter,onRemove:()=>vo
         {filterType === 'top_n' && <>
           <label className="pbFilterLabel">Show items</label>
           <div style={{display:'flex', gap: 8, alignItems: 'center'}}>
-            <select className="pbFilterSelect" style={{flex: '0 0 40%', marginBottom: 0}} disabled><option>Top</option></select>
+            <select
+              className="pbFilterSelect"
+              style={{flex: '0 0 40%', marginBottom: 0}}
+              value={draft.rankingDirection || 'top'}
+              onChange={e => setDraft({...draft, rankingDirection: e.target.value as 'top' | 'bottom'})}
+            >
+              <option value="top">Top</option>
+              <option value="bottom">Bottom</option>
+            </select>
             <input className="pbFilterInput" type="number" style={{flex: '1 1 auto', marginBottom: 0, minWidth: 0}} value={draft.value||''} onChange={e=>setDraft({...draft,value:e.target.value})} min={1}/>
           </div>
           <label className="pbFilterLabel" style={{marginTop: 4}}>By value</label>
@@ -1375,45 +1379,46 @@ const addVisual=(type:VisualType)=>{const now=performance.now();const prev=visua
   const nudgeSelected=(dx:number,dy:number)=>updatePage(pg=>{const ids=new Set(selectedIds.length?selectedIds:(selectedVisualId?[selectedVisualId]:[]));const width=pg.settings?.pageWidth||1920,height=pg.settings?.pageHeight||1080;for(const v of pg.visuals.filter(x=>ids.has(x.id)&&!x.locked)){v.x=Math.max(0,Math.min(width-v.w,v.x+dx));v.y=Math.max(0,Math.min(height-v.h,v.y+dy))}});
   const autoArrangePremium=()=>updatePage(pg=>{
     const canvasWidth=pg.settings?.pageWidth||1920;
+    const margin=24;
     const gap=16;
+    const usableWidth=canvasWidth-margin*2;
     const isVisible=(v:Visual)=>v.visible!==false&&!v.hidden;
-    const movable=pg.visuals.filter(v=>isVisible(v)&&!v.locked);
-    if(!movable.length)return;
+    
+    // Check if user has selected specific visuals to arrange
+    const selectedSet = new Set(selectedIds.length ? selectedIds : (selectedVisualId ? [selectedVisualId] : []));
+    const targetMovable = selectedSet.size > 1
+      ? pg.visuals.filter(v => isVisible(v) && !v.locked && selectedSet.has(v.id))
+      : pg.visuals.filter(v => isVisible(v) && !v.locked);
+    
+    if(!targetMovable.length) return;
 
-    // --- Step 1: cluster visuals into rows by overlapping Y-ranges ---
-    const sorted=[...movable].sort((a,b)=>a.y-b.y||a.x-b.x);
-    const rows:Visual[][]=[];
-    for(const v of sorted){
-      const rowMatch=rows.find(row=>{
-        const rowTop=Math.min(...row.map(r=>r.y));
-        const rowBottom=Math.max(...row.map(r=>r.y+r.h));
-        const vMid=v.y+v.h/2;
-        return vMid>rowTop&&vMid<rowBottom;
-      });
-      if(rowMatch)rowMatch.push(v);
-      else rows.push([v]);
-    }
-
-    // --- Step 2: sort visuals within each row by their original X position ---
-    for(const row of rows)row.sort((a,b)=>a.x-b.x);
-
-    // --- Step 3: lay rows out top-to-bottom, items left-to-right ---
-    let cursorY=0;
-    for(const row of rows){
-      let cursorX=0;
-      let currentRowHeight=0;
-      for(const v of row){
-        if(cursorX+v.w>canvasWidth && cursorX>0){
-          cursorY+=currentRowHeight+gap;
-          cursorX=0;
-          currentRowHeight=0;
-        }
-        v.x=Math.round(cursorX);
-        v.y=Math.round(cursorY);
-        currentRowHeight=Math.max(currentRowHeight, v.h);
-        cursorX+=v.w+gap;
+    if (selectedSet.size > 1) {
+      // Align selected visuals in a horizontal row at their shared top position
+      targetMovable.sort((a,b) => a.x - b.x);
+      const rowY = Math.min(...targetMovable.map(v => v.y));
+      let curX = Math.min(...targetMovable.map(v => v.x));
+      for (const v of targetMovable) {
+        v.x = Math.round(curX);
+        v.y = Math.round(rowY);
+        curX += v.w + gap;
       }
-      cursorY+=currentRowHeight+gap;
+    } else {
+      // Lay out all visuals in clean horizontal rows side-by-side
+      const sorted = [...targetMovable].sort((a,b) => a.y - b.y || a.x - b.x);
+      let cursorX = margin;
+      let cursorY = margin;
+      let currentRowHeight = 0;
+      for (const v of sorted) {
+        if (cursorX + v.w > usableWidth && cursorX > margin) {
+          cursorY += currentRowHeight + gap;
+          cursorX = margin;
+          currentRowHeight = 0;
+        }
+        v.x = Math.round(cursorX);
+        v.y = Math.round(cursorY);
+        currentRowHeight = Math.max(currentRowHeight, v.h);
+        cursorX += v.w + gap;
+      }
     }
   });
   const clearAll=()=>{
@@ -1444,7 +1449,7 @@ const addVisual=(type:VisualType)=>{const now=performance.now();const prev=visua
       {ribbonTab==='insert'&&<><button className="btnGlass" onClick={addPage}><Plus size={17}/>New page</button><button className="btnGlass" onClick={()=>{update(p=>{ensurePaginatedReports(p).push(createPaginatedReport(`Paginated Report ${ensurePaginatedReports(p).length+1}`));return p});setView('paginated')}}><FileJson size={17}/>Paginated report</button><button className="btnGlass" onClick={()=>addVisual('textbox')}><TextCursorInput size={17}/>Text box</button><button className="btnGlass" onClick={()=>imageVisualInputRef.current?.click()}><ImageIcon size={17}/>Image</button><button className="btnGlass" onClick={()=>addVisual('shape')}><LayoutDashboard size={17}/>Shapes</button><button className="btnGlass" onClick={()=>addVisual('button')}><MousePointerClick size={17}/>Button</button><button className="btnGlass" onClick={()=>addVisual('card')}><Hash size={17}/>Card</button><button className="btnGlass" onClick={()=>addVisual('table')}><Table2 size={17}/>Table</button><button className="btnGlass" onClick={()=>addVisual('slicer')}><Filter size={17}/>Slicer</button><button className="btnGlass" onClick={()=>{setMoreVisualsOpen(true);setMoreVisualsSearch('')}}><BarChart3 size={17}/>More visuals</button></>}
       {ribbonTab==='modeling'&&<><button className="btnGlass" onClick={()=>setView('model')}><GitBranch size={17}/>Model view</button><button className="btnGlass" onClick={()=>setView('model')}><Settings2 size={17}/>Relationships</button><button className="btnGlass" onClick={()=>setView('measures')}><Hash size={17}/>Measures</button><button className="btnGlass" onClick={()=>setView('ai-measures')}><Sparkles size={17}/>AI measures</button></>}
       {ribbonTab==='view'&&<><div className="panelMenuWrap"><button className="btnGlass" onClick={()=>setPanelMenu(x=>!x)}><Settings2 size={17}/>Show panes</button>{panelMenu&&<><div style={{position:'fixed',inset:0,zIndex:998}} onPointerDown={(e)=>{e.stopPropagation();setPanelMenu(false)}} /><div className="panelMenuGlass" style={{position:'absolute',zIndex:999}}><label className="checkboxGlass"><input type="checkbox" checked={appSidebarVisible} onChange={e=>setAppSidebarVisible(e.target.checked)}/>Application navigation</label><label className="checkboxGlass"><input type="checkbox" checked={dataPaneVisible} onChange={e=>setDataPaneVisible(e.target.checked)}/>Data pane</label><label className="checkboxGlass"><input type="checkbox" checked={propertiesVisible} onChange={e=>setPropertiesVisible(e.target.checked)}/>Visualizations pane</label><label className="checkboxGlass"><input type="checkbox" checked={filtersVisible} onChange={e=>setFiltersVisible(e.target.checked)}/>Filters pane</label><label className="checkboxGlass"><input type="checkbox" checked={pageTabsVisible} onChange={e=>setPageTabsVisible(e.target.checked)}/>Page tabs</label></div></>}</div><button className={'btnGlass '+(designerView==='fit'?'active':'')} onClick={()=>setDesignerView('fit')}><Maximize2 size={17}/>Fit page</button><button className={'btnGlass '+(designerView==='actual'?'active':'')} onClick={()=>setDesignerView('actual')}><Eye size={17}/>Actual size</button><button className="btnGlass" onClick={()=>{setAppSidebarVisible(false);setDataPaneVisible(false);setPropertiesVisible(false);setFiltersVisible(false)}}><Maximize2 size={17}/>Focus canvas</button></>}
-      {ribbonTab==='view'&&<><button className={'btnGlass '+(selectionPaneVisible?'active':'')} onClick={()=>setSelectionPaneVisible(value=>!value)}><Layers3 size={17}/>Selection pane</button><button className={'btnGlass '+(s.showGrid!==false?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.showGrid=p.settings!.showGrid===false})}><LayoutDashboard size={17}/>Gridlines</button><button className={'btnGlass '+(s.snapToGrid!==false?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.snapToGrid=p.settings!.snapToGrid===false})}><Move size={17}/>Snap to grid</button></>}
+      {ribbonTab==='view'&&<><button className={'btnGlass '+(selectionPaneVisible?'active':'')} onClick={()=>setSelectionPaneVisible(value=>!value)}><Layers3 size={17}/>Selection pane</button><button className={'btnGlass '+(s.showGrid!==false?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.showGrid=p.settings!.showGrid===false})}><LayoutDashboard size={17}/>Gridlines</button></>}
       {ribbonTab==='optimize'&&<><div className="panelMenuWrap arrangeMenuWrap"><button className="btnGlass" onClick={()=>setArrangeMenu(x=>!x)}><LayoutDashboard size={17}/>Align & arrange</button>{arrangeMenu&&<><div style={{position:'fixed',inset:0,zIndex:998}} onPointerDown={(e)=>{e.stopPropagation();setArrangeMenu(false)}} /><div className="panelMenuGlass arrangeCommandMenu" style={{position:'absolute',zIndex:999}}><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('left');setArrangeMenu(false)}}>Align left</button><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('center');setArrangeMenu(false)}}>Align center</button><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('right');setArrangeMenu(false)}}>Align right</button><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('top');setArrangeMenu(false)}}>Align top</button><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('middle');setArrangeMenu(false)}}>Align middle</button><button disabled={selectedIds.length<2} onClick={()=>{arrangeSelection('bottom');setArrangeMenu(false)}}>Align bottom</button><button disabled={selectedIds.length<3} onClick={()=>{arrangeSelection('distributeH');setArrangeMenu(false)}}>Distribute horizontally</button><button disabled={selectedIds.length<3} onClick={()=>{arrangeSelection('distributeV');setArrangeMenu(false)}}>Distribute vertically</button><hr/><button disabled={!selectedVisualId} onClick={()=>{layerSelection('front');setArrangeMenu(false)}}>Bring to front</button><button disabled={!selectedVisualId} onClick={()=>{layerSelection('forward');setArrangeMenu(false)}}>Bring forward</button><button disabled={!selectedVisualId} onClick={()=>{layerSelection('backward');setArrangeMenu(false)}}>Send backward</button><button disabled={!selectedVisualId} onClick={()=>{layerSelection('back');setArrangeMenu(false)}}>Send to back</button></div></>}</div><button className="btnGlass" onClick={autoArrangePremium}><LayoutDashboard size={17}/>Auto arrange</button><button className={'btnGlass '+(s.allowOverlap!==true?'active':'')} onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.allowOverlap=!p.settings!.allowOverlap})}><Layers3 size={17}/>Prevent overlap</button></>}
     </div>
     <div className="reportRibbonGlass legacyReportRibbon" aria-hidden="true">
@@ -1472,7 +1477,7 @@ const addVisual=(type:VisualType)=>{const now=performance.now();const prev=visua
           {s.backgroundImage&&<div className={'pageBackgroundImage fit-'+(s.backgroundImageFit||'cover')} style={{backgroundImage:`url(${s.backgroundImage})`,opacity:(s.backgroundImageOpacity??24)/100}}/>}
           <div className="pageContentLayer">
 
-          <CanvasObjectInteractionManager visuals={page.visuals} selectedIds={selectedIds} primaryId={selectedVisualId} scale={designerScale} canvasWidth={s.pageWidth||1920} canvasHeight={Math.max(520,designerEffectiveHeight-designerHeaderHeight)} snapToGrid={s.snapToGrid!==false} preventOverlap={s.allowOverlap!==true} onSelect={selectCanvasVisual} onGeometry={syncGeometry} render={v=><VisualCard v={v} model={project.model} project={project} selected={selectedIds.includes(v.id)||selectedVisualId===v.id} actionSelected={buttonSelections[(v.format.buttonSelectionGroup||'default').trim()||'default']===v.id} onSelect={additive=>selectCanvasVisual(v.id,additive)} roleId={roleId} extraFilters={[...(project.report.filters||[]),...(page.filters||[]),...Object.entries(interactionFilterMap).filter(([owner])=>owner!==v.id).map(([,f])=>f)]} activeInteractionFilter={interactionFilterMap[v.id]} onDrillThrough={(pid, f) => { switchPage(pid); update(p => { const targetPage = p.report.pages.find(x=>x.id===pid); if (targetPage) { targetPage.filters = [...(targetPage.filters||[]).filter(z=>z.field!==f.field), f]; } return p; }); }} onSlicer={f=>setInteractionFilterMap(prev=>{const next={...prev};if(f)next[v.id]=f;else delete next[v.id];return next})} onChange={fn=>updatePage(pg=>{const vv=pg.visuals.find(x=>x.id===v.id);if(vv)fn(vv)})} onAction={executeVisualAction} onDuplicate={()=>{const newId=crypto.randomUUID();updatePage(pg=>{const src=pg.visuals.find(x=>x.id===v.id);if(src){const n=structuredClone(src);n.id=newId;n.zIndex=pg.visuals.length;n.bindings=sanitizeBindingsForType(n.type,structuredClone(src.bindings));n.filters=structuredClone(src.filters||[]);n.format={...structuredClone(src.format),fieldFormats:{...(structuredClone(src.format?.fieldFormats||{}))}};const spot=findSmartSpot(pg.visuals,n.w,n.h);n.x=spot.x;n.y=spot.y;n.title+=' Copy';pg.visuals.push(n)}});setTimeout(()=>selectOne(newId),0)}} onDelete={()=>{if(selectedIds.includes(v.id)||selectedVisualId===v.id)del();else{updatePage(pg=>{pg.visuals=pg.visuals.filter(x=>x.id!==v.id)});setSelectedVisualIds(ids=>ids.filter(id=>id!==v.id));if(selectedVisualId===v.id)selectVisual(null)}}} onCategoriesLoad={handleCategoriesLoad}/>}/>
+          <CanvasObjectInteractionManager visuals={page.visuals} selectedIds={selectedIds} primaryId={selectedVisualId} scale={designerScale} canvasWidth={s.pageWidth||1920} canvasHeight={Math.max(520,designerEffectiveHeight-designerHeaderHeight)} snapToGrid={false} preventOverlap={s.allowOverlap!==true} onSelect={selectCanvasVisual} onGeometry={syncGeometry} render={v=><VisualCard v={v} model={project.model} project={project} selected={selectedIds.includes(v.id)||selectedVisualId===v.id} actionSelected={buttonSelections[(v.format.buttonSelectionGroup||'default').trim()||'default']===v.id} onSelect={additive=>selectCanvasVisual(v.id,additive)} roleId={roleId} extraFilters={[...(project.report.filters||[]),...(page.filters||[]),...Object.entries(interactionFilterMap).filter(([owner])=>owner!==v.id).map(([,f])=>f)]} activeInteractionFilter={interactionFilterMap[v.id]} onDrillThrough={(pid, f) => { switchPage(pid); update(p => { const targetPage = p.report.pages.find(x=>x.id===pid); if (targetPage) { targetPage.filters = [...(targetPage.filters||[]).filter(z=>z.field!==f.field), f]; } return p; }); }} onSlicer={f=>setInteractionFilterMap(prev=>{const next={...prev};if(f)next[v.id]=f;else delete next[v.id];return next})} onChange={fn=>updatePage(pg=>{const vv=pg.visuals.find(x=>x.id===v.id);if(vv)fn(vv)})} onAction={executeVisualAction} onDuplicate={()=>{const newId=crypto.randomUUID();updatePage(pg=>{const src=pg.visuals.find(x=>x.id===v.id);if(src){const n=structuredClone(src);n.id=newId;n.zIndex=pg.visuals.length;n.bindings=sanitizeBindingsForType(n.type,structuredClone(src.bindings));n.filters=structuredClone(src.filters||[]);n.format={...structuredClone(src.format),fieldFormats:{...(structuredClone(src.format?.fieldFormats||{}))}};const spot=findSmartSpot(pg.visuals,n.w,n.h);n.x=spot.x;n.y=spot.y;n.title+=' Copy';pg.visuals.push(n)}});setTimeout(()=>selectOne(newId),0)}} onDelete={()=>{if(selectedIds.includes(v.id)||selectedVisualId===v.id)del();else{updatePage(pg=>{pg.visuals=pg.visuals.filter(x=>x.id!==v.id)});setSelectedVisualIds(ids=>ids.filter(id=>id!==v.id));if(selectedVisualId===v.id)selectVisual(null)}}} onCategoriesLoad={handleCategoriesLoad}/>}/>
           
           </div>
         </div>

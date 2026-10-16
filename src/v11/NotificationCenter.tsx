@@ -32,7 +32,7 @@ export default function NotificationCenter({userId}:{userId?:string}){
   useEffect(()=>{
     if(!supabase||!userId)return;
     const channel=supabase.channel(`vtab-notifications-${userId}`).on('postgres_changes',{event:'*',schema:'public',table:'notifications',filter:`user_id=eq.${userId}`},()=>void load()).subscribe();
-    return()=>{void supabase.removeChannel(channel)};
+    return()=>{if(supabase)void supabase.removeChannel(channel)};
   },[userId,load]);
   useEffect(()=>{const close=(event:MouseEvent)=>{if(open&&root.current&&!root.current.contains(event.target as Node))setOpen(false)};document.addEventListener('mousedown',close);return()=>document.removeEventListener('mousedown',close)},[open]);
   const patch=async(id:string,payload:any)=>{await api(`/service/notifications/${id}`,{method:'PATCH',body:JSON.stringify(payload)});await load()};

@@ -309,28 +309,7 @@ export default function HelpSupportView({
                 <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
                 Refresh
               </button>
-
-              <button
-                onClick={exportCsv}
-                disabled={!requests.length}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '7px 12px',
-                  borderRadius: 6,
-                  border: '1px solid #cbd5e1',
-                  background: '#ffffff',
-                  color: '#475569',
-                  fontSize: 13,
-                  cursor: 'pointer',
-                  opacity: requests.length ? 1 : 0.6,
-                }}
-              >
-                <Download size={14} />
-                Export
-              </button>
-            </div>
+              </div>
 
             {/* Filter tabs and search */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import urllib.request
 import urllib.error
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from collections import defaultdict, deque
@@ -117,7 +118,7 @@ async def secure_authoring_api(request, call_next):
         return await call_next(request)
     enforce=os.environ.get('VTAB_ENFORCE_API_AUTH','0')=='1'
     public=path in ('/api/v1/health','/api/v1/auth/status','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/password-reset/request','/api/v1/auth/password-reset/confirm','/api/v1/auth/register/request','/api/v1/auth/register/confirm')
-    consumer=path.startswith('/api/v1/published') or path.startswith('/api/v1/service/')
+    consumer=path.startswith('/api/v1/published') or path.startswith('/api/v1/service/') or path.startswith('/api/v1/map/')
     if enforce and path.startswith('/api/v1/') and not public and not consumer:
         token=(request.headers.get('authorization') or '').replace('Bearer ','',1).strip()
         user=store.session_user(token)
@@ -138,7 +139,7 @@ async def secure_authoring_api(request, call_next):
     return await call_next(request)
 
 class QueryReq(BaseModel):
-    visualId:str|None=None; dimensions:list[str]=[]; measures:list[str]=[]; filters:list[dict]=[]; sort:list[dict]=[]; limit:int=200; roleId:str|None=None
+    visualId:str|None=None; dimensions:list[str]=[]; measures:list[str]=[]; filters:list[dict]=[]; sort:list[dict]=[]; limit:int=200; roleId:str|None=None; distinct:bool=False
 class PublishedBatchQueryReq(BaseModel):
     visualIds:list[str]=[]
     filters:list[dict]=[]
@@ -326,18 +327,36 @@ def _enforce_viewer_block(authorization: str | None, report_id: str):
             from .supabase_store import _admin_client
             sb = _admin_client()
             ws_id = None
-            rep = sb.table('published_reports').select('workspace_id').eq('id', report_id).limit(1).execute()
+            rep = sb.table('published_reports').select('workspace_id, owner_id').eq('id', report_id).limit(1).execute()
+            if rep.data and rep.data[0].get('owner_id') == user_id:
+                return # Report owner has full rights
             if rep.data and rep.data[0].get('workspace_id'):
                 ws_id = rep.data[0]['workspace_id']
             
+            allowed_export_roles = {'admin', 'owner', 'co-owner', 'coowner', 'contributor', 'member'}
+            
+            # Check workspace membership first
             if ws_id:
                 mem = sb.table('workspace_members').select('role').eq('workspace_id', ws_id).eq('user_id', user_id).limit(1).execute()
-                if mem.data and mem.data[0].get('role') == 'Viewer':
-                    raise HTTPException(403, 'Viewers are strictly prohibited from downloading or exporting reports.')
+                if mem.data and mem.data[0].get('role'):
+                    ws_role = str(mem.data[0].get('role') or '').strip().lower()
+                    if ws_role in allowed_export_roles:
+                        return # User has export rights via workspace membership
+                    if ws_role == 'viewer':
+                        # Check if a direct grant elevates access (e.g. Co-Owner)
+                        grant = sb.table('report_access_grants').select('role').eq('report_id', report_id).eq('user_id', user_id).limit(1).execute()
+                        if grant.data and str(grant.data[0].get('role') or '').strip().lower() in allowed_export_roles:
+                            return
+                        raise HTTPException(403, 'Viewers are strictly prohibited from downloading or exporting reports.')
 
+            # If not in workspace_members, check direct report access grant
             grant = sb.table('report_access_grants').select('role').eq('report_id', report_id).eq('user_id', user_id).limit(1).execute()
-            if grant.data and grant.data[0].get('role') == 'Viewer':
-                raise HTTPException(403, 'Viewers are strictly prohibited from downloading or exporting reports.')
+            if grant.data:
+                g_role = str(grant.data[0].get('role') or '').strip().lower()
+                if g_role in allowed_export_roles:
+                    return
+                if g_role == 'viewer':
+                    raise HTTPException(403, 'Viewers are strictly prohibited from downloading or exporting reports.')
         except HTTPException:
             raise
         except Exception as e:
@@ -656,6 +675,79 @@ def delete_report(report_id:str):
     store.delete_report(report_id)
     store.log('report.delete',{'id':report_id})
     return {'ok':True}
+
+@app.get('/api/v1/map/config')
+def map_config():
+    """Return non-secret map settings. Provider credentials never enter report JSON."""
+    styles={}
+    for name in ('light','dark','streets','satellite','minimal'):
+        value=os.environ.get(f'VTAB_MAP_STYLE_{name.upper()}_URL','').strip()
+        if value:styles[name]=value
+    return {
+        'defaultStyle':os.environ.get('VTAB_MAP_DEFAULT_STYLE_URL','https://demotiles.maplibre.org/style.json'),
+        'styles':styles,
+        'geocodingEnabled':True,
+        'offlineTilesEnabled':bool(os.environ.get('VTAB_MAP_OFFLINE_STYLE_URL','').strip()),
+    }
+
+def _map_geocode_key(query):
+    return hashlib.sha256(' '.join(str(query or '').strip().lower().split()).encode('utf-8')).hexdigest()
+
+def _map_geocode_provider(query):
+    base=os.environ.get('VTAB_MAP_GEOCODER_URL','').strip() or 'https://nominatim.openstreetmap.org/search'
+    encoded=urllib.parse.quote(query,safe='')
+    if '{query}' in base:url=base.replace('{query}',encoded)
+    else:
+        separator='&' if '?' in base else '?';url=f'{base}{separator}q={encoded}&format=json&limit=5'
+    api_key=os.environ.get('VTAB_MAP_GEOCODER_API_KEY','').strip()
+    if api_key:
+        key_name=os.environ.get('VTAB_MAP_GEOCODER_KEY_PARAM','key').strip() or 'key'
+        url+=('&' if '?' in url else '?')+urllib.parse.urlencode({key_name:api_key})
+    headers={'Accept':'application/json','User-Agent':os.environ.get('VTAB_MAP_GEOCODER_USER_AGENT','VTAB-Reporting-Studio/5.0')}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=6) as response:
+            payload=json.loads(response.read().decode('utf-8'))
+    except Exception:
+        return {'status':'unmatched','candidates':[]}
+    raw=payload.get('features') if isinstance(payload,dict) and isinstance(payload.get('features'),list) else payload.get('results') if isinstance(payload,dict) and isinstance(payload.get('results'),list) else payload if isinstance(payload,list) else []
+    candidates=[]
+    for item in raw[:5]:
+        center=item.get('center') or item.get('geometry',{}).get('coordinates') or []
+        lon=item.get('lon',item.get('longitude',center[0] if len(center)>1 else None));lat=item.get('lat',item.get('latitude',center[1] if len(center)>1 else None))
+        try:lat=float(lat);lon=float(lon)
+        except (TypeError,ValueError):continue
+        if not (-90<=lat<=90 and -180<=lon<=180):continue
+        candidates.append({'latitude':lat,'longitude':lon,'displayName':item.get('display_name') or item.get('place_name') or item.get('name') or query})
+    if not candidates:return {'status':'unmatched','candidates':[]}
+    first=candidates[0]
+    return {'status':'ambiguous' if len(candidates)>1 else 'resolved','latitude':first['latitude'],'longitude':first['longitude'],'display_name':first['displayName'],'candidates':candidates}
+
+@app.post('/api/v1/map/geocode')
+def map_geocode(body:dict):
+    queries=[]
+    for value in body.get('queries') or []:
+        query=' '.join(str(value or '').strip().split())
+        if query and query not in queries:queries.append(query)
+    if len(queries)>250:raise HTTPException(400,'A maximum of 250 unique locations can be geocoded per request.')
+    results=[]
+    for query in queries:
+        key=_map_geocode_key(query);cached=store.get_map_geocode(key)
+        if cached:
+            results.append({'query':query,'status':cached['status'],'latitude':cached.get('latitude'),'longitude':cached.get('longitude'),'displayName':cached.get('display_name'),'candidates':cached.get('candidates',[]),'cached':True});continue
+        resolved=_map_geocode_provider(query);store.save_map_geocode({'query_key':key,'query_text':query,**resolved})
+        results.append({'query':query,'status':resolved['status'],'latitude':resolved.get('latitude'),'longitude':resolved.get('longitude'),'displayName':resolved.get('display_name'),'candidates':resolved.get('candidates',[]),'cached':False})
+    return {'results':results}
+
+@app.post('/api/v1/map/geocode/corrections')
+def map_geocode_corrections(body:dict):
+    saved=0
+    for correction in body.get('corrections') or []:
+        query=' '.join(str(correction.get('query') or '').strip().split())
+        try:latitude=float(correction.get('latitude'));longitude=float(correction.get('longitude'))
+        except (TypeError,ValueError):continue
+        if not query or not (-90<=latitude<=90 and -180<=longitude<=180):continue
+        store.save_map_geocode({'query_key':_map_geocode_key(query),'query_text':query,'status':'resolved','latitude':latitude,'longitude':longitude,'display_name':correction.get('displayName') or query,'candidates':[]});saved+=1
+    return {'saved':saved}
 
 @app.get('/api/v1/metadata')
 def metadata():
@@ -2057,7 +2149,8 @@ def export_published(report_id:str,fmt:str,authorization:str|None=Header(default
 @app.post('/api/v1/published/{report_id}/export-rendered/{fmt}')
 def export_published_rendered(report_id:str,fmt:str,payload:dict,authorization:str|None=Header(default=None)):
     """Export the browser-rendered dashboard so every report page and chart is retained."""
-    _enforce_viewer_block(authorization, report_id)
+    if not (isinstance(payload, dict) and payload.get("isPaginated")):
+        _enforce_viewer_block(authorization, report_id)
     item=store.get_published(report_id)
     project=(item or {}).get('project') or (payload.get('project') if isinstance(payload,dict) else None)
     if not isinstance(project,dict) or not project:raise HTTPException(404,'Published report not found')
@@ -2107,7 +2200,6 @@ def export_published_paginated_snapshot(payload:PaginatedPdfReq,authorization:st
     if not payload.project:raise HTTPException(400,'Published project snapshot is required.')
     try:
         report_id=str((payload.project.get('report') or {}).get('id') or payload.project.get('id') or '')
-        _enforce_viewer_block(authorization, report_id)
         resolved=resolve_published_rls(report_id,payload.project,token)
         hydrated=hydrate_snapshot_sources(payload.project,token,skip_auth_check=True)
         data,filename,_count=render_paginated_pdf(hydrated,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'])
@@ -2601,7 +2693,10 @@ def save_measure(req:SaveMeasureReq):
     p=req.project if req.project is not None else project();original=(req.originalName or '').strip() or None
     health=dax_engine_health()
     if not health['healthy']:raise HTTPException(503,'The DAX engine self-test failed. Saving is disabled to protect the report.')
-    repair=diagnose_dax_definition(req.expression);expression=repair['expression']
+    raw_expr=(req.expression or '').strip()
+    if not parse_measure_definition(raw_expr) and (req.name or '').strip():
+        raw_expr=f"{(req.name or '').strip()} = {raw_expr}"
+    repair=diagnose_dax_definition(raw_expr);expression=repair['expression']
     if repair['issues']:
         raise HTTPException(400,' '.join(repair['issues']))
     definition=parse_measure_definition(expression)
@@ -2737,6 +2832,13 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
         *(bindings.get('x') or []),
         *(bindings.get('size') or [])
     ]))
+    if visual.get('type') == 'table':
+        known_measures = set(((project.get('model') or {}).get('measures') or {}).keys())
+        is_measure_field = lambda f: '::' in f or f in known_measures or (f.split('.', 1)[1] if '.' in f else f) in known_measures
+        axis_dims = [f for f in (bindings.get('axis') or []) if not is_measure_field(f)]
+        axis_meas = [f for f in (bindings.get('axis') or []) if is_measure_field(f)]
+        dimensions = list(dict.fromkeys([*axis_dims, *(bindings.get('legend') or [])]))
+        measures = list(dict.fromkeys([*measures, *axis_meas]))
     if visual.get('type') == 'map':
         map_fields = list(dict.fromkeys([
             *(bindings.get('location') or []), *(bindings.get('latitude') or []),
@@ -2749,24 +2851,28 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
         known_measures = set(((project.get('model') or {}).get('measures') or {}).keys())
         for field in map_fields:
             clean_field = str(field).removeprefix('measure:')
-            target = measures if clean_field in known_measures or str(field).startswith('measure:') else dimensions
+            short_field = clean_field.split('.', 1)[1] if '.' in clean_field else clean_field
+            is_meas = (
+                clean_field in known_measures
+                or short_field in known_measures
+                or str(field).startswith('measure:')
+                or '::' in clean_field
+            )
+            target = measures if is_meas else dimensions
             if field not in target:target.append(field)
 
     configured_filters = [*(visual.get('filters') or []), *(request.filters or [])]
-    top_filter = next((f for f in configured_filters if isinstance(f, dict) and f.get('operator') == 'top_n'), None)
-    filters = [f for f in configured_filters if not (isinstance(f, dict) and f.get('operator') == 'top_n')]
-    
-    if top_filter:
-        ranking_field = top_filter.get('rankingField') or (bindings.get('values') or [None])[0]
-        if ranking_field and ranking_field not in measures and ranking_field not in dimensions:
-            measures.append(ranking_field)
-            
-        sort_config = [{'field': ranking_field, 'direction': 'desc'}] + [s for s in (visual.get('sort') or []) if s.get('field') != ranking_field]
-        limit = max(1, min(5000, int(top_filter.get('value') or 10)))
-    else:
-        sort_config = visual.get('sort') or []
-        default_limit = 500 if visual.get('type') in ('table', 'matrix') else (2000 if visual.get('type') == 'histogram' else 500)
-        limit = default_limit
+    filters = [
+        f for f in configured_filters if isinstance(f, dict) and (
+            (f.get('operator') == 'top_n' and f.get('value') and f.get('rankingField')) or
+            (f.get('operator') == 'in' and f.get('value')) or
+            (f.get('operator') in ('is_blank', 'is_not_blank')) or
+            (f.get('operator') not in ('is_blank', 'is_not_blank', 'top_n', 'in') and f.get('value') not in ('', None))
+        )
+    ]
+    sort_config = visual.get('sort') or []
+    default_limit = 5000 if visual.get('type') in ('map', 'table', 'matrix') else (2000 if visual.get('type') == 'histogram' else 500)
+    limit = default_limit
 
     return {
         'dimensions': dimensions,
@@ -2775,6 +2881,7 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
         'sort': sort_config,
         'limit': limit,
         'roleId': None,
+        'distinct': visual.get('type') == 'slicer',
     }
 
 def _published_query_context(report_id:str,authorization:str|None):

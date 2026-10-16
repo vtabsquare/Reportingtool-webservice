@@ -1,9 +1,9 @@
 import React from 'react';
 import{createRoot}from'react-dom/client';
 import'./styles.css';
-import'./formatting-authority.css';
 import'./powerbi.css';
 import'@xyflow/react/dist/style.css';
+import'./formatting-authority.css';
 
 const root=createRoot(document.getElementById('root')!);
 

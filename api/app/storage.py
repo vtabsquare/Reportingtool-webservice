@@ -106,6 +106,11 @@ class Store:
                         owner_email TEXT NOT NULL,owner_id TEXT,workspace_id TEXT,workspace_name TEXT,report_id TEXT,report_name TEXT,
                         admin_email TEXT NOT NULL,created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                     );
+                    CREATE TABLE IF NOT EXISTS map_geocode_cache(
+                        query_key TEXT PRIMARY KEY,query_text TEXT NOT NULL,status TEXT NOT NULL,
+                        latitude REAL,longitude REAL,display_name TEXT,candidates_json TEXT DEFAULT '[]',
+                        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                    );
                     """)
                     cols=[r[1] for r in c.execute("PRAGMA table_info(saved_reports)").fetchall()]
                     if 'project_json' not in cols: c.execute("ALTER TABLE saved_reports ADD COLUMN project_json TEXT")
@@ -142,6 +147,8 @@ class Store:
                         if 'requireWorkspaceLogin' not in cfg: cfg['requireWorkspaceLogin']=True;changed=True
                         if 'requireAuthoringLogin' not in cfg: cfg['requireAuthoringLogin']=True;changed=True
                         if changed:c.execute("UPDATE app_settings SET value_json=? WHERE key='workspace_email'",(json.dumps(cfg),))
+                try: self.migrate_legacy_data()
+                except Exception: pass
                 return
             except sqlite3.OperationalError as exc:
                 last=exc
@@ -150,6 +157,142 @@ class Store:
                     raise
                 time.sleep(0.25*(attempt+1))
         raise RuntimeError(f"Metadata database remained busy after retries: {last}")
+
+    def backup_metadata(self):
+        try:
+            import shutil
+            if not META.is_file() or META.stat().st_size == 0:
+                return
+            backup_dirs = []
+            appdata = os.environ.get('APPDATA')
+            localappdata = os.environ.get('LOCALAPPDATA')
+            if appdata:
+                backup_dirs.append(Path(appdata) / 'VTAB_Data_Backup')
+            if localappdata:
+                backup_dirs.append(Path(localappdata) / 'VTAB Reporting Studio' / 'backup')
+            for bdir in backup_dirs:
+                try:
+                    bdir.mkdir(parents=True, exist_ok=True)
+                    dest = bdir / 'studio_meta.db'
+                    tmp = bdir / 'studio_meta.db.tmp'
+                    shutil.copy2(META, tmp)
+                    tmp.replace(dest)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def migrate_legacy_data(self):
+        try:
+            target_db = META.resolve()
+        except Exception:
+            target_db = META
+
+        candidates = []
+        appdata = os.environ.get('APPDATA')
+        localappdata = os.environ.get('LOCALAPPDATA')
+        userprofile = os.environ.get('USERPROFILE')
+
+        if appdata:
+            candidates.extend([
+                Path(appdata) / 'VTAB_Data_Backup' / 'studio_meta.db',
+                Path(appdata) / 'vtab-reporting-studio-web' / 'data' / 'data' / 'studio_meta.db',
+                Path(appdata) / 'vtab-reporting-studio-web' / 'data' / 'studio_meta.db',
+                Path(appdata) / 'com.vtabsquare.reportingstudio' / 'data' / 'studio_meta.db',
+                Path(appdata) / 'com.vtabsquare.reportingstudio' / 'data' / 'data' / 'studio_meta.db',
+                Path(appdata) / 'VTAB Reporting Studio' / 'data' / 'studio_meta.db',
+                Path(appdata) / 'VTAB Reporting Studio' / 'data' / 'data' / 'studio_meta.db',
+            ])
+        if localappdata:
+            candidates.extend([
+                Path(localappdata) / 'VTAB Reporting Studio' / 'backup' / 'studio_meta.db',
+                Path(localappdata) / 'VTAB Reporting Studio' / 'data' / 'studio_meta.db',
+                Path(localappdata) / 'com.vtabsquare.reportingstudio' / 'data' / 'studio_meta.db',
+            ])
+        if userprofile:
+            candidates.extend([
+                Path(userprofile) / '.vtab' / 'studio_meta.db',
+                Path(userprofile) / 'Documents' / 'VTAB Reporting Studio' / 'studio_meta.db',
+            ])
+
+        try:
+            candidates.append(DATA.parent / 'studio_meta.db')
+            candidates.append(DATA.parent.parent / 'data' / 'studio_meta.db')
+            candidates.append(Path(__file__).resolve().parents[3] / 'data' / 'studio_meta.db')
+            candidates.append(Path(__file__).resolve().parents[2] / 'data' / 'studio_meta.db')
+        except Exception:
+            pass
+
+        seen_paths = set()
+        for cand in candidates:
+            try:
+                cand_res = cand.resolve()
+            except Exception:
+                continue
+            if cand_res in seen_paths or cand_res == target_db or not cand.is_file():
+                continue
+            seen_paths.add(cand_res)
+
+            try:
+                with sqlite3.connect(cand, timeout=5.0) as src_conn:
+                    src_conn.row_factory = sqlite3.Row
+                    has_reports = src_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='saved_reports'").fetchone()
+                    if has_reports:
+                        src_cols = [col[1] for col in src_conn.execute("PRAGMA table_info(saved_reports)").fetchall()]
+                        has_project_json = 'project_json' in src_cols
+                        query = "SELECT id, name, report_json, " + ("project_json, " if has_project_json else "NULL as project_json, ") + "created_at, updated_at FROM saved_reports"
+                        src_reports = src_conn.execute(query).fetchall()
+                        with self.conn() as dest_conn:
+                            for r in src_reports:
+                                dest_conn.execute("""
+                                    INSERT INTO saved_reports(id, name, report_json, project_json, created_at, updated_at)
+                                    VALUES(?, ?, ?, ?, ?, ?)
+                                    ON CONFLICT(id) DO UPDATE SET
+                                        name = excluded.name,
+                                        report_json = excluded.report_json,
+                                        project_json = COALESCE(excluded.project_json, saved_reports.project_json),
+                                        updated_at = MAX(saved_reports.updated_at, excluded.updated_at)
+                                """, (r['id'], r['name'], r['report_json'], r['project_json'], r['created_at'], r['updated_at']))
+
+                    has_projects = src_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='projects'").fetchone()
+                    if has_projects:
+                        src_projects = src_conn.execute("SELECT * FROM projects WHERE id != 'current'").fetchall()
+                        with self.conn() as dest_conn:
+                            for p in src_projects:
+                                dest_conn.execute("""
+                                    INSERT INTO projects(id, name, app_theme, app_accent, ui_density, app_preferences_json, model_json, report_json, transform_json, security_json, data_sources_json, paginated_reports_json)
+                                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    ON CONFLICT(id) DO NOTHING
+                                """, (p['id'], p['name'], p['app_theme'], p['app_accent'], p['ui_density'], p['app_preferences_json'], p['model_json'], p['report_json'], p['transform_json'], p['security_json'], p['data_sources_json'], p['paginated_reports_json']))
+
+                    has_conns = src_conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='connections'").fetchone()
+                    if has_conns:
+                        src_conns = src_conn.execute("SELECT * FROM connections").fetchall()
+                        with self.conn() as dest_conn:
+                            for c in src_conns:
+                                dest_conn.execute("""
+                                    INSERT INTO connections(id, name, type, config_json, created_at, updated_at)
+                                    VALUES(?, ?, ?, ?, ?, ?)
+                                    ON CONFLICT(id) DO NOTHING
+                                """, (c['id'], c['name'], c['type'], c['config_json'], c['created_at'], c['updated_at']))
+
+                src_columnar = cand.parent / 'columnar'
+                dest_columnar = DATA / 'columnar'
+                if src_columnar.is_dir():
+                    dest_columnar.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    for pf in src_columnar.glob('*.parquet'):
+                        target_pf = dest_columnar / pf.name
+                        if not target_pf.exists() and pf.stat().st_size > 0:
+                            try:
+                                shutil.copy2(pf, target_pf)
+                            except Exception:
+                                pass
+            except Exception:
+                continue
+
+        self.backup_metadata()
+
     def get_project(self,pid='current'):
         with self.conn() as c:
             r=c.execute('SELECT * FROM projects WHERE id=?',(pid,)).fetchone()
@@ -187,7 +330,7 @@ class Store:
             c.execute("""INSERT INTO saved_reports(id,name,report_json,project_json,created_at,updated_at) VALUES(?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET name=excluded.name,report_json=excluded.report_json,project_json=COALESCE(excluded.project_json,saved_reports.project_json),updated_at=CURRENT_TIMESTAMP""",
             (report_id,name,json.dumps(report),project_json))
-        return self.get_report(report_id)
+        self.backup_metadata(); return self.get_report(report_id)
     def delete_report(self,report_id):
         with self.conn() as c:c.execute('DELETE FROM saved_reports WHERE id=?',(report_id,))
     def duplicate_report(self,report_id):
@@ -230,6 +373,18 @@ class Store:
         with self.conn() as c:c.execute('INSERT INTO audit(id,action,details_json) VALUES(?,?,?)',(uid(),action,json.dumps(details)))
     def audits(self):
         with self.conn() as c:return [dict(r) for r in c.execute('SELECT * FROM audit ORDER BY created_at DESC LIMIT 100')]
+
+    def get_map_geocode(self,query_key):
+        with self.conn() as c:
+            row=c.execute('SELECT * FROM map_geocode_cache WHERE query_key=?',(query_key,)).fetchone()
+            if not row:return None
+            item=dict(row);item['candidates']=json.loads(item.pop('candidates_json',None) or '[]');return item
+
+    def save_map_geocode(self,item):
+        with self.conn() as c:
+            c.execute("""INSERT INTO map_geocode_cache(query_key,query_text,status,latitude,longitude,display_name,candidates_json,updated_at)
+            VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(query_key) DO UPDATE SET query_text=excluded.query_text,status=excluded.status,latitude=excluded.latitude,longitude=excluded.longitude,display_name=excluded.display_name,candidates_json=excluded.candidates_json,updated_at=CURRENT_TIMESTAMP""",
+            (item['query_key'],item['query_text'],item['status'],item.get('latitude'),item.get('longitude'),item.get('display_name'),json.dumps(item.get('candidates',[]))))
 
     def list_users(self):
         with self.conn() as c:
