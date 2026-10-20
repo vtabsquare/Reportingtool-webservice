@@ -381,30 +381,33 @@ def compile_query(model,req,rls=()):
                 if not vals: return '1=0', []
                 return f"{field_sql} IN (" + ','.join('?' for _ in vals) + ")", list(vals)
             if op == 'top_n':
-                try: limit_n = max(1, int(val or 10))
-                except: limit_n = 10
+                try: limit_n = min(5000, max(1, int(val)))
+                except: raise ValueError('Top N requires a positive whole-number item count.')
                 direction = str(f.get('rankingDirection') or 'top').lower()
+                if direction not in ('top','bottom'):
+                    raise ValueError('Top N direction must be Top or Bottom.')
                 sort_dir = 'asc' if direction == 'bottom' else 'desc'
                 ranking_field = f.get('rankingField')
-                sub_meas = []
-                sub_sort = []
-                if ranking_field:
-                    sub_meas.append(ranking_field)
-                    sub_sort.append({'field': ranking_field, 'direction': sort_dir})
-                else:
-                    sub_sort.append({'field': f_field, 'direction': sort_dir})
+                if not ranking_field:
+                    raise ValueError('Top N requires a numeric field or measure in By value.')
                 
                 sub_filters = [of for of in filters if of is not f and of.get('operator') != 'top_n']
                 sub_req = {
                     'dimensions': [f_field],
-                    'measures': sub_meas,
+                    'measures': [ranking_field],
                     'filters': sub_filters,
-                    'sort': sub_sort,
-                    'limit': limit_n
+                    'sort': [],
+                    'limit': 50000
                 }
                 sub_sql, sub_params = compile_query(model, sub_req, rls)
                 alias = f"__topn_{len(wh)}"
-                return f"{field_sql} IN (SELECT {q(f_field)} FROM ({sub_sql}) {alias})", sub_params
+                ranked = (
+                    f"SELECT {q(f_field)} FROM ({sub_sql}) {alias} "
+                    f"WHERE {q(ranking_field)} IS NOT NULL "
+                    f"ORDER BY {q(ranking_field)} {sort_dir.upper()}, {q(f_field)} ASC "
+                    f"LIMIT {limit_n}"
+                )
+                return f"{field_sql} IN ({ranked})", sub_params
             if op in ('relative_date', 'relative_time'):
                 v = val if isinstance(val, dict) else {}
                 direction = str(v.get('direction', 'last')).lower()

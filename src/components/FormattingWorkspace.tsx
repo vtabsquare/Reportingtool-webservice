@@ -199,9 +199,60 @@ function MeasureConditionalFormat({visual,updateVisual}:{visual:Visual;updateVis
   </div>;
 }
 
+function MapColorGrading({visual,updateVisual}:{visual:Visual;updateVisual:Props['updateVisual']}){
+  const{project}=useStudio();
+  const measures=Object.keys(project?.model?.measures||{}).sort((a,b)=>a.localeCompare(b));
+  const mode=visual.format.mapColorScale==='rules'?'rules':'measure';
+  const selectedColorMeasure=visual.format.mapColorMeasure||visual.bindings.color?.[0]||'';
+  const colorMeasures=Array.from(new Set([selectedColorMeasure,...measures].filter(Boolean)));
+  const target=visual.format.mapMode==='filled'?'filled map areas':'map bubbles';
+  const setMethod=(next:'measure'|'rules')=>updateVisual(v=>{
+    v.format.mapColorScale=next;
+    if(next==='measure'){
+      const measure=v.format.mapColorMeasure||v.bindings.color?.[0]||'';
+      v.bindings.color=measure?[measure]:[];
+    }else{
+      v.bindings.color=[];
+    }
+  });
+  const setColorMeasure=(measure:string)=>updateVisual(v=>{v.format.mapColorMeasure=measure||undefined;v.bindings.color=measure?[measure]:[]});
+  const setNumber=(key:'mapRuleLow'|'mapRuleHigh',value:string)=>updateVisual(v=>{v.format[key]=Number(value)});
+  const setColor=(key:'mapRuleLowColor'|'mapRuleMidColor'|'mapRuleHighColor',value:string)=>updateVisual(v=>{v.format[key]=value});
+  const colorInput=(label:string,key:'mapRuleLowColor'|'mapRuleMidColor'|'mapRuleHighColor',fallback:string)=>{
+    const value=visual.format[key]||fallback;
+    return <label>{label}<div className="schemaColor"><input type="color" value={value} onChange={e=>setColor(key,e.target.value)}/><input value={value} onChange={e=>setColor(key,e.target.value)}/></div></label>;
+  };
+  return <div className="schemaDataFormat mapColorGradingEditor">
+    <label>Color method<select value={mode} onChange={e=>setMethod(e.target.value as 'measure'|'rules')}><option value="measure">Measure</option><option value="rules">Rules</option></select></label>
+    <div className="schemaEmptyNote">The selected color is applied automatically to {target}.</div>
+    {mode==='measure'?<>
+      <label>Color measure<select value={selectedColorMeasure} onChange={e=>setColorMeasure(e.target.value)}><option value="">Select color measure</option>{colorMeasures.map(measure=><option key={measure} value={measure}>{measure}</option>)}</select></label>
+      {!measures.length&&<div className="schemaEmptyNote">Create a color-returning measure first.</div>}
+      <small>The measure must return a CSS color such as #16A34A, #FACC15, or #DC2626. Low/middle/high colors belong only to Rules.</small>
+    </>:<>
+      <div className="schemaEmptyNote">Rules use the numeric field or measure already placed in Detail / value.</div>
+      <div className="conditionalRuleEditor">
+        <b>Low</b>
+        <label>Upper limit<input type="number" value={visual.format.mapRuleLow??0} onChange={e=>setNumber('mapRuleLow',e.target.value)}/></label>
+        {colorInput('Low color','mapRuleLowColor','#d64550')}
+      </div>
+      <div className="conditionalRuleEditor">
+        <b>Middle</b>
+        <small>Values above the low limit and below the high limit.</small>
+        {colorInput('Middle color','mapRuleMidColor','#facc15')}
+      </div>
+      <div className="conditionalRuleEditor">
+        <b>High</b>
+        <label>Lower limit<input type="number" value={visual.format.mapRuleHigh??100} onChange={e=>setNumber('mapRuleHigh',e.target.value)}/></label>
+        {colorInput('High color','mapRuleHighColor','#1aab40')}
+      </div>
+    </>}
+  </div>;
+}
+
 function Card({schema,visual,updateVisual,open,onToggle,categories}:{schema:FormattingCardSchema;visual:Visual;updateVisual:Props['updateVisual'];open:boolean;onToggle:()=>void;categories?:string[]}){
-  const reset=()=>updateVisual(v=>{if(schema.id==='conditionalFormatting'){v.format.tableConditionalRules={};return}if(schema.id==='measureConditionalFormatting'){v.format.conditionalFormatRules=[];return}schema.controls.forEach(control=>write(v,control.key,control.defaultValue))});
-  return <details className="formatSchemaCard" open={open} onToggle={e=>{if((e.currentTarget as HTMLDetailsElement).open!==open)onToggle()}}><summary><span><ChevronDown size={14}/><b>{schema.title}</b></span><button title={`Reset ${schema.title}`} onClick={event=>{event.preventDefault();event.stopPropagation();reset()}}><RotateCcw size={13}/></button></summary><div className="formatSchemaBody">{schema.description&&<p>{schema.description}</p>}{schema.id==='dataFormat'?<DataFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='individualCards'?<IndividualCardFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='seriesColors'?<SeriesColorFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='categoryColors'?<CategoryColorFormat visual={visual} updateVisual={updateVisual} categories={categories}/>:schema.id==='conditionalFormatting'?<TableConditionalFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='measureConditionalFormatting'?<MeasureConditionalFormat visual={visual} updateVisual={updateVisual}/>:schema.controls.map(control=><Control key={control.key} schema={control} visual={visual} updateVisual={updateVisual}/>)}</div></details>;
+  const reset=()=>updateVisual(v=>{if(schema.id==='conditionalFormatting'){v.format.tableConditionalRules={};return}if(schema.id==='measureConditionalFormatting'){v.format.conditionalFormatRules=[];return}if(schema.id==='mapAreas'){v.format.mapColorScale='measure';v.format.mapColorMeasure=undefined;v.format.mapRuleLow=0;v.format.mapRuleHigh=100;v.format.mapRuleLowColor='#d64550';v.format.mapRuleMidColor='#facc15';v.format.mapRuleHighColor='#1aab40';v.bindings.color=[];return}schema.controls.forEach(control=>write(v,control.key,control.defaultValue))});
+  return <details className="formatSchemaCard" open={open} onToggle={e=>{if((e.currentTarget as HTMLDetailsElement).open!==open)onToggle()}}><summary><span><ChevronDown size={14}/><b>{schema.title}</b></span><button title={`Reset ${schema.title}`} onClick={event=>{event.preventDefault();event.stopPropagation();reset()}}><RotateCcw size={13}/></button></summary><div className="formatSchemaBody">{schema.description&&<p>{schema.description}</p>}{schema.id==='dataFormat'?<DataFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='individualCards'?<IndividualCardFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='seriesColors'?<SeriesColorFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='categoryColors'?<CategoryColorFormat visual={visual} updateVisual={updateVisual} categories={categories}/>:schema.id==='conditionalFormatting'?<TableConditionalFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='measureConditionalFormatting'?<MeasureConditionalFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='mapAreas'?<MapColorGrading visual={visual} updateVisual={updateVisual}/>:schema.controls.map(control=><Control key={control.key} schema={control} visual={visual} updateVisual={updateVisual}/>)}</div></details>;
 }
 
 export default function FormattingWorkspace({visual,updateVisual,mode='format',multiSelect,multiSelectSameType,categories}:Props){

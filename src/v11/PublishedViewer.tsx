@@ -1,6 +1,6 @@
 import{useEffect,useMemo,useRef,useState}from'react';
 import{createPortal}from'react-dom';
-import{ChevronLeft,ChevronRight,ChevronDown,RefreshCcw,Maximize2,Minimize2,Home,CalendarDays,ShieldCheck,MonitorUp,Expand,Scaling,Eraser,BarChart3,PieChart,Table2,LayoutGrid,Filter,TrendingUp,MousePointerClick,FileDown,Presentation,Mail,FileText,Printer,Code2,QrCode,Star,Settings2,Share2,ArrowLeft,Download,FileArchive,Check,Copy,ExternalLink,Globe,Users,BellRing}from'lucide-react';
+import{ChevronLeft,ChevronRight,ChevronDown,RefreshCcw,Maximize2,Minimize2,Home,CalendarDays,ShieldCheck,MonitorUp,Expand,Scaling,Eraser,BarChart3,PieChart,Table2,LayoutGrid,Filter,TrendingUp,MousePointerClick,FileDown,Presentation,Mail,FileText,Printer,Code2,QrCode,Star,Settings2,Share2,ArrowLeft,Download,FileArchive,Check,Copy,ExternalLink,Globe,Users,BellRing,Search,X}from'lucide-react';
 import Chart from'../components/Chart';
 import PaginatedReportViewer from'./PaginatedReportViewer';
 import ReportAutomationDialog from'./ReportAutomationDialog';
@@ -181,10 +181,12 @@ export async function captureViewerPage(element:HTMLElement,width:number,height:
 }
 function ViewerVisual({v,result,loading,selected,onCrossFilter,onAction}:{v:Visual,result?:VisualQueryResult,loading:boolean,selected?:boolean,onCrossFilter:(f:VisualFilter|null)=>void,onAction:(v:Visual)=>void}){
  const rows=result?.rows||[],err=result?.error||'';
- const[focus,setFocus]=useState(false),[slicerSelected,setSlicerSelected]=useState<string[]>([]),[slicerSearch,setSlicerSearch]=useState('');
+ const[focus,setFocus]=useState(false),[slicerSelected,setSlicerSelected]=useState<string[]>([]),[slicerSearch,setSlicerSearch]=useState(''),[slicerDropdownOpen,setSlicerDropdownOpen]=useState(false);
+ const slicerDropdownRef=useRef<HTMLDivElement|null>(null);
  useEffect(()=>{const reset=()=>{setSlicerSelected([]);setSlicerSearch('')};window.addEventListener('vtab-reset-state',reset);return()=>window.removeEventListener('vtab-reset-state',reset)},[]);
+ useEffect(()=>{if(!slicerDropdownOpen)return;const close=(event:PointerEvent)=>{if(!slicerDropdownRef.current?.contains(event.target as Node))setSlicerDropdownOpen(false)};const escape=(event:KeyboardEvent)=>{if(event.key==='Escape')setSlicerDropdownOpen(false)};document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape)}},[slicerDropdownOpen]);
  const conditionalValues=result?.conditionalValues||{};
- const f:any={...(v.format||{}),...resolveConditionalFormat(v.format?.conditionalFormatRules,conditionalValues)},displayVisual={...v,format:f};const bg=f.background||'#fff';const dark=/^#0|^#1/.test(bg.toLowerCase());const accent=f.accent||({kpi:'#2563eb',card:'#16a34a',bar:'#2563eb',column:'#0ea5e9',line:'#16a34a',area:'#10b981',pie:'#f59e0b',donut:'#8b5cf6',gauge:'#16a34a',table:'#2563eb',matrix:'#4f46e5',slicer:'#e11d48'} as any)[v.type]||'#2563eb';
+ const f:any={...(v.format||{}),...(v.type==='map'?{}:resolveConditionalFormat(v.format?.conditionalFormatRules,conditionalValues))},displayVisual={...v,format:f};const bg=f.background||'#fff';const dark=/^#0|^#1/.test(bg.toLowerCase());const accent=f.accent||({kpi:'#2563eb',card:'#16a34a',bar:'#2563eb',column:'#0ea5e9',line:'#16a34a',area:'#10b981',pie:'#f59e0b',donut:'#8b5cf6',gauge:'#16a34a',table:'#2563eb',matrix:'#4f46e5',slicer:'#e11d48'} as any)[v.type]||'#2563eb';
  const transparency=f.backgroundEnabled===false?100:Math.max(0,Math.min(100,f.backgroundTransparency||0));
  const edges=f.borderEdges||{top:true,right:true,bottom:true,left:true};
  const border=f.borderVisible?`${f.borderWidth??1}px ${f.borderStyle||'solid'} ${f.borderColor||'#c8c8c8'}`:'0';
@@ -211,28 +213,25 @@ function ViewerVisual({v,result,loading,selected,onCrossFilter,onAction}:{v:Visu
     const options=allOptions.filter(x=>!slicerSearch||x.toLowerCase().includes(slicerSearch.toLowerCase()));
     const allSelected=allOptions.length>0&&allOptions.every(option=>slicerSelected.includes(option));
     const apply=(next:string[],isSelectAll?:boolean)=>{setSlicerSelected(next);if(isSelectAll||!next.length){onCrossFilter(null)}else{onCrossFilter({field,operator:next.length===1?'equals':'in',value:next.length===1?next[0]:next})}};
-    const choose=(value:string)=>apply(f.slicerSingleSelect?[value]:slicerSelected.includes(value)?slicerSelected.filter(x=>x!==value):[...slicerSelected,value]);
+    const choose=(value:string)=>{apply(f.slicerSingleSelect?[value]:slicerSelected.includes(value)?slicerSelected.filter(x=>x!==value):[...slicerSelected,value]);if(f.slicerSingleSelect)setSlicerDropdownOpen(false)};
     const tilesPerRow=f.tilesPerRow||3;
     const tilesPerColumn=f.tilesPerColumn||0;
     const gridStyle:any={gridTemplateColumns:`repeat(${tilesPerRow}, 1fr)`};
     if(tilesPerColumn>0)gridStyle.gridTemplateRows=`repeat(${tilesPerColumn}, 1fr)`;
     return (
       <div className="viewerSlicerContents" style={{flex:1,display:'flex',flexDirection:'column',justifyContent:'center',width:'100%',boxSizing:'border-box',minHeight:0,padding:'2px 8px'}}>
-        {mode!=='dropdown'&&f.slicerSearch&&<input className="slicerDropdown viewerSlicerSearch" aria-label="Search slicer values" placeholder="Search" value={slicerSearch} onChange={e=>setSlicerSearch(e.target.value)}/>}
-        {mode==='dropdown'?(
-          f.slicerMultiSelect?(
-            <div className="slicerDropdownMulti" style={{background:f.tableBackground||'#ffffff',color:f.tableTextColor||'#242424',fontSize:f.tableFontSize||11,textAlign:(f.tableTextAlign as any)||'left',width:'100%',margin:0,boxSizing:'border-box'}}>
-              {f.slicerSelectAll&&<label className="slicerListItem" style={{borderBottom:'1px solid #e2e8f0',marginBottom:4,paddingBottom:4}}><input type="checkbox" checked={allSelected} onChange={e=>{e.stopPropagation();apply(allSelected?[]:allOptions,!allSelected)}}/><span>Select all</span></label>}
-              {options.map(value=><label key={value} className="slicerListItem"><input type="checkbox" checked={slicerSelected.includes(value)} onChange={e=>{e.stopPropagation();choose(value)}}/><span>{value}</span></label>)}
+        {mode!=='dropdown'&&f.slicerSearch&&<div className="slicerSearchRow slicerInlineSearch"><Search size={14}/><input aria-label="Search slicer values" placeholder="Search values" value={slicerSearch} onChange={e=>setSlicerSearch(e.target.value)}/>{slicerSearch&&<button type="button" title="Clear search" onClick={()=>setSlicerSearch('')}><X size={13}/></button>}</div>}
+        {mode==='dropdown'?<div className="slicerDropdownShell" ref={slicerDropdownRef}>
+          <button type="button" className="slicerDropdownTrigger" aria-haspopup="listbox" aria-expanded={slicerDropdownOpen} onClick={()=>setSlicerDropdownOpen(open=>!open)}><span>{!slicerSelected.length||allSelected?'All':slicerSelected.length===1?slicerSelected[0]:slicerSelected.length<=2?slicerSelected.join(', '):'(Multiple items)'}</span><ChevronDown size={15}/></button>
+          {slicerDropdownOpen&&<div className="slicerDropdownMenu" role="listbox" aria-multiselectable={!f.slicerSingleSelect}>
+            {f.slicerSearch&&<div className="slicerSearchRow"><Search size={14}/><input value={slicerSearch} onChange={e=>setSlicerSearch(e.target.value)} placeholder="Search values" aria-label="Search slicer values" autoFocus/>{slicerSearch&&<button type="button" title="Clear search" onClick={()=>setSlicerSearch('')}><X size={13}/></button>}</div>}
+            <div className="slicerDropdownOptions customScrollbar">
+              {f.slicerSelectAll&&!f.slicerSingleSelect&&<label className="slicerListItem slicerSelectAll"><input type="checkbox" checked={allSelected} onChange={e=>{e.stopPropagation();apply(allSelected?[]:allOptions,!allSelected)}}/><span>Select all</span></label>}
+              {options.map(value=><label key={value} className={'slicerListItem'+(slicerSelected.includes(value)?' active':'')}><input type={(f.slicerSingleSelect||!f.slicerMultiSelect)?'radio':'checkbox'} checked={slicerSelected.includes(value)} onChange={e=>{e.stopPropagation();choose(value)}}/><span>{value}</span></label>)}
+              {!options.length&&<div className="slicerNoResults">No matching values</div>}
             </div>
-          ):(
-            <select aria-label={v.title||field||'Report filter'} className="slicerDropdown viewerSlicerDropdown" style={{width:'100%',margin:0,height:28,minHeight:28,color:f.tableTextColor,fontSize:f.tableFontSize||11,background:f.tableBackground||'#fff',textAlign:f.tableTextAlign,boxSizing:'border-box'}} value={allSelected?'__all__':slicerSelected[0]||''} onChange={e=>{if(e.target.value==='__all__'){apply(allOptions,true)}else if(e.target.value){apply([e.target.value])}else{apply([])}}}>
-              <option value="" style={{background:f.tableBackground||'#ffffff',color:f.tableTextColor||'inherit'}}>Select…</option>
-              {f.slicerSelectAll&&<option value="__all__" style={{background:f.tableBackground||'#ffffff',color:f.tableTextColor||'inherit'}}>Select all</option>}
-              {options.map(value=><option key={value} value={value} style={{background:f.tableBackground||'#ffffff',color:f.tableTextColor||'inherit'}}>{value}</option>)}
-            </select>
-          )
-        ):mode==='list'?(
+          </div>}
+        </div>:mode==='list'?(
           <div className={'slicerList slicer-list orientation-'+(f.slicerOrientation||'vertical')} style={{flex:1,overflow:'auto','--slicer-text':f.tableTextColor||'#242424','--slicer-size':`${f.tableFontSize||11}px`,'--slicer-bg':f.tableBackground||'#ffffff','--slicer-alt':f.tableAlternatingRows===false?(f.tableBackground||'#ffffff'):(f.tableAlternateColor||'#f8fafc'),textAlign:f.tableTextAlign} as any}>
             {f.slicerSelectAll&&!f.slicerSingleSelect&&<label className="slicerListItem"><input type="checkbox" checked={allSelected} onChange={e=>{e.stopPropagation();apply(allSelected?[]:allOptions,!allSelected)}}/><span>Select all</span></label>}
             {options.map(value=><label key={value} className="slicerListItem"><input type={(f.slicerSingleSelect||!f.slicerMultiSelect)?'radio':'checkbox'} checked={slicerSelected.includes(value)} onChange={e=>{e.stopPropagation();choose(value)}}/><span>{value}</span></label>)}
@@ -251,7 +250,7 @@ function ViewerVisual({v,result,loading,selected,onCrossFilter,onAction}:{v:Visu
     width:'100%',
     height:'100%',
     boxSizing:'border-box',
-    overflow:'hidden',
+    overflow:v.type==='slicer'&&slicerDropdownOpen?'visible':'hidden',
     display:'flex',
     flexDirection:'column',
     background,
@@ -334,8 +333,9 @@ function ViewerVisual({v,result,loading,selected,onCrossFilter,onAction}:{v:Visu
     '--slicer-alt':f.tableAlternatingRows===false?(f.tableBackground||'#ffffff'):(f.tableAlternateColor||'#f8fafc'),
     '--slicer-row-padding':`${f.tableRowPadding??8}px`
   };
-  const card=<div className={`viewerVisual viewerVisual-${v.type} visualCard ${v.type==='slicer'?'slicerVisual':''} ${responsiveSizeClass}`} data-export-state={loading?'loading':err?'error':'ready'} data-visual-title={v.title||v.type} data-export-narrative={JSON.stringify(narrative)} data-export-insights={JSON.stringify(narrative.points)} style={cardStyle}>
-    {f.showTitle!==false&&<div className="viewerVisualTitle visualTitle" style={{background:titleBackground,...titleTextStyle}}><div className="viewerVisualTitleLabel visualTitleText" style={{flex:1,minWidth:0,textAlign:f.titleAlignment||'left',display:'flex',flexDirection:'column',alignItems:'stretch'}}><span style={{...titleTextStyle,display:'block',width:'100%',textAlign:f.titleAlignment||'left'}}>{v.title}</span>{f.subtitleVisible&&f.subtitle&&<small style={{...subtitleTextStyle,display:'block',width:'100%',textAlign:f.subtitleAlignment||f.titleAlignment||'left'}}>{f.subtitle}</small>}</div>{f.visualHeader!==false&&<button className="viewerVisualFocus" onClick={()=>setFocus(true)} title="Focus visual"><Maximize2 size={13}/></button>}</div>}
+  const clearSlicer=()=>{setSlicerSelected([]);setSlicerSearch('');setSlicerDropdownOpen(false);onCrossFilter(null)};
+  const card=<div className={`viewerVisual viewerVisual-${v.type} visualCard ${v.type==='slicer'?'slicerVisual':''} ${slicerDropdownOpen?'slicerDropdownOpen':''} ${responsiveSizeClass}`} data-export-state={loading?'loading':err?'error':'ready'} data-visual-title={v.title||v.type} data-export-narrative={JSON.stringify(narrative)} data-export-insights={JSON.stringify(narrative.points)} style={cardStyle}>
+    {f.showTitle!==false&&<div className="viewerVisualTitle visualTitle" style={{background:titleBackground,...titleTextStyle}}><div className="viewerVisualTitleLabel visualTitleText" style={{flex:1,minWidth:0,textAlign:f.titleAlignment||'left',display:'flex',flexDirection:'column',alignItems:'stretch'}}><span style={{...titleTextStyle,display:'block',width:'100%',textAlign:f.titleAlignment||'left'}}>{v.title}</span>{f.subtitleVisible&&f.subtitle&&<small style={{...subtitleTextStyle,display:'block',width:'100%',textAlign:f.subtitleAlignment||f.titleAlignment||'left'}}>{f.subtitle}</small>}</div>{v.type==='slicer'&&!!slicerSelected.length&&<button className="slicerClearButton" title="Clear slicer" onClick={clearSlicer}><Eraser size={13}/></button>}{f.visualHeader!==false&&<button className="viewerVisualFocus" onClick={()=>setFocus(true)} title="Focus visual"><Maximize2 size={13}/></button>}</div>}
     <div className="viewerVisualBody" style={{paddingTop:f.paddingTop??f.padding??8,paddingRight:f.paddingRight??f.padding??8,paddingBottom:f.paddingBottom??f.padding??8,paddingLeft:f.paddingLeft??f.padding??8}}>{loading?<div className="viewerVisualLoading" role="status"><span className="viewerSpinner"/><b>Loading visual data…</b></div>:err?<div className="viewerError">{err}</div>:content}</div>
   </div>;
   return <>{card}{focus&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>setFocus(false)}><div className="visualFocusPanel viewerFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>FOCUS MODE</small><b>{v.title}</b></div><button onClick={()=>setFocus(false)}>Close</button></div><div className="visualFocusBody">{content}</div></div></div>,document.body)}</>;

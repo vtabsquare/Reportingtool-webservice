@@ -16,7 +16,7 @@ function rectsOverlap(a:Geometry,b:Geometry):boolean{
 
 const MIN_W=40,MIN_H=30,GRID=16;
 const snap=(value:number,enabled:boolean)=>enabled?Math.round(value/GRID)*GRID:Math.round(value);
-const interactive='input,select,textarea,a,[contenteditable="true"],.slicerList,.visualHeaderActions,.richTextToolbar,button:not(.buttonVisualOnly)';
+const interactive='input,select,textarea,a,[contenteditable="true"],.slicerList,.slicerDropdownTrigger,.slicerDropdownMenu,.slicerSearchRow,.slicerListItem,.visualHeaderActions,.richTextToolbar,button:not(.buttonVisualOnly)';
 
 export default function CanvasObjectInteractionManager({visuals,selectedIds,primaryId,scale,canvasWidth,canvasHeight,snapToGrid,preventOverlap,onSelect,onGeometry,render}:Props){
   const[state,setState]=useState<CanvasInteractionState>(primaryId?'OBJECT_SELECTED':'IDLE');

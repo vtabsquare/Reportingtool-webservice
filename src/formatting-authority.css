@@ -134,3 +134,4 @@ div[style*="z-index: 9999999"] {
   max-width: 420px !important;
   pointer-events: none !important;
 }
+.canvasObject:has(.menuOpen),.canvasObject:has(.slicerDropdownOpen){overflow:visible!important;z-index:99999!important}

@@ -17,6 +17,7 @@ import {createPaginatedReport,ensurePaginatedReports} from '../paginated';
 import {resolveConditionalFormat} from '../conditionalFormatting';
 import {removeReportPage} from '../pageManagement';
 import {parseSpatialFile} from '../mapSpatial';
+import {inferMapRole} from '../mapGeography';
 import type {NumberFormat,Page,PageSettings,Visual,VisualActionStep,VisualFilter,VisualFormat,VisualType} from '../types';
 
 const visualTypes:VisualType[]=['textbox','image','shape','button','kpi','card','multirowcard','bar','column','stackedbar','stackedcolumn','line','area','combo','pie','donut','treemap','funnel','waterfall','scatter','bubble','radar','heatmap','histogram','boxplot','gauge','progress','map','table','matrix','slicer'];
@@ -53,7 +54,7 @@ const VISUAL_PROFILES:Record<VisualType,VisualProfile>={
   progress:{w:4,h:3,wells:[{key:'values',title:'Value',accept:'value'},{key:'min',title:'Minimum value',accept:'value'},{key:'max',title:'Maximum value',accept:'value'},{key:'target',title:'Target value',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],numberFormat:true,dataColor:true,tooltips:true},
   gauge:{w:4,h:4,wells:[{key:'values',title:'Value',accept:'value'},{key:'min',title:'Minimum value',accept:'value'},{key:'max',title:'Maximum value',accept:'value'},{key:'target',title:'Target value',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],numberFormat:true,dataColor:true,tooltips:true},
   slicer:{w:3,h:5,wells:[{key:'axis',title:'Field',accept:'field'}]},
-  map:{w:7,h:6,wells:[{key:'location',title:'Location',accept:'field'},{key:'latitude',title:'Latitude',accept:'field'},{key:'longitude',title:'Longitude',accept:'field'},{key:'geometry',title:'Geometry (GeoJSON)',accept:'field'},{key:'detail',title:'Detail',accept:'field'},{key:'color',title:'Color / Category',accept:'field'},{key:'size',title:'Size',accept:'value'},{key:'label',title:'Label',accept:'field'},{key:'path',title:'Path / Route',accept:'field'},{key:'tooltips',title:'Tooltips',accept:'value'},{key:'country',title:'Country (geocoding)',accept:'field'},{key:'region',title:'Region (geocoding)',accept:'field'},{key:'postalCode',title:'Postal code (geocoding)',accept:'field'}],legend:true,tooltips:true,numberFormat:true,dataColor:true},
+  map:{w:7,h:6,wells:[{key:'location',title:'Location',accept:'field'},{key:'latitude',title:'Latitude',accept:'field'},{key:'longitude',title:'Longitude',accept:'field'},{key:'detail',title:'Detail / value',accept:'value'},{key:'size',title:'Bubble size',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],legend:true,tooltips:true,numberFormat:true,dataColor:true},
   table:{w:8,h:6,wells:[{key:'axis',title:'Columns / Categories',accept:'field'},{key:'values',title:'Values',accept:'value'},{key:'tooltips',title:'Additional values',accept:'value'}],numberFormat:true},
   matrix:{w:9,h:6,wells:[{key:'axis',title:'Rows',accept:'field'},{key:'legend',title:'Columns / Series',accept:'field'},{key:'values',title:'Values',accept:'value'}],numberFormat:true},
   pie:{w:5,h:5,wells:[{key:'axis',title:'Legend / Category',accept:'field'},{key:'values',title:'Values',accept:'value'},{key:'tooltips',title:'Tooltips',accept:'value'}],dataLabels:true,legend:true,tooltips:true,numberFormat:true,dataColor:true},
@@ -310,7 +311,7 @@ function formatDefaults(v:Visual){
   v.format=v.format||({} as VisualFormat);
   v.format.accent=v.format.accent||'#118dff';v.format.fontSize=v.format.fontSize||12;
   if(v.format.showTitle===undefined)v.format.showTitle=true;if(v.format.dataLabels===undefined)v.format.dataLabels=false;
-  v.format.background=v.format.background||'#ffffff';v.format.fontFamily=v.format.fontFamily||'Segoe UI';v.format.fieldFormats=v.format.fieldFormats||{};
+  v.format.background=v.format.background||'#ffffff';v.format.fontFamily=v.format.fontFamily||'Segoe UI';v.format.fieldFormats=v.format.fieldFormats||{};v.format.displayUnits=v.format.displayUnits||'auto';v.format.displayUnitDecimals=v.format.displayUnitDecimals??2;
   v.format.titleFontFamily=v.format.titleFontFamily||v.format.fontFamily||'Segoe UI';v.format.titleFontSize=v.format.titleFontSize||12;v.format.titleColor=v.format.titleColor||'#242424';if(v.format.titleBold===undefined)v.format.titleBold=v.format.titleFontWeight===undefined?true:v.format.titleFontWeight>=600;v.format.titleFontWeight=v.format.titleBold?700:400;v.format.subtitle=v.format.subtitle||'';if(v.format.subtitleVisible===undefined)v.format.subtitleVisible=false;v.format.subtitleFontFamily=v.format.subtitleFontFamily||v.format.titleFontFamily;v.format.subtitleColor=v.format.subtitleColor||'#616161';v.format.subtitleFontSize=v.format.subtitleFontSize||10;if(v.format.subtitleBold===undefined)v.format.subtitleBold=(v.format.subtitleFontWeight||400)>=600;
   v.format.titleAlignment=v.format.titleAlignment||'left';v.format.titleFontStyle=v.format.titleFontStyle||'normal';v.format.titleUnderline=!!v.format.titleUnderline;if(v.format.titleWrap===undefined)v.format.titleWrap=true;v.format.subtitleFontWeight=v.format.subtitleFontWeight||400;v.format.subtitleAlignment=v.format.subtitleAlignment||v.format.titleAlignment;v.format.subtitleFontStyle=v.format.subtitleFontStyle||'normal';v.format.subtitleUnderline=!!v.format.subtitleUnderline;if(v.format.subtitleWrap===undefined)v.format.subtitleWrap=true;
   v.format.labelFontSize=v.format.labelFontSize||10;v.format.labelColor=v.format.labelColor||'#242424';v.format.labelPosition=v.format.labelPosition||'top';
@@ -332,11 +333,11 @@ function formatDefaults(v:Visual){
   v.format.shapeStroke=v.format.shapeStroke||'#2563eb';v.format.shapeStrokeWidth=v.format.shapeStrokeWidth??2;v.format.shapeStrokeStyle=v.format.shapeStrokeStyle||'solid';v.format.shapeCornerRadius=v.format.shapeCornerRadius??18;
   if(v.type==='shape'){v.format.showTitle=false;v.format.visualHeader=false;v.format.backgroundEnabled=false;v.format.borderVisible=false;v.format.padding=0;v.format.paddingTop=0;v.format.paddingRight=0;v.format.paddingBottom=0;v.format.paddingLeft=0}
   if(v.type==='map'){
-    v.format.mapMode=v.format.mapMode||'symbol';v.format.mapStyle=v.format.mapStyle||'light';if(v.format.mapAutoFit===undefined)v.format.mapAutoFit=true;if(v.format.mapNavigation===undefined)v.format.mapNavigation=true;if(v.format.mapClustering===undefined)v.format.mapClustering=true;
+    v.format.mapMode=v.format.mapMode==='filled'?'filled':'bubble';v.format.mapStyle=v.format.mapStyle||'light';v.format.mapGeographyScope=v.format.mapGeographyScope||'auto';v.format.mapDefaultCountry=v.format.mapDefaultCountry||'India';if(v.format.mapAutoFit===undefined)v.format.mapAutoFit=true;if(v.format.mapNavigation===undefined)v.format.mapNavigation=true;if(v.format.mapClustering===undefined)v.format.mapClustering=true;
     v.format.mapClusterRadius=v.format.mapClusterRadius??45;v.format.mapMarkerSize=v.format.mapMarkerSize??9;v.format.mapMarkerMinSize=v.format.mapMarkerMinSize??5;v.format.mapMarkerMaxSize=v.format.mapMarkerMaxSize??24;v.format.mapMarkerOpacity=v.format.mapMarkerOpacity??85;v.format.mapMarkerColor=v.format.mapMarkerColor||v.format.accent;
-    v.format.mapBorderColor=v.format.mapBorderColor||'#ffffff';v.format.mapBorderWidth=v.format.mapBorderWidth??1;v.format.mapFillColor=v.format.mapFillColor||v.format.accent;v.format.mapFillOpacity=v.format.mapFillOpacity??65;v.format.mapMissingColor=v.format.mapMissingColor||'#cbd5e1';
-    v.format.mapHeatRadius=v.format.mapHeatRadius??24;v.format.mapHeatIntensity=v.format.mapHeatIntensity??1;v.format.mapHeatOpacity=v.format.mapHeatOpacity??80;v.format.mapLineColor=v.format.mapLineColor||v.format.accent;v.format.mapLineWidth=v.format.mapLineWidth??3;v.format.mapLineOpacity=v.format.mapLineOpacity??90;
-    if(v.format.mapLabels===undefined)v.format.mapLabels=true;v.format.mapLabelColor=v.format.mapLabelColor||'#1f2937';v.format.mapLabelSize=v.format.mapLabelSize??11;if(v.format.mapAllowOverlap===undefined)v.format.mapAllowOverlap=false;v.format.mapSourceCrs=v.format.mapSourceCrs||'EPSG:4326';
+    v.format.mapBorderColor=v.format.mapBorderColor||'#ffffff';v.format.mapBorderWidth=v.format.mapBorderWidth??1;v.format.mapFillColor=v.format.mapFillColor||v.format.accent;v.format.mapFillOpacity=v.format.mapFillOpacity??78;v.format.mapMissingColor=v.format.mapMissingColor||'#e8eef4';v.format.mapColorScale=['rules','threshold'].includes(v.format.mapColorScale||'')?'rules':'measure';v.format.mapMinColor=v.format.mapMinColor||'#d64550';v.format.mapMidColor=v.format.mapMidColor||'#facc15';v.format.mapMaxColor=v.format.mapMaxColor||'#1aab40';v.format.mapRuleLow=v.format.mapRuleLow??0;v.format.mapRuleHigh=v.format.mapRuleHigh??100;v.format.mapRuleLowColor=v.format.mapRuleLowColor||'#d64550';v.format.mapRuleMidColor=v.format.mapRuleMidColor||'#facc15';v.format.mapRuleHighColor=v.format.mapRuleHighColor||'#1aab40';
+    v.format.mapHeatColor=v.format.mapHeatColor||'#ef4444';v.format.mapHeatRadius=v.format.mapHeatRadius??24;v.format.mapHeatIntensity=v.format.mapHeatIntensity??1;v.format.mapHeatOpacity=v.format.mapHeatOpacity??80;v.format.mapLineColor=v.format.mapLineColor||v.format.accent;v.format.mapLineWidth=v.format.mapLineWidth??3;v.format.mapLineOpacity=v.format.mapLineOpacity??90;
+    if(v.format.mapLabels===undefined)v.format.mapLabels=true;if(v.format.mapCountryLabels===undefined)v.format.mapCountryLabels=true;v.format.mapLabelColor=v.format.mapLabelColor||'#1f2937';v.format.mapLabelSize=v.format.mapLabelSize??11;if(v.format.mapAllowOverlap===undefined)v.format.mapAllowOverlap=false;v.format.mapSourceCrs=v.format.mapSourceCrs||'EPSG:4326';
   }
   v.format.cardsPerRow=v.format.cardsPerRow||2;if(v.format.cardAutoFit===undefined)v.format.cardAutoFit=true;v.format.cardMinWidth=v.format.cardMinWidth||150;v.format.cardMinHeight=v.format.cardMinHeight||92;v.format.cardGapX=v.format.cardGapX??10;v.format.cardGapY=v.format.cardGapY??10;v.format.cardPadding=v.format.cardPadding??12;v.format.cardHorizontalAlign=v.format.cardHorizontalAlign||'left';v.format.cardVerticalAlign=v.format.cardVerticalAlign||'middle';v.format.cardTitlePosition=v.format.cardTitlePosition||'top';v.format.cardValuePosition=v.format.cardValuePosition||'middle';v.format.cardIconPosition=v.format.cardIconPosition||'left';v.format.cardIconSize=v.format.cardIconSize||34;
   return v;
@@ -451,9 +452,10 @@ function RichTextBox({v,selected,onSelect,onChange,style,designerHandle,menuNode
 }
 
 function VisualCard({v,onSelect,selected,actionSelected,roleId,extraFilters,onSlicer,onChange,onDuplicate,onDelete,onAction,model,project,activeInteractionFilter,onDrillThrough,onCategoriesLoad}:{v:Visual,onSelect:(additive?:boolean)=>void,selected:boolean,actionSelected?:boolean,roleId?:string|null,extraFilters:VisualFilter[],onSlicer:(f:VisualFilter|null)=>void,onChange:(fn:(v:Visual)=>void)=>void,onDuplicate:()=>void,onDelete:()=>void,onAction:(v:Visual)=>void,model:any,project:any,activeInteractionFilter?:VisualFilter,onDrillThrough?:(pageId:string, filter:VisualFilter)=>void,onCategoriesLoad?:(id:string,cats:string[])=>void}){
-  const[rows,setRows]=useState<any[]>([]),[err,setErr]=useState(''),[menu,setMenu]=useState(false),[focus,setFocus]=useState(false),[showData,setShowData]=useState(false),[slicerSelected,setSlicerSelected]=useState<string[]>([]),[slicerSearch,setSlicerSearch]=useState(''),[conditionalValues,setConditionalValues]=useState<Record<string,any>>({});formatDefaults(v);
+  const[rows,setRows]=useState<any[]>([]),[err,setErr]=useState(''),[menu,setMenu]=useState(false),[menuAnchor,setMenuAnchor]=useState<DOMRect|null>(null),[focus,setFocus]=useState(false),[showData,setShowData]=useState(false),[slicerSelected,setSlicerSelected]=useState<string[]>([]),[slicerSearch,setSlicerSearch]=useState(''),[slicerDropdownOpen,setSlicerDropdownOpen]=useState(false),[conditionalValues,setConditionalValues]=useState<Record<string,any>>({});formatDefaults(v);
+  const slicerDropdownRef=useRef<HTMLDivElement|null>(null);
   const capability=visualProfile(v.type);
-  const hasDataBindings=v.type==='map'?!!((v.bindings.location||[]).length+Math.min((v.bindings.latitude||[]).length,(v.bindings.longitude||[]).length)+(v.bindings.geometry||[]).length+(v.format.mapCustomGeometry?.features?.length||0)):v.type==='slicer'?!!(v.bindings.axis||[]).length:['table','matrix'].includes(v.type)?!!((v.bindings.axis||[]).length+(v.bindings.values||[]).length):!!(v.bindings.values||[]).length;
+  const hasDataBindings=v.type==='map'?!!((v.bindings.location||[]).length+(v.bindings.country||[]).length+(v.bindings.region||[]).length+(v.bindings.postalCode||[]).length+Math.min((v.bindings.latitude||[]).length,(v.bindings.longitude||[]).length)+(v.bindings.geometry||[]).length+(v.format.mapCustomGeometry?.features?.length||0)):v.type==='slicer'?!!(v.bindings.axis||[]).length:['table','matrix'].includes(v.type)?!!((v.bindings.axis||[]).length+(v.bindings.values||[]).length):!!(v.bindings.values||[]).length;
   // The caller excludes this slicer's own interaction filter while preserving report/page/other-slicer context.
   const slicerExtraFilters=extraFilters; // the caller already removes this slicer's own filter; keep page/report/other-slicer context
   useEffect(()=>{if(v.type==='textbox'||v.type==='button'||v.type==='image'||v.type==='shape'){setRows([]);setErr('');return}if(!hasDataBindings){setRows([]);return}
@@ -464,9 +466,11 @@ function VisualCard({v,onSelect,selected,actionSelected,roleId,extraFilters,onSl
     else if(activeInteractionFilter.operator==='in') setSlicerSelected(activeInteractionFilter.value as string[]);
     else if(activeInteractionFilter.operator==='equals') setSlicerSelected([activeInteractionFilter.value as string]);
   },[activeInteractionFilter]);
-  useEffect(()=>{if(!menu)return;const close=()=>setMenu(false);document.addEventListener('pointerdown',close);return()=>document.removeEventListener('pointerdown',close)},[menu]);
+  const closeMenu=()=>{setMenu(false);setMenuAnchor(null)};
+  useEffect(()=>{if(!menu)return;const close=(event:Event)=>{const target=event.target as HTMLElement|null;if(target?.closest('.visualContextMenu,.visualMenuButton'))return;closeMenu()};const reposition=()=>closeMenu();document.addEventListener('pointerdown',close);window.addEventListener('resize',reposition);window.addEventListener('scroll',reposition,true);return()=>{document.removeEventListener('pointerdown',close);window.removeEventListener('resize',reposition);window.removeEventListener('scroll',reposition,true)}},[menu]);
+  useEffect(()=>{if(!slicerDropdownOpen)return;const close=(event:PointerEvent)=>{if(!slicerDropdownRef.current?.contains(event.target as Node))setSlicerDropdownOpen(false)};const escape=(event:KeyboardEvent)=>{if(event.key==='Escape')setSlicerDropdownOpen(false)};document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape)}},[slicerDropdownOpen]);
   useEffect(()=>{
-    const visualMeasures=(v.format.conditionalFormatRules||[]).filter(rule=>rule.enabled!==false&&rule.measure).map(rule=>rule.measure);
+    const visualMeasures=v.type==='map'?[]:(v.format.conditionalFormatRules||[]).filter(rule=>rule.enabled!==false&&rule.measure).map(rule=>rule.measure);
     const tableMeasures=Object.values(v.format.tableConditionalRules||{}).filter(rule=>rule.enabled!==false&&rule.formatBy==='fieldValue'&&rule.colorMeasure).map(rule=>rule.colorMeasure!);
     const measures=Array.from(new Set([...visualMeasures,...tableMeasures]));
     if(!measures.length){setConditionalValues({});return}
@@ -499,7 +503,10 @@ function VisualCard({v,onSelect,selected,actionSelected,roleId,extraFilters,onSl
     }
   }, [v.type, v.format.slicerSingleSelect, slicerOptions.length, slicerSelected, slicerAxis, onSlicer]);
 
-  const displayFormat={...v.format,...resolveConditionalFormat(v.format.conditionalFormatRules,conditionalValues)};
+  // Maps own their per-region/per-bubble color pipeline. Generic visual-level
+  // conditional formatting is intentionally ignored for maps so it cannot
+  // conflict with Color grading or a bound color-returning measure.
+  const displayFormat={...v.format,...(v.type==='map'?{}:resolveConditionalFormat(v.format.conditionalFormatRules,conditionalValues))};
   const displayVisual={...v,format:displayFormat};
   const bg=displayFormat.background||'#0d1724', trans=displayFormat.backgroundEnabled===false?100:Math.max(0,Math.min(100,displayFormat.backgroundTransparency||0));
   const titleBg=displayFormat.titleBackground||'#ffffff',titleTrans=displayFormat.titleBackgroundEnabled===false?100:Math.max(0,Math.min(100,displayFormat.titleBackgroundTransparency||0));
@@ -548,10 +555,18 @@ const handlePointClick = (field: string, value: any) => {
         onSlicer({ field, operator: 'equals', value });
       }
     };
-    const setSort=(field:string,direction:'asc'|'desc')=>{if(field)onChange(x=>x.sort=[{field,direction}]);setMenu(false)};
-    const clearFilter=()=>{onChange(x=>x.filters=[]);setMenu(false)};
+    const setSort=(field:string,direction:'asc'|'desc')=>{if(field)onChange(x=>x.sort=[{field,direction}]);closeMenu()};
+    const clearFilter=()=>{onChange(x=>x.filters=[]);closeMenu()};
     const drillPath = (v.drillFilters || []).map((f, i) => <span key={i} style={{cursor: "pointer", color: "#2563eb"}} onClick={() => onChange(x => { x.drillLevel = i; x.drillFilters = x.drillFilters!.slice(0, i); })}> {f.value} &gt; </span>);
     const targetPages = activeInteractionFilter ? (project.report.pages||[]).filter((p:Page) => p.id !== project.report.activePageId && p.drillThroughFields?.includes(activeInteractionFilter.field)) : [];
+    const portalStyle:React.CSSProperties=(()=>{
+      if(!menuAnchor)return{position:'fixed',right:10,top:50,zIndex:100000};
+      const estimatedHeight=420,spaceBelow=window.innerHeight-menuAnchor.bottom,spaceAbove=menuAnchor.top;
+      const position:React.CSSProperties={position:'fixed',zIndex:100000,maxHeight:Math.max(120,Math.min(estimatedHeight,Math.max(spaceBelow,spaceAbove)-16))};
+      if(menuAnchor.right<250)position.left=Math.max(8,menuAnchor.left);else position.right=Math.max(8,window.innerWidth-menuAnchor.right);
+      if(spaceBelow<280&&spaceAbove>spaceBelow)position.bottom=Math.max(8,window.innerHeight-menuAnchor.top+4);else position.top=Math.max(8,menuAnchor.bottom+4);
+      return position;
+    })();
     const menuNode=<div className="visualHeaderActions">
       {(v.bindings.axis?.length||0)>1&&v.format.headerDrillIcon!==false&&<div className="drillControls" title="Drill controls">
         <button disabled={(v.drillLevel||0)<=0} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();drillUp()}} title="Drill up"><ArrowUpCircle size={15}/></button>
@@ -564,27 +579,27 @@ const handlePointClick = (field: string, value: any) => {
     </div>}
     <div className="visualMenuWrap">
     {v.format.headerFocusIcon!==false&&<button className="visualMenuButton" title="Focus mode" onClick={e=>{e.preventDefault();e.stopPropagation();setFocus(true)}}><Maximize2 size={15}/></button>}
-    {v.format.headerMoreIcon!==false&&<button className="visualMenuButton" title="More options" onClick={e=>{e.preventDefault();e.stopPropagation();onSelect(false);setMenu(x=>!x)}}><MoreHorizontal size={17}/></button>}
-    {menu&&<div className="visualContextMenu" onPointerDown={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+    {v.format.headerMoreIcon!==false&&<button className="visualMenuButton" title="More options" onClick={e=>{e.preventDefault();e.stopPropagation();onSelect(false);if(menu)closeMenu();else{setMenuAnchor(e.currentTarget.getBoundingClientRect());setMenu(true)}}}><MoreHorizontal size={17}/></button>}
+    {menu&&menuAnchor&&createPortal(<div className="visualContextMenu visualContextMenuPortal" style={portalStyle} onPointerDown={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
       {axisSortField&&<button onClick={()=>setSort(axisSortField,'asc')}><ArrowUpAZ size={14}/>Sort category ascending</button>}
       {axisSortField&&<button onClick={()=>setSort(axisSortField,'desc')}><ArrowDownAZ size={14}/>Sort category descending</button>}
       {valueSortField&&<button onClick={()=>setSort(valueSortField,'asc')}><ArrowUpAZ size={14}/>Sort value ascending</button>}
       {valueSortField&&<button onClick={()=>setSort(valueSortField,'desc')}><ArrowDownAZ size={14}/>Sort value descending</button>}
-      {!!v.sort?.length&&<button onClick={()=>{onChange(x=>x.sort=[]);setMenu(false)}}><RotateCcw size={14}/>Clear sort</button>}
-      <button onClick={()=>{setFocus(true);setMenu(false)}}><Maximize2 size={14}/>Focus mode</button>
-      <button onClick={()=>{setShowData(true);setMenu(false)}}><Eye size={14}/>Show underlying data</button>
-      <button onClick={()=>{downloadCsv(rows,v.title);setMenu(false)}}><Download size={14}/>Export CSV</button>
-      <button onClick={()=>{downloadExcel(rows,v.title);setMenu(false)}}><FileSpreadsheet size={14}/>Export Excel</button>
-      <button onClick={()=>{downloadJson(rows,v.title);setMenu(false)}}><FileJson size={14}/>Export JSON</button>
-      <button onClick={()=>{navigator.clipboard?.writeText(JSON.stringify(v,null,2));setMenu(false)}}><Clipboard size={14}/>Copy visual specification</button>
-      <button onClick={()=>{onDuplicate();setMenu(false)}}><Copy size={14}/>Duplicate visual</button>
+      {!!v.sort?.length&&<button onClick={()=>{onChange(x=>x.sort=[]);closeMenu()}}><RotateCcw size={14}/>Clear sort</button>}
+      <button onClick={()=>{setFocus(true);closeMenu()}}><Maximize2 size={14}/>Focus mode</button>
+      <button onClick={()=>{setShowData(true);closeMenu()}}><Eye size={14}/>Show underlying data</button>
+      <button onClick={()=>{downloadCsv(rows,v.title);closeMenu()}}><Download size={14}/>Export CSV</button>
+      <button onClick={()=>{downloadExcel(rows,v.title);closeMenu()}}><FileSpreadsheet size={14}/>Export Excel</button>
+      <button onClick={()=>{downloadJson(rows,v.title);closeMenu()}}><FileJson size={14}/>Export JSON</button>
+      <button onClick={()=>{navigator.clipboard?.writeText(JSON.stringify(v,null,2));closeMenu()}}><Clipboard size={14}/>Copy visual specification</button>
+      <button onClick={()=>{onDuplicate();closeMenu()}}><Copy size={14}/>Duplicate visual</button>
       <hr style={{margin:'4px 0',borderColor:'var(--glass-border)',borderBottom:'none'}}/>
-      <button className="danger" onClick={()=>{if(onDelete)onDelete();setMenu(false)}}><Trash2 size={14}/>Delete visual</button>
-      <button onClick={()=>{onChange(x=>x.format.showTitle=!x.format.showTitle);setMenu(false)}}><Type size={14}/>{v.format.showTitle?'Hide':'Show'} title</button>
-      {capability.legend&&<button onClick={()=>{onChange(x=>x.format.legendVisible=x.format.legendVisible===false?true:false);setMenu(false)}}><Layers3 size={14}/>{v.format.legendVisible===false?'Show':'Hide'} legend</button>}
-      {capability.dataLabels&&<button onClick={()=>{onChange(x=>x.format.dataLabels=!x.format.dataLabels);setMenu(false)}}><Hash size={14}/>{v.format.dataLabels?'Hide':'Show'} data labels</button>}
+      <button className="danger" onClick={()=>{if(onDelete)onDelete();closeMenu()}}><Trash2 size={14}/>Delete visual</button>
+      <button onClick={()=>{onChange(x=>x.format.showTitle=!x.format.showTitle);closeMenu()}}><Type size={14}/>{v.format.showTitle?'Hide':'Show'} title</button>
+      {capability.legend&&<button onClick={()=>{onChange(x=>x.format.legendVisible=x.format.legendVisible===false?true:false);closeMenu()}}><Layers3 size={14}/>{v.format.legendVisible===false?'Show':'Hide'} legend</button>}
+      {capability.dataLabels&&<button onClick={()=>{onChange(x=>x.format.dataLabels=!x.format.dataLabels);closeMenu()}}><Hash size={14}/>{v.format.dataLabels?'Hide':'Show'} data labels</button>}
       <button onClick={()=>{onSlicer(null);clearFilter()}}><Eraser size={14}/>Clear selection / filter</button>
-    </div>}
+    </div>,document.body)}
     </div>
   </div>;
   const designerHandle=null;
@@ -614,7 +629,8 @@ const handlePointClick = (field: string, value: any) => {
         onSlicer({field:axis,operator:next.length===1?'equals':'in',value:next.length===1?next[0]:next});
       }
     };
-    const choose=(val:string)=>{const next=v.format.slicerSingleSelect?[val]:slicerSelected.includes(val)?slicerSelected.filter(x=>x!==val):[...slicerSelected,val];apply(next)};
+    const choose=(val:string)=>{const next=v.format.slicerSingleSelect?[val]:slicerSelected.includes(val)?slicerSelected.filter(x=>x!==val):[...slicerSelected,val];apply(next);if(v.format.slicerSingleSelect)setSlicerDropdownOpen(false)};
+    const clearSlicer=()=>{setSlicerSelected([]);setSlicerSearch('');setSlicerDropdownOpen(false);onSlicer(null)};
 
     const tilesPerRow=v.format.tilesPerRow||3;
     const tilesPerColumn=v.format.tilesPerColumn||0;
@@ -622,12 +638,24 @@ const handlePointClick = (field: string, value: any) => {
     if(tilesPerColumn>0)gridStyle.gridTemplateRows=`repeat(${tilesPerColumn}, 1fr)`;
     const allSelected=allOptions.length>0&&allOptions.every(option=>slicerSelected.includes(option));
     const slicerStyle:any={...style,'--slicer-font':displayFormat.tableFontFamily||'Segoe UI','--slicer-text':displayFormat.tableTextColor||'#242424','--slicer-size':`${displayFormat.tableFontSize||11}px`,'--slicer-weight':displayFormat.tableTextBold?700:400,'--slicer-style':displayFormat.tableTextItalic?'italic':'normal','--slicer-wrap':displayFormat.tableTextWrap?'normal':'nowrap','--slicer-align':displayFormat.tableTextAlign||'left','--slicer-bg':displayFormat.tableBackground||'#ffffff','--slicer-alt':displayFormat.tableAlternatingRows===false?(displayFormat.tableBackground||'#ffffff'):(displayFormat.tableAlternateColor||'#f8fafc'),'--slicer-row-padding':`${displayFormat.tableRowPadding??8}px`};
-    return <div role="group" aria-label={v.format.altTextEnabled&&v.format.altText?v.format.altText:v.title} onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'visualCard slicerVisual '+responsiveSizeClass+(selected?' selected':'')+(menu?' menuOpen':'')} style={slicerStyle}>
+    const selectionLabel=!slicerSelected.length||allSelected?'All':slicerSelected.length===1?slicerSelected[0]:slicerSelected.length<=2?slicerSelected.join(', '):'(Multiple items)';
+    const dropdown=<div className="slicerDropdownShell" ref={slicerDropdownRef}>
+      <button type="button" className="slicerDropdownTrigger" aria-haspopup="listbox" aria-expanded={slicerDropdownOpen} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();setSlicerDropdownOpen(open=>!open)}}><span>{selectionLabel}</span><ChevronDown size={15}/></button>
+      {slicerDropdownOpen&&<div className="slicerDropdownMenu" role="listbox" aria-multiselectable={!v.format.slicerSingleSelect} onMouseDown={e=>e.stopPropagation()}>
+        {v.format.slicerSearch&&<div className="slicerSearchRow"><Search size={14}/><input value={slicerSearch} onChange={e=>setSlicerSearch(e.target.value)} placeholder="Search values" aria-label="Search slicer values" autoFocus/>{slicerSearch&&<button type="button" title="Clear search" onClick={()=>setSlicerSearch('')}><X size={13}/></button>}</div>}
+        <div className="slicerDropdownOptions customScrollbar">
+          {v.format.slicerSelectAll&&!v.format.slicerSingleSelect&&<label className="slicerListItem slicerSelectAll"><input type="checkbox" checked={allSelected} onChange={e=>{e.stopPropagation();apply(allSelected?[]:allOptions,!allSelected)}}/><span>Select all</span></label>}
+          {options.map(val=><label key={val} className={'slicerListItem'+(slicerSelected.includes(val)?' active':'')}><input type={(v.format.slicerSingleSelect||!v.format.slicerMultiSelect)?'radio':'checkbox'} checked={slicerSelected.includes(val)} onChange={e=>{e.stopPropagation();choose(val)}}/><span>{val}</span></label>)}
+          {!options.length&&<div className="slicerNoResults">No matching values</div>}
+        </div>
+      </div>}
+    </div>;
+    return <div role="group" aria-label={v.format.altTextEnabled&&v.format.altText?v.format.altText:v.title} onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'visualCard slicerVisual '+responsiveSizeClass+(selected?' selected':'')+(menu?' menuOpen':'')+(slicerDropdownOpen?' slicerDropdownOpen':'')} style={{...slicerStyle,overflow:slicerDropdownOpen?'visible':undefined}}>
       {designerHandle}
-      {displayFormat.showTitle&&<div className="visualTitle visualMoveZone"><div className="visualTitleText"><span style={titleTextStyle}>{v.title}</span>{displayFormat.subtitleVisible&&displayFormat.subtitle&&<small style={subtitleTextStyle}>{displayFormat.subtitle}</small>}</div>{displayFormat.visualHeader!==false&&menuNode}</div>}
-      {!v.format.showTitle&&v.format.visualHeader!==false&&<div className="visualHeaderOnly">{menuNode}</div>}
-      {v.format.slicerSearch&&<input className="slicerSearchInput" value={slicerSearch} onChange={e=>setSlicerSearch(e.target.value)} onMouseDown={e=>e.stopPropagation()} placeholder="Search values" aria-label="Search slicer values"/>}
-      {mode==='dropdown'?v.format.slicerMultiSelect?<div className="slicerDropdownMulti" style={{background:v.format.tableBackground||'#ffffff',color:v.format.tableTextColor||'#242424',fontSize:v.format.tableFontSize||11,textAlign:(v.format.tableTextAlign as any)||'left'}}>{v.format.slicerSelectAll&&<label className="slicerListItem" style={{borderBottom:'1px solid #e2e8f0',marginBottom:4,paddingBottom:4}}><input type="checkbox" checked={allSelected} onChange={e=>{e.stopPropagation();apply(allSelected?[]:allOptions,!allSelected)}}/><span>Select all</span></label>}{options.map(val=><label key={val} className="slicerListItem"><input type="checkbox" checked={slicerSelected.includes(val)} onChange={e=>{e.stopPropagation();choose(val)}}/><span>{val}</span></label>)}</div>:<select className="slicerDropdown" style={{color:v.format.tableTextColor,fontSize:v.format.tableFontSize,background:v.format.tableBackground,textAlign:v.format.tableTextAlign}} value={allSelected ? '__all__' : slicerSelected[0]||''} onChange={e=>{if(e.target.value==='__all__'){apply(allOptions, true)}else if(e.target.value){apply([e.target.value])}else{apply([])}}}><option value="" style={{background:v.format.tableBackground||'#ffffff',color:v.format.tableTextColor||'inherit'}}>Select…</option>{v.format.slicerSelectAll&&<option value="__all__" style={{background:v.format.tableBackground||'#ffffff',color:v.format.tableTextColor||'inherit'}}>Select all</option>}{options.map(val=><option key={val} value={val} style={{background:v.format.tableBackground||'#ffffff',color:v.format.tableTextColor||'inherit'}}>{val}</option>)}</select>:mode==='list'?<div className={'slicerList slicer-list orientation-'+(v.format.slicerOrientation||'vertical')} style={{'--slicer-text':v.format.tableTextColor||'#242424','--slicer-size':`${v.format.tableFontSize||11}px`,'--slicer-bg':v.format.tableBackground||'#ffffff','--slicer-alt':v.format.tableAlternatingRows===false?(v.format.tableBackground||'#ffffff'):(v.format.tableAlternateColor||'#f8fafc'),textAlign:v.format.tableTextAlign} as any}>{v.format.slicerSelectAll&&!v.format.slicerSingleSelect&&<label className="slicerListItem"><input type="checkbox" checked={allSelected} onChange={e=>{e.stopPropagation();apply(allSelected?[]:allOptions, !allSelected)}}/><span>Select all</span></label>}{options.map(val=><label key={val} className="slicerListItem"><input type={(v.format.slicerSingleSelect||!v.format.slicerMultiSelect)?'radio':'checkbox'} checked={slicerSelected.includes(val)} onChange={e=>{e.stopPropagation();choose(val)}}/><span>{val}</span></label>)}</div>:<div className={'slicerList slicer-'+mode+' orientation-'+(v.format.slicerOrientation||'vertical')} style={{...(mode==='button'?gridStyle:{}),'--slicer-text':v.format.tableTextColor||'#242424','--slicer-size':`${v.format.tableFontSize||11}px`,'--slicer-bg':v.format.tableBackground||'#ffffff','--slicer-alt':v.format.tableAlternateColor||'#f8fafc',textAlign:v.format.tableTextAlign} as any}>{v.format.slicerSelectAll&&!v.format.slicerSingleSelect&&<button className={allSelected?'active':''} style={{borderRadius:v.format.slicerCornerRadius??6}} onClick={e=>{e.stopPropagation();apply(allSelected?[]:allOptions, !allSelected)}}>Select all</button>}{options.map(val=><button key={val} className={slicerSelected.includes(val)?'active':''} style={{borderRadius:v.format.slicerCornerRadius??6}} onClick={e=>{e.stopPropagation();choose(val)}}>{val}</button>)}</div>}
+      {displayFormat.showTitle&&<div className="visualTitle visualMoveZone"><div className="visualTitleText"><span style={titleTextStyle}>{v.title}</span>{displayFormat.subtitleVisible&&displayFormat.subtitle&&<small style={subtitleTextStyle}>{displayFormat.subtitle}</small>}</div><div className="slicerHeaderActions">{!!slicerSelected.length&&<button className="slicerClearButton" title="Clear slicer" onClick={e=>{e.stopPropagation();clearSlicer()}}><Eraser size={14}/></button>}{displayFormat.visualHeader!==false&&menuNode}</div></div>}
+      {!v.format.showTitle&&v.format.visualHeader!==false&&<div className="visualHeaderOnly">{!!slicerSelected.length&&<button className="slicerClearButton" title="Clear slicer" onClick={e=>{e.stopPropagation();clearSlicer()}}><Eraser size={14}/></button>}{menuNode}</div>}
+      {mode!=='dropdown'&&v.format.slicerSearch&&<div className="slicerSearchRow slicerInlineSearch"><Search size={14}/><input value={slicerSearch} onChange={e=>setSlicerSearch(e.target.value)} onMouseDown={e=>e.stopPropagation()} placeholder="Search values" aria-label="Search slicer values"/>{slicerSearch&&<button type="button" title="Clear search" onClick={()=>setSlicerSearch('')}><X size={13}/></button>}</div>}
+      {mode==='dropdown'?dropdown:mode==='list'?<div className={'slicerList slicer-list orientation-'+(v.format.slicerOrientation||'vertical')} style={{'--slicer-text':v.format.tableTextColor||'#242424','--slicer-size':`${v.format.tableFontSize||11}px`,'--slicer-bg':v.format.tableBackground||'#ffffff','--slicer-alt':v.format.tableAlternatingRows===false?(v.format.tableBackground||'#ffffff'):(v.format.tableAlternateColor||'#f8fafc'),textAlign:v.format.tableTextAlign} as any}>{v.format.slicerSelectAll&&!v.format.slicerSingleSelect&&<label className="slicerListItem"><input type="checkbox" checked={allSelected} onChange={e=>{e.stopPropagation();apply(allSelected?[]:allOptions, !allSelected)}}/><span>Select all</span></label>}{options.map(val=><label key={val} className="slicerListItem"><input type={(v.format.slicerSingleSelect||!v.format.slicerMultiSelect)?'radio':'checkbox'} checked={slicerSelected.includes(val)} onChange={e=>{e.stopPropagation();choose(val)}}/><span>{val}</span></label>)}</div>:<div className={'slicerList slicer-'+mode+' orientation-'+(v.format.slicerOrientation||'vertical')} style={{...(mode==='button'?gridStyle:{}),'--slicer-text':v.format.tableTextColor||'#242424','--slicer-size':`${v.format.tableFontSize||11}px`,'--slicer-bg':v.format.tableBackground||'#ffffff','--slicer-alt':v.format.tableAlternateColor||'#f8fafc',textAlign:v.format.tableTextAlign} as any}>{v.format.slicerSelectAll&&!v.format.slicerSingleSelect&&<button className={allSelected?'active':''} style={{borderRadius:v.format.slicerCornerRadius??6}} onClick={e=>{e.stopPropagation();apply(allSelected?[]:allOptions, !allSelected)}}>Select all</button>}{options.map(val=><button key={val} className={slicerSelected.includes(val)?'active':''} style={{borderRadius:v.format.slicerCornerRadius??6}} onClick={e=>{e.stopPropagation();choose(val)}}>{val}</button>)}</div>}
     </div>
   }
   const card=<div role="group" aria-label={displayFormat.altTextEnabled&&displayFormat.altText?displayFormat.altText:v.title} onMouseDown={e=>onSelect(e.ctrlKey||e.metaKey||e.shiftKey)} className={'visualCard premiumVisualCard '+responsiveSizeClass+(selected?' selected':'')+(menu?' menuOpen':'')} style={{...style, display:'flex', flexDirection:'column'}}>{designerHandle}{displayFormat.showTitle&&<div className="visualTitle visualMoveZone"><div className="visualTitleText">{drillPath.length>0&&<span className="drillPath">{drillPath}</span>}<span style={titleTextStyle}>{v.title}</span>{displayFormat.subtitleVisible&&displayFormat.subtitle&&<small style={subtitleTextStyle}>{displayFormat.subtitle}</small>}</div>{displayFormat.visualHeader!==false&&menuNode}</div>}{!displayFormat.showTitle&&displayFormat.visualHeader!==false&&<div className="visualHeaderOnly">{menuNode}</div>}<div className="visualBody" style={{paddingTop:displayFormat.paddingTop??displayFormat.padding??8,paddingRight:displayFormat.paddingRight??displayFormat.padding??8,paddingBottom:displayFormat.paddingBottom??displayFormat.padding??8,paddingLeft:displayFormat.paddingLeft??displayFormat.padding??8, flex:1, minHeight:0, display:'flex', flexDirection:'column'}}>{err?<div className="empty compact">{err}</div>:!hasDataBindings?<div className="visualEmpty"><Sparkles size={20}/><b>Add data to this visual</b><span>Choose a field in Data or drag it to a field well.</span></div>:<Chart visual={displayVisual} rows={rows} conditionalValues={conditionalValues} onPointClick={handlePointClick}/>}</div></div>;
@@ -777,6 +805,18 @@ function ButtonActionEditor({visual,page,pages,updateVisual}:{visual:Visual,page
   </Section>;
 }
 function ColorControl({value,onChange}:{value:string,onChange:(v:string)=>void}){return <div className="colorControl"><input type="color" value={value} onChange={e=>onChange(e.target.value)}/><input value={value} onChange={e=>onChange(e.target.value)}/></div>}
+function topNRankingOptions(model:any,current=''){
+  const fields=Object.entries<any>(model?.tables||{}).flatMap(([table,definition])=>Object.keys(definition.columns||{}).map(column=>`${table}.${column}`));
+  const numeric=fields.filter(field=>/int|decimal|double|float|numeric|number|money|currency|real/i.test(String(model?.columnTypes?.[field]||'')));
+  const aggregations=[['sum','Sum'],['avg','Average'],['min','Minimum'],['max','Maximum'],['count','Count'],['distinct_count','Distinct count']] as const;
+  const options=[...Object.keys(model?.measures||{}).map(value=>({value,label:value})),...numeric.flatMap(field=>aggregations.map(([suffix,label])=>({value:`${field}::${suffix}`,label:`${label} of ${field.split('.').pop()}`})))];
+  if(current&&!options.some(option=>option.value===current))options.unshift({value:current,label:current});
+  return options;
+}
+function topNRankingLabel(value=''){
+  const[field,suffix]=value.split('::'),labels:Record<string,string>={sum:'Sum',avg:'Average',min:'Minimum',max:'Maximum',count:'Count',distinct_count:'Distinct count'};
+  return suffix?`${labels[suffix]||suffix} of ${field.split('.').pop()}`:value.split('.').pop()||value;
+}
 function NumberFormatting({visual,updateVisual}:{visual:Visual,updateVisual:(fn:(v:Visual)=>void)=>void}){
   const fields=Array.from(new Set([...(visual.type==='table'||visual.type==='matrix'?(visual.bindings.axis||[]):[]),...(visual.bindings.values||[])]));const[field,setField]=useState(fields[0]||'');useEffect(()=>{if(!fields.includes(field))setField(fields[0]||'')},[fields.join('|')]);
   if(!fields.length)return <div className="formatHint">Add a numeric measure to Values to configure business-number formatting.</div>;
@@ -791,44 +831,57 @@ function InlineFilterBuilder({model,onAdd}:{model:any,onAdd:(f:VisualFilter)=>vo
   const top=operator==='top_n';
   return <div className="inlineFilterBuilder"><select aria-label="Filter field" value={field} onChange={e=>setField(e.target.value)}>{fields.map(f=><option key={f}>{f}</option>)}</select><select aria-label="Filter type" value={operator} onChange={e=>{setOperator(e.target.value);setValue(e.target.value==='top_n'?'10':'')}}><option value="equals">Equals</option><option value="not_equals">Not equal</option><option value="contains">Contains</option><option value="gt">Greater than</option><option value="gte">Greater/equal</option><option value="lt">Less than</option><option value="lte">Less/equal</option><option value="top_n">Top N</option></select><input aria-label={top?'Number of items':'Filter value'} type={top?'number':'text'} min={top?1:undefined} max={top?5000:undefined} value={value} onChange={e=>setValue(e.target.value)} placeholder={top?'Number of items':'Filter value'}/>{top&&<select aria-label="Rank by" value={rankingField} onChange={e=>setRankingField(e.target.value)}><option value="">Rank by…</option>{rankingFields.map(f=><option key={f}>{f}</option>)}</select>}<button disabled={!field||value===''||(top&&!rankingField)} onClick={()=>{if(field&&value!==''&&(!top||rankingField)){onAdd({field,operator,value:top?Math.max(1,Math.min(5000,Number(value)||10)):value,rankingField:top?rankingField:undefined});setValue(top?'10':'')}}}><Plus size={12}/>Add</button></div>
 }
-function FilterCard({f,onRemove,onUpdate,model}: {f:VisualFilter,onRemove:()=>void,onUpdate:(f:VisualFilter)=>void,model?:any}) {
+function FilterCard({f,onRemove,onUpdate,model,allowTopN=false,contextFilters=[],implicit=false}: {f:VisualFilter,onRemove:()=>void,onUpdate:(f:VisualFilter)=>void,model?:any,allowTopN?:boolean,contextFilters?:VisualFilter[],implicit?:boolean}) {
   const hasValue = f.value!==undefined && f.value!=='' && (!Array.isArray(f.value) || f.value.length > 0);
-  const [expanded,setExpanded]=useState(!hasValue);
+  const [expanded,setExpanded]=useState(!hasValue&&!implicit);
   const [draft, setDraft] = useState({...f});
   
   useEffect(() => { setDraft({...f}) }, [f]);
 
   const operatorLabels:Record<string,string>={'equals':'is','not_equals':'is not','contains':'contains','gt':'is greater than','gte':'is greater than or equal to','lt':'is less than','lte':'is less than or equal to','is_blank':'is blank','is_not_blank':'is not blank','starts_with':'starts with','does_not_start_with':'does not start with'};
   const shortName = f.field.includes('.') ? f.field.split('.').slice(-1)[0] : f.field;
-  const summary = f.operator==='top_n' ? `${(f.rankingDirection||'top')==='bottom'?'Bottom':'Top'} ${f.value||10}${f.rankingField ? ` by ${f.rankingField.split('.').slice(-1)[0]}` : ''}` : f.operator==='in' ? (Array.isArray(f.value)&&f.value.length ? `is ${f.value.length>1?'multiple':f.value[0]}` : 'is (All)') : (!f.value&&f.value!==0) ? 'is (All)' : `${operatorLabels[f.operator]||f.operator} ${f.value}`;
+  const summary = f.operator==='top_n' ? `${(f.rankingDirection||'top')==='bottom'?'Bottom':'Top'} ${f.value||10}${f.rankingField ? ` by ${topNRankingLabel(f.rankingField)}` : ''}` : f.operator==='in' ? (Array.isArray(f.value)&&f.value.length ? `is ${f.value.length>1?'multiple':f.value[0]}` : 'is (All)') : (!f.value&&f.value!==0) ? 'is (All)' : `${operatorLabels[f.operator]||f.operator} ${f.value}`;
   
   const filterType = draft.operator === 'top_n' ? 'top_n' : (['in_last','in_next','is_in_this'].includes(draft.operator) ? 'relative' : (draft.operator === 'in' ? 'basic' : 'advanced'));
   const cleanKey = (f.field||'').replace(/^(field:|numericField:|hierarchy:|measure:)/, '');
   const colType = String(model?.columnTypes?.[cleanKey] || '').toLowerCase();
   const isDate = colType === 'date' || colType === 'datetime' || colType === 'timestamp' || colType.startsWith('date') || colType.startsWith('timestamp');
   const fields = Object.entries<any>(model?.tables||{}).flatMap(([t,x])=>Object.keys(x.columns||{}).map(c=>`${t}.${c}`));
-  const rankingFields=[...Object.keys(model?.measures||{}),...fields.filter(field=>/int|decimal|double|float|numeric|number|money|currency/i.test(String(model?.columnTypes?.[field]||'')))];
+  const rankingOptions=topNRankingOptions(model,draft.rankingField||'');
+  const isNumeric=/int|decimal|double|float|numeric|number|money|currency|real/i.test(colType);
+  const topNEligible=allowTopN&&!isDate&&!isNumeric;
+  const topNValue=Number(draft.value),topNError=filterType==='top_n'?(!topNEligible?'Top N is available only for categorical visual-level fields.':!Number.isInteger(topNValue)||topNValue<1||topNValue>5000?'Enter a whole number from 1 to 5000.':!draft.rankingField?'Select a ranking measure.':''):'';
 
   const [distinctValues, setDistinctValues] = useState<{value:string}[]|null>(null);
   const [basicSearch, setBasicSearch] = useState('');
+  const distinctContextFilters=contextFilters.filter(x=>x.field!==f.field&&!(x.operator==='in'&&(!Array.isArray(x.value)||x.value.length===0)));
+  const distinctContextKey=JSON.stringify(distinctContextFilters);
 
   useEffect(() => {
-    if (filterType === 'basic' && model && !distinctValues) {
-      api<any>('/query-snapshot', {
+    if(filterType!=='basic'||!model)return;
+    let active=true;
+    setDistinctValues(null);
+    setBasicSearch('');
+    api<any>('/query-snapshot', {
         method: 'POST',
         body: JSON.stringify({
           project: { model },
           dimensions: [f.field],
           measures: [],
-          limit: 500
+          filters: distinctContextFilters,
+          sort: [{field:f.field,direction:'asc'}],
+          distinct: true,
+          limit: 5000
         })
       }).then(res => {
-        setDistinctValues(res.rows.map((r:any) => ({value: String(r[f.field] ?? '(Blank)')})));
-      }).catch(err => {
-        setDistinctValues([]);
+        if(!active)return;
+        const uniqueValues=Array.from(new Set((res.rows||[]).map((r:any)=>String(r[f.field]??'(Blank)')))) as string[];
+        setDistinctValues(uniqueValues.map(value=>({value})));
+      }).catch(() => {
+        if(active)setDistinctValues([]);
       });
-    }
-  }, [filterType, f.field, model, distinctValues]);
+    return()=>{active=false};
+  }, [filterType, f.field, model, distinctContextKey]);
 
   const handleToggleBasic = (val: string) => {
     let current = Array.isArray(draft.value) ? [...draft.value] : (typeof draft.value==='string'&&draft.value ? draft.value.split(',') : []);
@@ -855,7 +908,7 @@ function FilterCard({f,onRemove,onUpdate,model}: {f:VisualFilter,onRemove:()=>vo
           <span className={`pbFilterCardSummary${hasValue?' pbFilterCardSummaryActive':''}`}>{summary}</span>
         </div>
         <div className="pbFilterCardActions">
-          <button className="pbFilterCardRemove" title="Remove filter" onClick={e=>{e.stopPropagation();onRemove()}}><X size={12}/></button>
+          {!implicit&&<button className="pbFilterCardRemove" title="Remove filter" onClick={e=>{e.stopPropagation();onRemove()}}><X size={12}/></button>}
           <ChevronDown size={13} style={{transform:expanded?'rotate(180deg)':'none',transition:'0.2s',flexShrink:0,color:'#605e5c'}}/>
         </div>
       </div>
@@ -863,14 +916,14 @@ function FilterCard({f,onRemove,onUpdate,model}: {f:VisualFilter,onRemove:()=>vo
         <label className="pbFilterLabel">Filter type <Info size={12}/></label>
         <select className="pbFilterSelect" value={filterType} onChange={e=>{
           const type = e.target.value;
-          if (type === 'top_n') setDraft({...draft, operator: 'top_n', value: draft.value || '10', rankingDirection: draft.rankingDirection || 'top', rankingField: draft.rankingField || rankingFields[0] || '', condition: undefined, operator2: undefined, value2: undefined});
+          if (type === 'top_n') setDraft({...draft, operator: 'top_n', value: draft.value || 10, rankingDirection: draft.rankingDirection || 'top', rankingField: draft.rankingField || rankingOptions[0]?.value || '', condition: undefined, operator2: undefined, value2: undefined});
           else if (type === 'basic') setDraft({...draft, operator: 'in', value: [], condition: undefined, operator2: undefined, value2: undefined});
           else if (type === 'relative') setDraft({...draft, operator: 'in_last', value: '30', value2: 'days', condition: undefined, operator2: undefined, rankingField: undefined});
           else setDraft({...draft, operator: 'equals', value: '', rankingField: undefined});
         }}>
           <option value="basic">Basic filtering</option>
           <option value="advanced">Advanced filtering</option>
-          <option value="top_n">Top N</option>
+          {(topNEligible||f.operator==='top_n')&&<option value="top_n">Top N</option>}
           {isDate && <option value="relative">Relative date/time</option>}
         </select>
         
@@ -944,18 +997,21 @@ function FilterCard({f,onRemove,onUpdate,model}: {f:VisualFilter,onRemove:()=>vo
           <label className="pbFilterLabel" style={{marginTop: 4}}>By value</label>
           <select className="pbFilterSelect pbFilterDropzone" value={draft.rankingField||''} onChange={e=>setDraft({...draft,rankingField:e.target.value})}>
             <option value="" disabled>Select an option</option>
-            {rankingFields.map(rf=><option key={rf} value={rf}>{rf}</option>)}
+            {rankingOptions.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
+          {topNError&&<div className="schemaEmptyNote" role="alert">{topNError}</div>}
+          {!topNError&&<small>Ranking is calculated after report, page, slicer, cross-filter, and other visual filters. Ties are resolved by {shortName} ascending so exactly N items are retained.</small>}
         </>}
         
-        <div style={{display: 'flex', justifyContent: 'flex-end', marginTop: 8}}>
-          <button className={`pbApplyFilterBtn ${isDirty ? 'active' : ''}`} disabled={!isDirty} onClick={()=>onUpdate(draft)}>Apply filter</button>
+        <div style={{display: 'flex', justifyContent: 'space-between', gap:8, marginTop: 8}}>
+          {filterType==='top_n'&&<button className="schemaInlineReset" onClick={onRemove}>Clear filter</button>}
+          <button className={`pbApplyFilterBtn ${isDirty&&!topNError ? 'active' : ''}`} disabled={!isDirty||!!topNError} onClick={()=>onUpdate(filterType==='top_n'?{...draft,value:Math.trunc(topNValue),rankingDirection:draft.rankingDirection||'top'}:draft)}>Apply filter</button>
         </div>
       </div>}
     </div>
   );
 }
-function FilterList({title,filters,onRemove,onUpdate,model,onAdd}:{title:string,filters:VisualFilter[],onRemove:(i:number)=>void,onUpdate:(i:number,f:VisualFilter)=>void,model:any,onAdd:(f:VisualFilter)=>void}){
+function FilterList({title,filters,onRemove,onUpdate,model,onAdd,allowTopN=false,search='',contextFilters=[],implicitStart=Number.POSITIVE_INFINITY}:{title:string,filters:VisualFilter[],onRemove:(i:number)=>void,onUpdate:(i:number,f:VisualFilter)=>void,model:any,onAdd:(f:VisualFilter)=>void,allowTopN?:boolean,search?:string,contextFilters?:VisualFilter[],implicitStart?:number}){
   const [open,setOpen]=useState(true);
   const sectionRef = useRef<HTMLDivElement>(null);
 
@@ -999,14 +1055,27 @@ function FilterList({title,filters,onRemove,onUpdate,model,onAdd}:{title:string,
           handleDrop(payload);
         }}
       >
-        {filters.map((f,i)=><FilterCard key={i} f={f} onRemove={()=>onRemove(i)} onUpdate={nx=>onUpdate(i,nx)} model={model}/>)}
+        {filters.map((f,index)=>({f,index})).filter(({f})=>!search||f.field.toLowerCase().includes(search.toLowerCase())).map(({f,index})=><FilterCard key={`${f.field}:${index}`} f={f} onRemove={()=>onRemove(index)} onUpdate={nx=>onUpdate(index,nx)} model={model} allowTopN={allowTopN} contextFilters={contextFilters} implicit={index>=implicitStart}/>)}
         <div className="pbEmptyDropzone">Add data fields here</div>
       </div>}
     </div>
   );
 }
+function visualDimensionFilterFields(visual:Visual|undefined,model:any){
+  if(!visual)return [];
+  const measureNames=new Set(Object.keys(model?.measures||{}));
+  const cleanField=(raw:string)=>raw.replace(/^(field:|numericField:|hierarchy:|measure:)/,'').split('::')[0];
+  const isMeasure=(raw:string,field:string)=>raw.startsWith('measure:')||measureNames.has(field)||measureNames.has(field.split('.').slice(-1)[0]);
+  const dimensionWells=visualProfile(visual.type).wells.filter(w=>w.accept==='field').map(w=>w.key);
+  return Array.from(new Set(dimensionWells.flatMap(key=>((visual.bindings as any)?.[key]||[]) as string[]).map(raw=>({raw,field:cleanField(raw)})).filter(({raw,field})=>field&&!field.startsWith('@@HIERARCHY@@')&&!isMeasure(raw,field)).map(({field})=>field)));
+}
 function FiltersDock({visual,updateVisual,page,updatePage,reportFilters,setReportFilters,model,onCollapse}:{visual:Visual|undefined,updateVisual:(fn:(v:Visual)=>void)=>void,page:Page,updatePage:(fn:(p:Page)=>void)=>void,reportFilters:VisualFilter[],setReportFilters:(x:VisualFilter[])=>void,model:any,onCollapse?:()=>void}){
   const [search,setSearch]=useState('');
+  const explicitVisualFilters=visual?.filters||[];
+  const implicitVisualFilters=visualDimensionFilterFields(visual,model).filter(field=>!explicitVisualFilters.some(f=>f.field===field)).map(field=>({field,operator:'in',value:[]} as VisualFilter));
+  const visualFilters=[...explicitVisualFilters,...implicitVisualFilters];
+  const visualContext=[...reportFilters,...(page.filters||[]),...explicitVisualFilters];
+  const pageContext=[...reportFilters,...(page.filters||[])];
   return <aside className="filtersDock pbFiltersDock" aria-label="Filters pane">
     <div className="pbFiltersDockHeader">
       <div className="pbFiltersDockTitle"><Filter size={14}/><b>Filters</b></div>
@@ -1019,9 +1088,9 @@ function FiltersDock({visual,updateVisual,page,updatePage,reportFilters,setRepor
       <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search" aria-label="Search filters"/>
     </div>
     <div className="pbFiltersDockScroll">
-      <FilterList title="Filters on this visual" filters={(visual?.filters||[]).filter(f=>!search||f.field.toLowerCase().includes(search.toLowerCase()))} model={model} onAdd={f=>visual&&updateVisual(v=>v.filters=[...(v.filters||[]),f])} onRemove={i=>visual&&updateVisual(v=>v.filters=(v.filters||[]).filter((_,j)=>i!==j))} onUpdate={(i,nx)=>visual&&updateVisual(v=>v.filters=(v.filters||[]).map((f,j)=>i===j?nx:f))}/>
-      <FilterList title="Filters on this page" filters={(page.filters||[]).filter(f=>!search||f.field.toLowerCase().includes(search.toLowerCase()))} model={model} onAdd={f=>updatePage(p=>p.filters=[...(p.filters||[]),f])} onRemove={i=>updatePage(p=>p.filters=(p.filters||[]).filter((_,j)=>i!==j))} onUpdate={(i,nx)=>updatePage(p=>p.filters=(p.filters||[]).map((f,j)=>i===j?nx:f))}/>
-      <FilterList title="Filters on all pages" filters={reportFilters.filter(f=>!search||f.field.toLowerCase().includes(search.toLowerCase()))} model={model} onAdd={f=>setReportFilters([...reportFilters,f])} onRemove={i=>setReportFilters(reportFilters.filter((_,j)=>i!==j))} onUpdate={(i,nx)=>setReportFilters(reportFilters.map((f,j)=>i===j?nx:f))}/>
+      <FilterList title="Filters on this visual" allowTopN filters={visualFilters} implicitStart={explicitVisualFilters.length} search={search} contextFilters={visualContext} model={model} onAdd={f=>visual&&updateVisual(v=>v.filters=[...(v.filters||[]),f])} onRemove={i=>visual&&i<explicitVisualFilters.length&&updateVisual(v=>v.filters=(v.filters||[]).filter((_,j)=>i!==j))} onUpdate={(i,nx)=>visual&&updateVisual(v=>{v.filters=i<(v.filters||[]).length?(v.filters||[]).map((f,j)=>i===j?nx:f):[...(v.filters||[]),nx]})}/>
+      <FilterList title="Filters on this page" filters={page.filters||[]} search={search} contextFilters={pageContext} model={model} onAdd={f=>updatePage(p=>p.filters=[...(p.filters||[]),f])} onRemove={i=>updatePage(p=>p.filters=(p.filters||[]).filter((_,j)=>i!==j))} onUpdate={(i,nx)=>updatePage(p=>p.filters=(p.filters||[]).map((f,j)=>i===j?nx:f))}/>
+      <FilterList title="Filters on all pages" filters={reportFilters} search={search} contextFilters={reportFilters} model={model} onAdd={f=>setReportFilters([...reportFilters,f])} onRemove={i=>setReportFilters(reportFilters.filter((_,j)=>i!==j))} onUpdate={(i,nx)=>setReportFilters(reportFilters.map((f,j)=>i===j?nx:f))}/>
     </div>
   </aside>;
 }
@@ -1034,16 +1103,11 @@ function VisualizationsPane({addVisual}:{addVisual:(type:VisualType)=>void}){
 
 function MapBuildTools({visual,updateVisual}:{visual:Visual;updateVisual:(fn:(visual:Visual)=>void)=>void}){
   const[crs,setCrs]=useState(visual.format.mapSourceCrs||'EPSG:4326'),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[correction,setCorrection]=useState({query:'',latitude:'',longitude:''});
-  const defaultLayers=[{id:'symbol',name:'Symbols',type:'symbol' as const,visible:true,opacity:85,color:'#118dff',size:9},{id:'filled',name:'Filled areas',type:'filled' as const,visible:true,opacity:65,color:'#118dff'},{id:'density',name:'Density',type:'density' as const,visible:true,opacity:80,color:'#ef4444'},{id:'path',name:'Paths',type:'path' as const,visible:true,opacity:90,color:'#118dff',size:3}];
-  const layers=visual.format.mapLayers?.length?visual.format.mapLayers:defaultLayers;
-  const updateLayer=(id:string,changes:any)=>updateVisual(v=>{const current=v.format.mapLayers?.length?v.format.mapLayers:defaultLayers;v.format.mapLayers=current.map(layer=>layer.id===id?{...layer,...changes}:layer)});
-  const moveLayer=(index:number,direction:-1|1)=>updateVisual(v=>{const current=[...(v.format.mapLayers?.length?v.format.mapLayers:defaultLayers)],target=index+direction;if(target<0||target>=current.length)return;[current[index],current[target]]=[current[target],current[index]];v.format.mapLayers=current});
   const importFile=async(file:File)=>{setBusy(true);setMessage('');try{const geometry=await parseSpatialFile(file,crs);updateVisual(v=>{v.format.mapCustomGeometry=geometry;v.format.mapCustomGeometryName=file.name;v.format.mapSourceCrs=crs});setMessage(`${geometry.features.length.toLocaleString()} features imported from ${file.name}.`)}catch(error:any){setMessage(error?.message||String(error))}finally{setBusy(false)}};
-  const saveCorrection=async()=>{const latitude=Number(correction.latitude),longitude=Number(correction.longitude);if(!correction.query.trim()||!Number.isFinite(latitude)||!Number.isFinite(longitude)){setMessage('Enter a location, latitude, and longitude.');return}setBusy(true);try{await api('/map/geocode/corrections',{method:'POST',body:JSON.stringify({corrections:[{query:correction.query.trim(),latitude,longitude}]})});window.dispatchEvent(new Event('vtab-map-geocode-updated'));setMessage(`Saved the location correction for ${correction.query.trim()}.`);setCorrection({query:'',latitude:'',longitude:''})}catch(error:any){setMessage(error?.message||String(error))}finally{setBusy(false)}};
+  const saveCorrection=()=>{const latitude=Number(correction.latitude),longitude=Number(correction.longitude),query=correction.query.trim();if(!query||!Number.isFinite(latitude)||latitude<-90||latitude>90||!Number.isFinite(longitude)||longitude<-180||longitude>180){setMessage('Enter a location with valid latitude (-90 to 90) and longitude (-180 to 180).');return}const key=query.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/&/g,'and').replace(/[^a-z0-9]+/g,' ').trim();updateVisual(v=>{v.format.mapLocationCorrections={...(v.format.mapLocationCorrections||{}),[key]:{latitude,longitude,displayName:query}}});setMessage(`Saved ${query} inside this report.`);setCorrection({query:'',latitude:'',longitude:''})};
   return <>
     <Section title="Spatial data" icon={<MapPinned size={14}/>}><div className="formatHint">Import GeoJSON, TopoJSON, KML, or a zipped shapefile. Geometry is normalized and saved with the report.</div><label>Source coordinate system<input value={crs} onChange={event=>setCrs(event.target.value)} placeholder="EPSG:4326"/></label><label className="imageUploadButton"><Upload size={14}/>{busy?'Importing…':visual.format.mapCustomGeometryName?'Replace spatial file':'Import spatial file'}<input type="file" disabled={busy} accept=".geojson,.json,.topojson,.kml,.zip,.shp" onChange={event=>{const file=event.target.files?.[0];if(file)void importFile(file);event.currentTarget.value=''}}/></label>{visual.format.mapCustomGeometryName&&<><small>{visual.format.mapCustomGeometryName} · {visual.format.mapCustomGeometry?.features?.length||0} features</small><label>Join property<input value={visual.format.mapGeometryJoinProperty||''} onChange={event=>updateVisual(v=>v.format.mapGeometryJoinProperty=event.target.value||undefined)} placeholder="Boundary property matching Location"/></label><button type="button" className="dangerBtn" onClick={()=>updateVisual(v=>{v.format.mapCustomGeometry=undefined;v.format.mapCustomGeometryName=undefined})}><Trash2 size={13}/>Remove spatial file</button></>}{message&&<small>{message}</small>}</Section>
-    <Section title="Location correction" icon={<LocateFixed size={14}/>}><div className="formatHint">Resolve an unmatched or ambiguous location without changing the source data.</div><label>Location query<input value={correction.query} onChange={event=>setCorrection(current=>({...current,query:event.target.value}))} placeholder="City, region, country"/></label><div className="twoCol"><label>Latitude<input type="number" min="-90" max="90" step="any" value={correction.latitude} onChange={event=>setCorrection(current=>({...current,latitude:event.target.value}))}/></label><label>Longitude<input type="number" min="-180" max="180" step="any" value={correction.longitude} onChange={event=>setCorrection(current=>({...current,longitude:event.target.value}))}/></label></div><button type="button" disabled={busy} onClick={()=>void saveCorrection()}><MapPinned size={13}/>Save correction</button></Section>
-    <Section title="Map layers" icon={<Layers3 size={14}/>}><div className="formatHint">Layers render from bottom to top. Use Layered mode to combine them.</div>{layers.map((layer,index)=><div className="mapLayerEditor" key={layer.id}><div><input type="checkbox" checked={layer.visible!==false} onChange={event=>updateLayer(layer.id,{visible:event.target.checked})}/><b>{layer.name}</b></div><div><button disabled={index===0} title="Move up" onClick={()=>moveLayer(index,-1)}><ArrowUpCircle size={13}/></button><button disabled={index===layers.length-1} title="Move down" onClick={()=>moveLayer(index,1)}><ArrowDownCircle size={13}/></button><input type="color" value={layer.color||'#118dff'} onChange={event=>updateLayer(layer.id,{color:event.target.value})}/></div></div>)}</Section>
+    <Section title="Local location correction" icon={<LocateFixed size={14}/>}><div className="formatHint">Resolve an unmatched city or place locally. The coordinates are saved with this report and do not call an external geocoder.</div><label>Location value<input value={correction.query} onChange={event=>setCorrection(current=>({...current,query:event.target.value}))} placeholder="Exactly as it appears in the data"/></label><div className="twoCol"><label>Latitude<input type="number" min="-90" max="90" step="any" value={correction.latitude} onChange={event=>setCorrection(current=>({...current,latitude:event.target.value}))}/></label><label>Longitude<input type="number" min="-180" max="180" step="any" value={correction.longitude} onChange={event=>setCorrection(current=>({...current,longitude:event.target.value}))}/></label></div><button type="button" onClick={saveCorrection}><MapPinned size={13}/>Save in report</button>{Object.values(visual.format.mapLocationCorrections||{}).length>0&&<small>{Object.values(visual.format.mapLocationCorrections||{}).length} local correction(s) saved.</small>}</Section>
   </>;
 }
 const _chartAxisTypes=new Set(['bar','column','stackedbar','stackedcolumn','line','area','combo','waterfall','scatter','bubble','histogram','boxplot','heatmap']);
@@ -1070,7 +1134,7 @@ function autoNameFromBindings(v:Visual){
     let title='';
     if(v.type==='textbox'||v.type==='button')return;
     if(v.type==='slicer')title=firstAxis.field;
-    else if(v.type==='map')title=`Map${describe(v.bindings.location?.[0]||v.bindings.detail?.[0]).field?` by ${describe(v.bindings.location?.[0]||v.bindings.detail?.[0]).field}`:''}`;
+    else if(v.type==='map'){const geography=v.bindings.location?.[0]||v.bindings.region?.[0]||v.bindings.country?.[0]||v.bindings.postalCode?.[0]||v.bindings.detail?.[0];title=`Map${describe(geography).field?` by ${describe(geography).field}`:''}`;}
     else if(v.type==='heatmap')title=[valueLabel,[firstLegend.field,firstAxis.field].filter(Boolean).join(' and ')].filter(Boolean).join(' by ');
     else if(v.type==='scatter')title=[firstValue.field,firstX.field||firstAxis.field].filter(Boolean).join(' by ');
     else if(v.type==='multirowcard')title=(v.bindings.values||[]).slice(0,3).map(x=>describe(x).field).filter(Boolean).join(', ');
@@ -1283,7 +1347,8 @@ export default function ReportWorkbench(){
       if(existingKeys.length){for(const k of existingKeys)(v.bindings as any)[k]=((v.bindings as any)[k]||[]).filter((x:string)=>x!==field);return}
       if(prefix==='hierarchy'){const h=(project.model.hierarchies||[]).find((x:any)=>x.id===field);if(h&&visualProfile(v.type).wells.some(w=>w.key==='axis')){v.bindings.hierarchy={id:h.id,level:0};v.bindings.axis=[h.levels[0].field]}return}
       const wells=visualProfile(v.type).wells;
-      const preferred:VisualWellKey[]=v.type==='map'?(prefix==='field'?['location','detail','color','label']:['size','tooltips']):(prefix==='field'?['axis','legend']:['values','target','tooltips']);
+      const inferredRole=v.type==='map'&&prefix==='field'?inferMapRole(field):undefined;
+      const preferred:VisualWellKey[]=v.type==='map'?(prefix==='field'?(inferredRole?[inferredRole,'location','detail','color','label']:['location','detail','color','label']):['size','tooltips']):(prefix==='field'?['axis','legend']:['values','target','tooltips']);
       let target=preferred.map(k=>wells.find(w=>w.key===k)).find(w=>w&&!((v.bindings as any)[w.key]||[]).length);
       if(!target&&prefix!=='field')target=wells.find(w=>w.key==='values');
       if(!target&&prefix==='field')target=wells.find(w=>w.key==='axis'||w.key==='legend');

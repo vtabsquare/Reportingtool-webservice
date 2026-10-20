@@ -1,5 +1,5 @@
 export type VisualType='kpi'|'card'|'multirowcard'|'bar'|'column'|'stackedbar'|'stackedcolumn'|'line'|'area'|'combo'|'pie'|'donut'|'treemap'|'funnel'|'waterfall'|'scatter'|'bubble'|'radar'|'heatmap'|'histogram'|'boxplot'|'gauge'|'progress'|'map'|'table'|'matrix'|'slicer'|'textbox'|'button'|'image'|'shape';
-export type MapMode='symbol'|'filled'|'density'|'path'|'layered';
+export type MapMode='bubble'|'filled'|'symbol'|'density'|'path'|'layered';
 export type MapLayerType='symbol'|'filled'|'density'|'path';
 export type MapLayerConfig={id:string;name:string;type:MapLayerType;visible?:boolean;opacity?:number;color?:string;size?:number};
 export type VisualFilter={field:string,operator:string,value:any,rankingField?:string,rankingDirection?:'top'|'bottom',condition?:'and'|'or',operator2?:string,value2?:any};
@@ -19,9 +19,10 @@ export type ConditionalFormatRule={id:string;enabled?:boolean;formatBy?:Conditio
 export type VisualFormat={
   totalColor?:string; otherColor?:string; maxBreakdowns?:number;
   accent:string; fontSize:number; showTitle:boolean; dataLabels:boolean; background?:string; fontFamily?:string;
+  displayUnits?:DisplayUnits; displayUnitDecimals?:number;
   fieldFormats?:Record<string,NumberFormat>; fieldDisplayNames?:Record<string,string>; titleFontFamily?:string; titleFontSize?:number; titleBold?:boolean; titleColor?:string; labelFontSize?:number;
   labelColor?:string; comboSecondaryLabelColor?:string; labelPosition?:'top'|'center'|'inside'|'outside'; legendVisible?:boolean;
-  legendPosition?:'top'|'bottom'|'left'|'right'; borderVisible?:boolean; borderColor?:string; borderWidth?:number;
+  legendPosition?:'top'|'bottom'; borderVisible?:boolean; borderColor?:string; borderWidth?:number;
   cornerRadius?:number; cornerRadii?:CornerRadii; cornerLinked?:boolean; shadow?:boolean; backgroundTransparency?:number; gridLines?:boolean; borderStyle?:'solid'|'dashed'|'dotted'; borderEdges?:BorderEdges;
   showDataPoints?:boolean; dataPointSize?:number; tooltipEnabled?:boolean; tooltipBackground?:string; tooltipColor?:string; indicatorEnabled?:boolean;
   favorableDirection?:'up'|'down'; positiveColor?:string; negativeColor?:string; neutralColor?:string;
@@ -77,12 +78,16 @@ export type VisualFormat={
   buttonBackground?:string; buttonTextColor?:string; buttonFontSize?:number; buttonCornerRadius?:number; buttonBorderVisible?:boolean; buttonBorderColor?:string;
   buttonSelectionEnabled?:boolean; buttonSelectionGroup?:string; buttonSelectedBackground?:string; buttonSelectedTextColor?:string; buttonSelectedBorderColor?:string;
   mapMode?:MapMode; mapStyle?:'light'|'dark'|'streets'|'satellite'|'minimal'|'custom'; mapStyleUrl?:string;
+  mapGeographyScope?:'auto'|'india'|'country'|'world'; mapDefaultCountry?:string;
   mapAutoFit?:boolean; mapCenterLatitude?:number; mapCenterLongitude?:number; mapZoom?:number; mapMinZoom?:number; mapMaxZoom?:number; mapNavigation?:boolean;
   mapClustering?:boolean; mapClusterRadius?:number; mapMarkerSize?:number; mapMarkerMinSize?:number; mapMarkerMaxSize?:number; mapMarkerOpacity?:number; mapMarkerColor?:string;
   mapBorderColor?:string; mapBorderWidth?:number; mapFillColor?:string; mapFillOpacity?:number; mapMissingColor?:string;
-  mapHeatRadius?:number; mapHeatIntensity?:number; mapHeatOpacity?:number; mapLineColor?:string; mapLineWidth?:number; mapLineOpacity?:number;
-  mapLabels?:boolean; mapLabelColor?:string; mapLabelSize?:number; mapAllowOverlap?:boolean; mapLegendTitle?:string;
+  mapColorScale?:'measure'|'rules'|'continuous'|'diverging'|'threshold'|'categorical'; mapColorMeasure?:string; mapMinColor?:string; mapMidColor?:string; mapMaxColor?:string; mapThresholds?:string;
+  mapRuleLow?:number; mapRuleHigh?:number; mapRuleLowColor?:string; mapRuleMidColor?:string; mapRuleHighColor?:string;
+  mapHeatColor?:string; mapHeatRadius?:number; mapHeatIntensity?:number; mapHeatOpacity?:number; mapLineColor?:string; mapLineWidth?:number; mapLineOpacity?:number;
+  mapLabels?:boolean; mapCountryLabels?:boolean; mapLabelColor?:string; mapLabelSize?:number; mapAllowOverlap?:boolean; mapLegendTitle?:string;
   mapLayers?:MapLayerConfig[]; mapCustomGeometry?:any; mapCustomGeometryName?:string; mapGeometryJoinProperty?:string; mapSourceCrs?:string;
+  mapLocationCorrections?:Record<string,{latitude:number;longitude:number;displayName?:string}>;
 };
 export type VisualBindings={axis?:string[],values?:string[],target?:string[],legend?:string[],tooltips?:string[],x?:string[],size?:string[],location?:string[],latitude?:string[],longitude?:string[],geometry?:string[],detail?:string[],color?:string[],label?:string[],path?:string[],country?:string[],region?:string[],postalCode?:string[],hierarchy?:{id:string,level:number}};
 export type VisualSort={field:string,direction:'asc'|'desc'};

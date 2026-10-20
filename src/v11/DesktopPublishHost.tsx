@@ -6,9 +6,7 @@ import PublishToServiceDialog, { type PublishOptions, type PublishResult, type W
 function workspaceUrl(): string {
   const configured = String(import.meta.env.VITE_WEB_URL || localStorage.getItem('vtab_web_workspace_url') || '').trim().replace(/\/+$/, '');
   if (configured) return configured;
-  const entered = (window.prompt('Web Workspace URL', 'http://127.0.0.1:4173') || '').trim().replace(/\/+$/, '');
-  if (entered) localStorage.setItem('vtab_web_workspace_url', entered);
-  return entered;
+  return 'https://vtab-reporting-web-uzpg.onrender.com';
 }
 
 export default function DesktopPublishHost() {
@@ -29,12 +27,24 @@ export default function DesktopPublishHost() {
     changeDescription: string,
     options: PublishOptions,
   ): Promise<PublishResult> => {
-    await save();
+    try {
+      await save();
+    } catch (saveError) {
+      console.warn('Pre-publish auto-save note:', saveError);
+    }
     let snapshot = structuredClone(project);
+    if (!snapshot.report) snapshot.report = { id: '', name: reportName, pages: [] };
     const targetReportId = options.reportId || snapshot.report?.id;
     if (targetReportId) snapshot.report.id = targetReportId;
-    const sync = await api<any>('/cloud/sync-data', { method: 'POST', body: JSON.stringify(snapshot) });
-    if (sync?.project) snapshot = sync.project;
+    snapshot.paginatedPublishMode = options.paginatedMode || snapshot.paginatedPublishMode || 'together';
+    try {
+      const sync = await api<any>('/cloud/sync-data', { method: 'POST', body: JSON.stringify(snapshot) });
+      if (sync?.project) snapshot = sync.project;
+    } catch (syncError: any) {
+      const message = String(syncError?.message || syncError).toLowerCase();
+      if (message.includes('401') || message.includes('session') || message.includes('sign in') || message.includes('auth')) throw syncError;
+      console.warn('Cloud data sync note:', syncError);
+    }
     const result = await api<PublishResult>('/service/publish', {
       method: 'POST',
       body: JSON.stringify({
@@ -43,7 +53,7 @@ export default function DesktopPublishHost() {
         reportName,
         project: snapshot,
         overwrite: options.overwrite,
-        desktopVersion: import.meta.env.VITE_APP_VERSION || '5.0.16',
+        desktopVersion: import.meta.env.VITE_APP_VERSION || '5.0.19',
         reportSchemaVersion: '1.0',
         changeDescription,
         metadata: {
@@ -54,6 +64,7 @@ export default function DesktopPublishHost() {
     });
     if (result.reportId && result.reportId !== project.report?.id) {
       update((current: any) => {
+        if (!current.report) current.report = {};
         current.report.id = result.reportId;
         return current;
       });
@@ -62,9 +73,8 @@ export default function DesktopPublishHost() {
   };
 
   const openReport = (result: PublishResult) => {
-    const base = workspaceUrl();
-    if (!base) return;
-    window.open(`${base}/?workspace=1&report=${encodeURIComponent(result.reportId)}`, '_blank');
+    const targetUrl = result.reportUrl || `${workspaceUrl()}/?workspace=1&report=${encodeURIComponent(result.reportId)}`;
+    window.open(targetUrl, '_blank');
   };
 
   return <PublishToServiceDialog
@@ -73,5 +83,6 @@ export default function DesktopPublishHost() {
     onClose={() => setOpen(false)}
     onPublish={publish}
     onOpenReport={openReport}
+    paginatedReportCount={project.paginatedReports?.length || 0}
   />;
 }

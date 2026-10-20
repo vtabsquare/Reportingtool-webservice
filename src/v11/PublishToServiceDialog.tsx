@@ -26,7 +26,7 @@ type ExistingReport = {
   current_version_id?: string;
 };
 
-export type PublishOptions = { overwrite: boolean; reportId?: string };
+export type PublishOptions = { overwrite: boolean; reportId?: string; paginatedMode?: 'together'|'separate' };
 
 export type PublishResult = {
   reportId: string;
@@ -48,12 +48,14 @@ export default function PublishToServiceDialog({
   onClose,
   onPublish,
   onOpenReport,
+  paginatedReportCount = 0,
 }: {
   reportId?: string;
   reportName: string;
   onClose: () => void;
   onPublish: (workspace: Workspace, name: string, changeDescription: string, options: PublishOptions) => Promise<PublishResult>;
   onOpenReport: (result: PublishResult) => void;
+  paginatedReportCount?: number;
 }) {
   const [context, setContext] = useState<PublishContext | null>(null);
   const [workspaceId, setWorkspaceId] = useState('');
@@ -66,8 +68,10 @@ export default function PublishToServiceDialog({
   const [error, setError] = useState('');
   const [result, setResult] = useState<PublishResult | null>(null);
   const [replaceTarget, setReplaceTarget] = useState<ExistingReport | null>(null);
+  const [paginatedMode, setPaginatedMode] = useState<'together'|'separate'>('together');
 
-  useEffect(() => {
+  const loadContext = () => {
+    setError('');
     api<PublishContext>('/service/publish-context')
       .then(data => {
         setContext(data);
@@ -75,7 +79,22 @@ export default function PublishToServiceDialog({
         if (first) setWorkspaceId(first.id);
       })
       .catch(reason => setError(reason?.message || String(reason)));
+  };
+
+  useEffect(() => {
+    loadContext();
   }, []);
+
+  const authError = (message: string) => {
+    const normalized=message.toLowerCase();
+    return normalized.includes('401')||normalized.includes('session')||normalized.includes('sign in')||normalized.includes('auth')||normalized.includes('not signed in');
+  };
+  const requestSignIn = () => {
+    localStorage.removeItem('vtab_supabase_token');
+    localStorage.removeItem('vtab_workspace_token');
+    window.dispatchEvent(new CustomEvent('vtab:session-expired'));
+    onClose();
+  };
 
   const publishable = useMemo(
     () => context?.workspaces.filter(workspace => workspace.canPublish) || [],
@@ -118,6 +137,7 @@ export default function PublishToServiceDialog({
       setResult(await onPublish(selected, name.trim(), changeDescription.trim(), {
         overwrite,
         reportId: target?.id || reportId,
+        paginatedMode: paginatedReportCount ? paginatedMode : undefined,
       }));
       setReplaceTarget(null);
     } catch (reason: any) {
@@ -163,7 +183,10 @@ export default function PublishToServiceDialog({
             <h3>Replace existing report?</h3>
             <p><b>{replaceTarget.name}</b> already exists in <b>{selected?.name}</b>.</p>
             <p>Replacing it updates the published report for viewers and keeps the previous version in version history.</p>
-            {error && <div className="servicePublishError">{error}</div>}
+            {error && <div className="servicePublishError" style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+              <span>{error}</span>
+              {authError(error)&&<button className="primary" onClick={requestSignIn}>Sign in to Reporting Service</button>}
+            </div>}
             <div className="servicePublishReplaceActions">
               <button onClick={() => setReplaceTarget(null)} disabled={busy}>No, go back</button>
               <button className="primary" onClick={() => void performPublish(true, replaceTarget)} disabled={busy}>
@@ -178,21 +201,28 @@ export default function PublishToServiceDialog({
             {context && !publishable.length && <div className="servicePublishWarning">Your account has Viewer access only. Ask a workspace Admin for Contributor, Member, or Admin access.</div>}
             {!!publishable.length && <>
               <label>Workspace<select value={workspaceId} onChange={event => setWorkspaceId(event.target.value)}>{publishable.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name} · {workspace.role}</option>)}</select></label>
-              {selected?.isPersonal ? <div className="servicePublishWarning"><b>Private destination.</b> Reports in My Workspace are visible only to you and cannot be shared. Choose or create a team workspace for collaboration.</div> : <div className="servicePublishDescription"><b>Team workspace.</b> Workspace members can access published content according to their role. Viewer access remains restricted by RLS.</div>}
+              {selected?.isPersonal ? <div className="servicePublishWarning"><b>Private destination.</b><span>Reports in My Workspace are visible only to you and cannot be shared. Choose or create a team workspace for collaboration.</span></div> : <div className="servicePublishDescription"><b>Team workspace.</b> Workspace members can access published content according to their role. Viewer access remains restricted by RLS.</div>}
               {selected?.description && <p className="servicePublishDescription">{selected.description}</p>}
               <label>Report name<input value={name} maxLength={160} onChange={event => setName(event.target.value)}/></label>
               <label>What changed? <span>Optional</span><textarea rows={3} value={changeDescription} maxLength={500} onChange={event => setChangeDescription(event.target.value)} placeholder="Describe this version"/></label>
+              {paginatedReportCount>0&&<fieldset className="paginatedPublishChoice"><legend>Publish paginated reports</legend><p>{paginatedReportCount} paginated report{paginatedReportCount===1?' is':'s are'} included in this project.</p><label className={paginatedMode==='together'?'selected':''}><input type="radio" name="paginatedMode" value="together" checked={paginatedMode==='together'} onChange={()=>setPaginatedMode('together')}/><span><b>Publish together</b><small>Keep one package and add a Paginated Reports entry inside the published dashboard.</small></span></label><label className={paginatedMode==='separate'?'selected':''}><input type="radio" name="paginatedMode" value="separate" checked={paginatedMode==='separate'} onChange={()=>setPaginatedMode('separate')}/><span><b>Publish separately</b><small>Publish the dashboard and each paginated report as separate workspace items using the same semantic model.</small></span></label></fieldset>}
               <div className="servicePublishWarning"><CheckCircle2 size={16}/><span>Publish automatically creates or updates the report and its connected semantic model. No separate model setup is required.</span></div>
               {reportsBusy && <div className="servicePublishLoading"><LoaderCircle className="spin" size={16}/>Checking existing reports…</div>}
               {conflict && !reportsBusy && <div className="servicePublishWarning"><Replace size={16}/><span><b>{conflict.name}</b> already exists. Publish will ask before replacing it.</span></div>}
               {reportsError && <div className="servicePublishError"><span>{reportsError}</span><button onClick={() => void loadReports(workspaceId)}>Retry check</button></div>}
-              <div className="servicePublishCompatibility"><span>Desktop {import.meta.env.VITE_APP_VERSION || '5.0.16'}</span><span>Report schema {context?.reportSchemaVersion || '1.0'}</span><span>Service API {context?.serviceApiVersion || 'v1'}</span></div>
+              <div className="servicePublishCompatibility"><span>Desktop {import.meta.env.VITE_APP_VERSION || '5.0.19'}</span><span>Report schema {context?.reportSchemaVersion || '1.0'}</span><span>Service API {context?.serviceApiVersion || 'v1'}</span></div>
             </>}
-            {error && <div className="servicePublishError">{error}</div>}
+            {error && <div className="servicePublishError" style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+              <span>{error}</span>
+              <div style={{display:'flex',gap:8,alignItems:'center',marginTop:4}}>
+                {!context&&<button type="button" onClick={loadContext}>Retry</button>}
+                {authError(error)&&<button type="button" className="primary" onClick={requestSignIn}>Sign in to Reporting Service</button>}
+              </div>
+            </div>}
           </div>
         )}
 
-        {!result && !replaceTarget && <footer><button onClick={onClose} disabled={busy}>Cancel</button><button className="primary" onClick={publish} disabled={!selected || !name.trim() || busy || reportsBusy || !!reportsError}>{busy ? <LoaderCircle className="spin" size={16}/> : <Send size={16}/>} {busy ? 'Publishing…' : 'Publish'}</button></footer>}
+        {!result && !replaceTarget && <footer><button onClick={onClose} disabled={busy}>Cancel</button><button className="primary" onClick={publish} disabled={!selected || !name.trim() || busy || reportsBusy}>{busy ? <LoaderCircle className="spin" size={16}/> : <Send size={16}/>} {busy ? 'Publishing…' : 'Publish'}</button></footer>}
       </section>
     </div>
   );
