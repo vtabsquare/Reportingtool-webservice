@@ -480,9 +480,23 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     const narratives=Array.from(reportPage.querySelectorAll<HTMLElement>('[data-export-narrative]')).map(node=>{try{return JSON.parse(node.dataset.exportNarrative||'{}')}catch{return null}}).filter((value:any)=>value&&value.title&&Array.isArray(value.points)&&value.points.length).slice(0,6);
     rendered.push({name:pageDefinition.name||`Page ${index+1}`,image:await captureViewerPage(reportPage,pageWidth,pageHeight),insights,narratives});
    }
-   const safe=(report?.name||'VTAB_Report').replace(/[^A-Za-z0-9_-]+/g,'_'),extension=fmt==='pdf'?'pdf':'pptx';
-   await apiDownloadPost(`/published/${reportId}/export-rendered/${fmt}`,`${safe}.${extension}`,{pages:rendered,project});
-  }catch(error:any){alert(error?.message||String(error))}finally{setPageIndex(originalPage);setExporting('')}
+   const safe = (report?.name || 'VTAB_Report').replace(/[^A-Za-z0-9_-]+/g, '_');
+    const extension = fmt === 'pdf' ? 'pdf' : 'pptx';
+    const exportProject = {
+      name: report?.name || project?.name || 'VTAB Report',
+      report: {
+        name: report?.name || project?.report?.name || project?.name || 'VTAB Report'
+      }
+    };
+    await apiDownloadPost(
+      `/published/${reportId}/export-rendered/${fmt}`,
+      `${safe}.${extension}`,
+      {
+        pages: rendered,
+        project: exportProject
+      }
+    );
+   }catch(error:any){alert(error?.message||String(error))}finally{setPageIndex(originalPage);setExporting('')}
  };
  const shareEmail=()=>{const to=window.prompt('Recipient email(s), comma separated:','');if(!to)return;const attach=(window.prompt('Attachment: none, pdf or pptx','none')||'none').toLowerCase();api(`/published/${reportId}/share-email`,{method:'POST',body:JSON.stringify({to,attach:attach==='none'?'':attach,subject:`VTAB Report: ${report.name}`,message:'A VTAB Workspace report has been shared with you.',reportUrl:location.href})}).then(()=>alert('Report shared by email.')).catch((e:any)=>alert(e.message))};
  const executeAction=(v:Visual)=>{
