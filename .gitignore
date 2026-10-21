@@ -34,12 +34,11 @@ npm-debug.log*
 data/*.db
 data/*.db-*
 data/*.duckdb
-data/columnar/ETL_*
-data/columnar/Imported_*
-data/columnar/Calendar.parquet
 
 # Python & Screenshots
 __pycache__/
 *.pyc
 *.png
 
+data/*.parquet
+data/columnar/

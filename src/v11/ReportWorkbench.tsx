@@ -629,14 +629,14 @@ const handlePointClick = (field: string, value: any) => {
         onSlicer({field:axis,operator:next.length===1?'equals':'in',value:next.length===1?next[0]:next});
       }
     };
-    const choose=(val:string)=>{const next=v.format.slicerSingleSelect?[val]:slicerSelected.includes(val)?slicerSelected.filter(x=>x!==val):[...slicerSelected,val];apply(next);if(v.format.slicerSingleSelect)setSlicerDropdownOpen(false)};
+    const choose=(val:string)=>{const single=v.format.slicerSingleSelect||!v.format.slicerMultiSelect;const next=single?(slicerSelected.includes(val)?[]:[val]):slicerSelected.includes(val)?slicerSelected.filter(x=>x!==val):[...slicerSelected,val];apply(next);if(single)setSlicerDropdownOpen(false)};
     const clearSlicer=()=>{setSlicerSelected([]);setSlicerSearch('');setSlicerDropdownOpen(false);onSlicer(null)};
 
     const tilesPerRow=v.format.tilesPerRow||3;
     const tilesPerColumn=v.format.tilesPerColumn||0;
     const gridStyle:any={gridTemplateColumns:`repeat(${tilesPerRow}, 1fr)`};
     if(tilesPerColumn>0)gridStyle.gridTemplateRows=`repeat(${tilesPerColumn}, 1fr)`;
-    const allSelected=allOptions.length>0&&allOptions.every(option=>slicerSelected.includes(option));
+    const allSelected=Boolean(v.format.slicerSelectAll&&!v.format.slicerSingleSelect&&v.format.slicerMultiSelect&&allOptions.length>1&&allOptions.every(option=>slicerSelected.includes(option)));
     const slicerStyle:any={...style,'--slicer-font':displayFormat.tableFontFamily||'Segoe UI','--slicer-text':displayFormat.tableTextColor||'#242424','--slicer-size':`${displayFormat.tableFontSize||11}px`,'--slicer-weight':displayFormat.tableTextBold?700:400,'--slicer-style':displayFormat.tableTextItalic?'italic':'normal','--slicer-wrap':displayFormat.tableTextWrap?'normal':'nowrap','--slicer-align':displayFormat.tableTextAlign||'left','--slicer-bg':displayFormat.tableBackground||'#ffffff','--slicer-alt':displayFormat.tableAlternatingRows===false?(displayFormat.tableBackground||'#ffffff'):(displayFormat.tableAlternateColor||'#f8fafc'),'--slicer-row-padding':`${displayFormat.tableRowPadding??8}px`};
     const selectionLabel=!slicerSelected.length||allSelected?'All':slicerSelected.length===1?slicerSelected[0]:slicerSelected.length<=2?slicerSelected.join(', '):'(Multiple items)';
     const dropdown=<div className="slicerDropdownShell" ref={slicerDropdownRef}>

@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 
 type Report = { id: string; itemKey?: string; itemType?: string; paginatedId?: string; name: string; published_at: string; updated_at?: string; pages?: number | null; role: string; sourceType?: string; project?: any; workspace_id?: string; workspace_name?: string; workspace_is_personal?: boolean };
-type Workspace = { id: string; name: string; created_at: string; role: string; member_count: number; report_count: number; is_personal?: boolean };
+type Workspace = { id: string; name: string; created_at: string; role: string; member_count: number; report_count: number; is_personal?: boolean; access_scope?: 'workspace' | 'report'; can_manage_workspace?: boolean };
 type WorkspaceDetail = Workspace & { members: any[]; reports: any[] };
 
 const workspaceTarget = () => {
@@ -90,6 +90,10 @@ export default function CloudWorkspace({ session }: { session: any }) {
   const [reports, setReports] = useState<Report[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceDetail | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [loadingWorkspaceId, setLoadingWorkspaceId] = useState<string | null>(null);
+  const [loadingWorkspaceName, setLoadingWorkspaceName] = useState('');
+  const workspaceReqRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [targetDenied, setTargetDenied] = useState("");
@@ -154,7 +158,10 @@ export default function CloudWorkspace({ session }: { session: any }) {
       if (res) {
         const ordered = [...res].sort((a, b) => (a.name.toLowerCase() === 'my workspace' ? 0 : 1) - (b.name.toLowerCase() === 'my workspace' ? 0 : 1) || a.name.localeCompare(b.name));
         setWorkspaces(ordered);
-        if (!activeWorkspace && ordered[0]) void loadWorkspace(ordered[0].id);
+        if (!activeWorkspace && ordered[0]) {
+          const initial = ordered.find(workspace => !isPersonalWorkspace(workspace)) || ordered[0];
+          void loadWorkspace(initial.id);
+        }
       }
       const target = workspaceTarget();
       if (target.reportId && !r.some((x: any) => x.id === target.reportId)) {
@@ -231,11 +238,27 @@ export default function CloudWorkspace({ session }: { session: any }) {
     } catch (err: any) { alert(err.message || String(err)); }
   };
 
-  const loadWorkspace = async (id: string) => {
+  const loadWorkspace = async (id: string, opts?: { silent?: boolean }) => {
+    const target = workspaces.find(workspace => workspace.id === id);
+    const isDifferentWorkspace = !activeWorkspace || activeWorkspace.id !== id;
+    const requestId = ++workspaceReqRef.current;
+    if (!opts?.silent && isDifferentWorkspace) {
+      setLoadingWorkspaceId(id);
+      setLoadingWorkspaceName(target?.name || '');
+      setWorkspaceLoading(true);
+    }
     try {
       const data = await api<WorkspaceDetail>(`/cloud/workspaces/${id}`);
-      setActiveWorkspace(data);
-    } catch (err: any) { alert(err.message || 'Failed to load workspace details'); }
+      if (requestId === workspaceReqRef.current) setActiveWorkspace(data);
+    } catch (err: any) {
+      if (requestId === workspaceReqRef.current) alert(err.message || 'Failed to load workspace details');
+    } finally {
+      if (requestId === workspaceReqRef.current && !opts?.silent && isDifferentWorkspace) {
+        setWorkspaceLoading(false);
+        setLoadingWorkspaceId(null);
+        setLoadingWorkspaceName('');
+      }
+    }
   };
 
   const deleteWorkspace = async () => {
@@ -329,8 +352,16 @@ export default function CloudWorkspace({ session }: { session: any }) {
   }, [workspaces, workspaceSearch]);
 
   const myWorkspace = useMemo(() => {
-    return workspaces.find(w => w.name.toLowerCase() === 'my workspace') || workspaces[0];
+    return workspaces.find(isPersonalWorkspace) || null;
   }, [workspaces]);
+
+  const effectiveTeamWorkspace = useMemo(() => {
+    if (loadingWorkspaceId) {
+      const pending = workspaces.find(workspace => workspace.id === loadingWorkspaceId);
+      if (pending && !isPersonalWorkspace(pending)) return pending;
+    }
+    return activeWorkspace && !isPersonalWorkspace(activeWorkspace) ? activeWorkspace : null;
+  }, [loadingWorkspaceId, activeWorkspace, workspaces]);
 
   // ─── VIEWER MODE ─────────────────────────────────────────────────────────────
   if (viewing) {
@@ -550,17 +581,17 @@ export default function CloudWorkspace({ session }: { session: any }) {
           )}
 
           {/* Currently open team workspace pinned to left rail (Matching Reference Image 1 "BRNZ Layer" & Image 5 "Enhanced Reports") */}
-          {activeWorkspace && activeWorkspace.id !== myWorkspace?.id && (
+          {effectiveTeamWorkspace && (
             <button 
-              className={`pbi-rail-item ${!workspacesDrawerOpen && viewMode === 'workspaces' && activeWorkspace.id !== myWorkspace?.id ? 'active' : ''}`}
-              title={activeWorkspace.name}
+              className={`pbi-rail-item ${!workspacesDrawerOpen && viewMode === 'workspaces' ? 'active' : ''}`}
+              title={effectiveTeamWorkspace.name}
               onClick={() => {
                 setViewMode('workspaces');
                 setWorkspacesDrawerOpen(false);
               }}
             >
               <Users size={18} />
-              <span className="pbi-rail-label">{activeWorkspace.name}</span>
+              <span className="pbi-rail-label">{effectiveTeamWorkspace.name}</span>
             </button>
           )}
 
@@ -637,7 +668,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                 {/* All workspaces section */}
                 <div>
                   <div className="pbi-drawer-section-label">All</div>
-                  {filteredWorkspaces.filter(w => w.id !== myWorkspace?.id).map(w => (
+                  {filteredWorkspaces.filter(w => !isPersonalWorkspace(w)).map(w => (
                     <button 
                       key={w.id}
                       className={`pbi-workspace-card ${activeWorkspace?.id === w.id && viewMode === 'workspaces' ? 'active' : ''}`}
@@ -655,7 +686,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                           {w.name}
                         </div>
                         <small style={{ color: '#616161', fontSize: 11 }}>
-                          {w.report_count} report{w.report_count !== 1 ? 's' : ''} · {w.role}
+                          {w.report_count} report{w.report_count !== 1 ? 's' : ''} · {w.access_scope === 'report' ? 'Report-level access' : w.role}
                         </small>
                       </div>
                     </button>
@@ -1051,7 +1082,16 @@ export default function CloudWorkspace({ session }: { session: any }) {
           {/* ══════════════════════════════════════════════════════════════
               WORKSPACE DETAIL VIEW (Matching Image 1 & Image 5)
              ══════════════════════════════════════════════════════════════ */}
-          {!loading && viewMode === 'workspaces' && activeWorkspace && (
+          {!loading && viewMode === 'workspaces' && workspaceLoading && (
+            <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:420,gap:16,padding:32}} role="status">
+              <div style={{width:36,height:36,border:'3px solid #e1e1e1',borderTopColor:'#0d6257',borderRadius:'50%',animation:'pbiSpin .7s linear infinite'}}/>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:6,textAlign:'center'}}>
+                <b style={{color:'#242424',fontSize:16,fontWeight:600}}>Loading {loadingWorkspaceName?`"${loadingWorkspaceName}"`:'workspace'} dashboards…</b>
+                <span style={{color:'#616161',fontSize:12}}>Fetching reports, semantic models, and workspace assets</span>
+              </div>
+            </div>
+          )}
+          {!loading && !workspaceLoading && viewMode === 'workspaces' && activeWorkspace && (
             <div>
               {/* Workspace Top Title Bar (Matching Reference Image 1 "BRNZ Layer") */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 28px 12px', background: '#ffffff', borderBottom: '1px solid #edebe9', flexWrap: 'wrap', gap: 16 }}>
@@ -1067,20 +1107,24 @@ export default function CloudWorkspace({ session }: { session: any }) {
                       <span style={roleBadgeStyle(activeWorkspace.role)}>{activeWorkspace.role}</span>
                     </div>
                     <small style={{ color: '#616161', fontSize: 12 }}>
-                      {isPersonalWorkspace(activeWorkspace) ? 'Personal workspace · Private to your account' : `${activeWorkspace.member_count ?? activeWorkspace.members?.length ?? 1} member${(activeWorkspace.member_count ?? activeWorkspace.members?.length ?? 1) !== 1 ? 's' : ''}`}
+                      {isPersonalWorkspace(activeWorkspace)
+                        ? 'Personal workspace · Private to your account'
+                        : activeWorkspace.access_scope === 'report'
+                          ? `Report-level access · ${activeWorkspace.report_count} accessible report${activeWorkspace.report_count !== 1 ? 's' : ''}`
+                          : `${activeWorkspace.member_count ?? activeWorkspace.members?.length ?? 1} member${(activeWorkspace.member_count ?? activeWorkspace.members?.length ?? 1) !== 1 ? 's' : ''}`}
                     </small>
                   </div>
                 </div>
 
                 {/* Right-side Workspace Header Utilities (Matching Reference Image 1: Manage access, Workspace settings/delete) */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {!isPersonalWorkspace(activeWorkspace) && (
+                  {!isPersonalWorkspace(activeWorkspace) && ['Admin','Owner'].includes(activeWorkspace.role) && (
                     <button onClick={addMember} className="pbi-btn-tool" style={{ borderColor: 'transparent' }}>
                       <Users size={15} color="#0d6257" /> Manage access
                     </button>
                   )}
 
-                  {activeWorkspace.role === 'Admin' && !isPersonalWorkspace(activeWorkspace) && (
+                  {(activeWorkspace.can_manage_workspace ?? activeWorkspace.role === 'Admin') && !isPersonalWorkspace(activeWorkspace) && (
                     <button onClick={deleteWorkspace} className="pbi-btn-tool" style={{ borderColor: 'transparent', color: '#dc2626' }}>
                       <Trash2 size={15} /> Delete workspace
                     </button>
@@ -1092,16 +1136,16 @@ export default function CloudWorkspace({ session }: { session: any }) {
               <SemanticModelService 
                 workspace={activeWorkspace} 
                 reports={activeWorkspace.reports} 
-                onNewItem={() => fileInput.current?.click()}
+                onNewItem={['Admin','Member','Contributor','Owner','Co-Owner'].includes(activeWorkspace.role) ? () => fileInput.current?.click() : undefined}
                 otherWorkspaces={workspaces.filter(w => w.id !== activeWorkspace.id)}
                 onSelectWorkspace={id => void loadWorkspace(id)}
                 onOpenReport={r => {
-                  const report = reports.find(item => (r.itemKey && item.itemKey === r.itemKey) || (item.id === r.id && item.paginatedId === r.paginatedId)) || { ...r, role: activeWorkspace.role, pages: 0, published_at: r.published_at || r.updated_at || new Date().toISOString() };
+                  const report = reports.find(item => (r.itemKey && item.itemKey === r.itemKey) || (item.id === r.id && item.paginatedId === r.paginatedId)) || { ...r, role: r.role || activeWorkspace.role, pages: 0, published_at: r.published_at || r.updated_at || new Date().toISOString() };
                   history.replaceState(null, '', `${location.pathname}?workspace=1&report=${encodeURIComponent(r.id)}`);
                   setViewing(report as Report);
                 }} 
-                onReportSettings={r => setSettingsReport({ ...(reports.find(item => item.id === r.id && !item.paginatedId) || r), role: activeWorkspace.role, pages: 0, published_at: r.published_at || r.updated_at || new Date().toISOString() } as Report)} 
-                onShareReport={r => setSharing({ ...(reports.find(item => item.id === r.id && !item.paginatedId) || r), role: activeWorkspace.role, pages: 0, published_at: r.published_at || r.updated_at || new Date().toISOString() } as Report)} 
+                onReportSettings={r => setSettingsReport({ ...(reports.find(item => item.id === r.id && !item.paginatedId) || r), role: r.role || activeWorkspace.role, pages: 0, published_at: r.published_at || r.updated_at || new Date().toISOString() } as Report)}
+                onShareReport={r => setSharing({ ...(reports.find(item => item.id === r.id && !item.paginatedId) || r), role: r.role || activeWorkspace.role, pages: 0, published_at: r.published_at || r.updated_at || new Date().toISOString() } as Report)}
                 onDeleteReport={async r => {
                   if (!confirm(`Delete report "${r.name}"? This cannot be undone.`)) return;
                   try {

@@ -4,6 +4,7 @@ import'./styles.css';
 import'./powerbi.css';
 import'@xyflow/react/dist/style.css';
 import'./formatting-authority.css';
+import NetworkStatusGuard from'./components/NetworkStatusGuard';
 
 const root=createRoot(document.getElementById('root')!);
 
@@ -69,7 +70,7 @@ function StartupError({error}:{error:any}){
 
 const entry=import.meta.env.VITE_APP_MODE==='WORKSPACE_ONLY'?import('./services'):import('./studio');
 entry.then(({default:Application})=>{
-  root.render(<React.StrictMode><Application/></React.StrictMode>);
+  root.render(<React.StrictMode><NetworkStatusGuard><Application/></NetworkStatusGuard></React.StrictMode>);
 }).catch(error=>{
   console.error('VTAB startup error',error);
   root.render(<StartupError error={error}/>);

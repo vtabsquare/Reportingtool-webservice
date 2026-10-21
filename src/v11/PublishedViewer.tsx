@@ -1,4 +1,4 @@
-import{useEffect,useMemo,useRef,useState}from'react';
+import{useCallback,useEffect,useMemo,useRef,useState}from'react';
 import{createPortal}from'react-dom';
 import{ChevronLeft,ChevronRight,ChevronDown,RefreshCcw,Maximize2,Minimize2,Home,CalendarDays,ShieldCheck,MonitorUp,Expand,Scaling,Eraser,BarChart3,PieChart,Table2,LayoutGrid,Filter,TrendingUp,MousePointerClick,FileDown,Presentation,Mail,FileText,Printer,Code2,QrCode,Star,Settings2,Share2,ArrowLeft,Download,FileArchive,Check,Copy,ExternalLink,Globe,Users,BellRing,Search,X}from'lucide-react';
 import Chart from'../components/Chart';
@@ -179,11 +179,12 @@ export async function captureViewerPage(element:HTMLElement,width:number,height:
  });
  return canvas.toDataURL('image/png');
 }
-function ViewerVisual({v,result,loading,selected,onCrossFilter,onAction}:{v:Visual,result?:VisualQueryResult,loading:boolean,selected?:boolean,onCrossFilter:(f:VisualFilter|null)=>void,onAction:(v:Visual)=>void}){
+function ViewerVisual({v,result,loading,selected,activeFilter,onCrossFilter,onAction}:{v:Visual,result?:VisualQueryResult,loading:boolean,selected?:boolean,activeFilter?:VisualFilter|null,onCrossFilter:(f:VisualFilter|null)=>void,onAction:(v:Visual)=>void}){
  const rows=result?.rows||[],err=result?.error||'';
- const[focus,setFocus]=useState(false),[slicerSelected,setSlicerSelected]=useState<string[]>([]),[slicerSearch,setSlicerSearch]=useState(''),[slicerDropdownOpen,setSlicerDropdownOpen]=useState(false);
+ const[focus,setFocus]=useState(false),[slicerSelected,setSlicerSelected]=useState<string[]>(()=>activeFilter?(Array.isArray(activeFilter.value)?activeFilter.value.map(String):activeFilter.value==null||activeFilter.value===''?[]:[String(activeFilter.value)]):[]),[slicerSearch,setSlicerSearch]=useState(''),[slicerDropdownOpen,setSlicerDropdownOpen]=useState(false);
  const slicerDropdownRef=useRef<HTMLDivElement|null>(null);
  useEffect(()=>{const reset=()=>{setSlicerSelected([]);setSlicerSearch('')};window.addEventListener('vtab-reset-state',reset);return()=>window.removeEventListener('vtab-reset-state',reset)},[]);
+ useEffect(()=>{const next=!activeFilter?[]:Array.isArray(activeFilter.value)?activeFilter.value.map(String):activeFilter.value==null||activeFilter.value===''?[]:[String(activeFilter.value)];setSlicerSelected(previous=>previous.length===next.length&&previous.every((value,index)=>value===next[index])?previous:next)},[activeFilter?.field,JSON.stringify(activeFilter?.value)]);
  useEffect(()=>{if(!slicerDropdownOpen)return;const close=(event:PointerEvent)=>{if(!slicerDropdownRef.current?.contains(event.target as Node))setSlicerDropdownOpen(false)};const escape=(event:KeyboardEvent)=>{if(event.key==='Escape')setSlicerDropdownOpen(false)};document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape)}},[slicerDropdownOpen]);
  const conditionalValues=result?.conditionalValues||{};
  const f:any={...(v.format||{}),...(v.type==='map'?{}:resolveConditionalFormat(v.format?.conditionalFormatRules,conditionalValues))},displayVisual={...v,format:f};const bg=f.background||'#fff';const dark=/^#0|^#1/.test(bg.toLowerCase());const accent=f.accent||({kpi:'#2563eb',card:'#16a34a',bar:'#2563eb',column:'#0ea5e9',line:'#16a34a',area:'#10b981',pie:'#f59e0b',donut:'#8b5cf6',gauge:'#16a34a',table:'#2563eb',matrix:'#4f46e5',slicer:'#e11d48'} as any)[v.type]||'#2563eb';
@@ -211,7 +212,7 @@ function ViewerVisual({v,result,loading,selected,onCrossFilter,onAction}:{v:Visu
     const field=v.bindings.axis?.[0]||'',mode=v.slicerStyle||'list';
     const allOptions=rows.map(r=>String(r[field]??'')).filter((x,i,a)=>x&&a.indexOf(x)===i);
     const options=allOptions.filter(x=>!slicerSearch||x.toLowerCase().includes(slicerSearch.toLowerCase()));
-    const allSelected=allOptions.length>0&&allOptions.every(option=>slicerSelected.includes(option));
+    const allSelected=Boolean(f.slicerSelectAll&&!f.slicerSingleSelect&&f.slicerMultiSelect&&allOptions.length>1&&allOptions.every(option=>slicerSelected.includes(option)));
     const apply=(next:string[],isSelectAll?:boolean)=>{setSlicerSelected(next);if(isSelectAll||!next.length){onCrossFilter(null)}else{onCrossFilter({field,operator:next.length===1?'equals':'in',value:next.length===1?next[0]:next})}};
     const choose=(value:string)=>{apply(f.slicerSingleSelect?[value]:slicerSelected.includes(value)?slicerSelected.filter(x=>x!==value):[...slicerSelected,value]);if(f.slicerSingleSelect)setSlicerDropdownOpen(false)};
     const tilesPerRow=f.tilesPerRow||3;
@@ -341,7 +342,7 @@ function ViewerVisual({v,result,loading,selected,onCrossFilter,onAction}:{v:Visu
   return <>{card}{focus&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>setFocus(false)}><div className="visualFocusPanel viewerFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>FOCUS MODE</small><b>{v.title}</b></div><button onClick={()=>setFocus(false)}>Close</button></div><div className="visualFocusBody">{content}</div></div></div>,document.body)}</>;
 }
 export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId,userRole,onBack,onManageAccess}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string,userRole?:string,onBack?:()=>void,onManageAccess?:()=>void}){
- const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(false),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'>('fitWidth'),[scale,setScale]=useState(1),[interactionFilters,setInteractionFilters]=useState<VisualFilter[]>([]),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
+ const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(false),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'>('fitWidth'),[scale,setScale]=useState(1),[interactionFilterMap,setInteractionFilterMap]=useState<Record<string,VisualFilter>>({}),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
  const[publishedMode,setPublishedMode]=useState<'interactive'|'paginated'>(initialPaginatedId?'paginated':'interactive');
  const[activeRibbonTab,setActiveRibbonTab]=useState<'Home'|'File'|'View'>('Home');
  const[fileDropdownOpen,setFileDropdownOpen]=useState(false);
@@ -405,6 +406,8 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  const effectiveRole = userRole || item?.role || initialItem?.role;
  const isViewer = !effectiveRole || effectiveRole === 'Viewer' || effectiveRole?.toLowerCase() === 'viewer';
  const canExport = !isViewer;
+ const interactionFilters=useMemo<VisualFilter[]>(()=>Object.values(interactionFilterMap),[interactionFilterMap]);
+ const handleCrossFilter=useCallback((visualId:string,filter:VisualFilter|null)=>{setInteractionFilterMap(previous=>{const next={...previous};if(!filter){delete next[visualId];return next}for(const[id,existing]of Object.entries(next)){if(id!==visualId&&existing.field===filter.field)delete next[id]}next[visualId]={...filter,_visualId:visualId} as VisualFilter;return next})},[]);
  const visibleVisuals=useMemo<Visual[]>(()=>page?.visuals?.filter((v:Visual)=>v.visible!==false&&!v.hidden&&!runtimeHidden[v.id])||[],[page,runtimeHidden]);
  const queryVisualIds=useMemo(()=>visibleVisuals.filter(v=>!['textbox','button','image','shape'].includes(v.type)).map(v=>v.id),[visibleVisuals]);
  const combinedFilters=useMemo<VisualFilter[]>(()=>[...(report?.filters||[]),...(page?.filters||[]),...interactionFilters],[report,page,interactionFilters]);
@@ -412,7 +415,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    if(!item||!page||publishedMode!=='interactive'){setVisualLoading(false);return}
    if(!queryVisualIds.length){setVisualResults({});setVisualLoadError('');setVisualLoading(false);return}
    const controller=new AbortController();
-   setVisualLoading(true);setVisualLoadError('');setVisualResults({});
+   setVisualLoading(true);setVisualLoadError('');
    queryPageVisuals(reportId,queryVisualIds,combinedFilters,controller.signal)
     .then(response=>{if(!controller.signal.aborted)setVisualResults(response.results||{})})
     .catch((error:any)=>{if(!controller.signal.aborted)setVisualLoadError(error?.message||String(error))})
@@ -447,7 +450,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    compute();const ro=new ResizeObserver(compute);ro.observe(stage);window.addEventListener('resize',compute);return()=>{ro.disconnect();window.removeEventListener('resize',compute)};
  },[width,effectiveHeight,viewMode,full,activeRibbonTab,publishedMode,item?.id,page?.id]);
  useEffect(()=>{const stage=stageRef.current;if(stage)stage.scrollTo({top:0,left:0,behavior:'instant' as ScrollBehavior})},[pageIndex,viewMode,full,item?.id]);
- useEffect(()=>{for(const reportPage of pages)for(const visual of reportPage.visuals||[])if(Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,visual.id))visual.hidden=runtimeVisibilityDefaultsRef.current[visual.id];setRuntimeHidden({});setInteractionFilters([])},[page?.id]);
+ useEffect(()=>{for(const reportPage of pages)for(const visual of reportPage.visuals||[])if(Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,visual.id))visual.hidden=runtimeVisibilityDefaultsRef.current[visual.id];setRuntimeHidden({});setInteractionFilterMap({})},[page?.id]);
  const doLogin=async()=>{try{const r=await api<any>('/auth/login',{method:'POST',body:JSON.stringify(login)});localStorage.setItem('vtab_workspace_token',r.token);setSignedIn(true);load()}catch(e:any){alert(e.message)}};
  if(authRequired&&!signedIn)return <div className="workspaceLogin"><div className="workspaceLoginCard"><div className="brandMark">V</div><h2>Sign in to VTAB Workspace</h2><p>This published report requires a workspace account.</p><input placeholder="Email" value={login.email} onChange={e=>setLogin({...login,email:e.target.value})}/><input type="password" placeholder="Password" value={login.password} onChange={e=>setLogin({...login,password:e.target.value})}/><button className="primary" onClick={doLogin}>Sign In</button></div></div>;
  if(error)return <div className="viewerLoading"><b>Published report could not be opened</b><span>{error}</span><button onClick={()=>location.href='/?workspace=1'}>Open Workspace</button></div>;
@@ -480,23 +483,10 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     const narratives=Array.from(reportPage.querySelectorAll<HTMLElement>('[data-export-narrative]')).map(node=>{try{return JSON.parse(node.dataset.exportNarrative||'{}')}catch{return null}}).filter((value:any)=>value&&value.title&&Array.isArray(value.points)&&value.points.length).slice(0,6);
     rendered.push({name:pageDefinition.name||`Page ${index+1}`,image:await captureViewerPage(reportPage,pageWidth,pageHeight),insights,narratives});
    }
-   const safe = (report?.name || 'VTAB_Report').replace(/[^A-Za-z0-9_-]+/g, '_');
-    const extension = fmt === 'pdf' ? 'pdf' : 'pptx';
-    const exportProject = {
-      name: report?.name || project?.name || 'VTAB Report',
-      report: {
-        name: report?.name || project?.report?.name || project?.name || 'VTAB Report'
-      }
-    };
-    await apiDownloadPost(
-      `/published/${reportId}/export-rendered/${fmt}`,
-      `${safe}.${extension}`,
-      {
-        pages: rendered,
-        project: exportProject
-      }
-    );
-   }catch(error:any){alert(error?.message||String(error))}finally{setPageIndex(originalPage);setExporting('')}
+   const safe=(report?.name||'VTAB_Report').replace(/[^A-Za-z0-9_-]+/g,'_'),extension=fmt==='pdf'?'pdf':'pptx';
+   const exportProject={name:report?.name||project?.name||'VTAB Report',report:{name:report?.name||project?.report?.name||project?.name||'VTAB Report'}};
+   await apiDownloadPost(`/published/${reportId}/export-rendered/${fmt}`,`${safe}.${extension}`,{pages:rendered,project:exportProject});
+  }catch(error:any){alert(error?.message||String(error))}finally{setPageIndex(originalPage);setExporting('')}
  };
  const shareEmail=()=>{const to=window.prompt('Recipient email(s), comma separated:','');if(!to)return;const attach=(window.prompt('Attachment: none, pdf or pptx','none')||'none').toLowerCase();api(`/published/${reportId}/share-email`,{method:'POST',body:JSON.stringify({to,attach:attach==='none'?'':attach,subject:`VTAB Report: ${report.name}`,message:'A VTAB Workspace report has been shared with you.',reportUrl:location.href})}).then(()=>alert('Report shared by email.')).catch((e:any)=>alert(e.message))};
  const executeAction=(v:Visual)=>{
@@ -504,10 +494,10 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
   const a=v.action;if(!a||a.type==='none')return;
   if(a.type==='navigate'){
    if(a.targetReportId&&a.targetReportId!==reportId){const url=new URL(location.href);url.searchParams.set('workspace','1');url.searchParams.set('report',a.targetReportId);if(a.targetPageId)url.searchParams.set('page',a.targetPageId);else url.searchParams.delete('page');location.href=url.toString();return}
-   if(a.targetPageId){const i=pages.findIndex((item:any)=>item.id===a.targetPageId);if(i>=0){actionPageHistoryRef.current.push(pageIndex);setPageIndex(i);setInteractionFilters([])}}return;
+   if(a.targetPageId){const i=pages.findIndex((item:any)=>item.id===a.targetPageId);if(i>=0){actionPageHistoryRef.current.push(pageIndex);setPageIndex(i);setInteractionFilterMap({})}}return;
   }
-  if(a.type==='back'){const previous=actionPageHistoryRef.current.pop();setPageIndex(previous??Math.max(0,pageIndex-1));setInteractionFilters([]);return}
-  if(a.type==='resetState'||a.type==='clearFilters'){setInteractionFilters([]);if(a.type==='resetState'){for(const item of page.visuals||[])if(Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,item.id))item.hidden=runtimeVisibilityDefaultsRef.current[item.id];setRuntimeHidden({});window.dispatchEvent(new Event('vtab-reset-state'))}return}
+  if(a.type==='back'){const previous=actionPageHistoryRef.current.pop();setPageIndex(previous??Math.max(0,pageIndex-1));setInteractionFilterMap({});return}
+  if(a.type==='resetState'||a.type==='clearFilters'){setInteractionFilterMap({});if(a.type==='resetState'){for(const item of page.visuals||[])if(Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,item.id))item.hidden=runtimeVisibilityDefaultsRef.current[item.id];setRuntimeHidden({});window.dispatchEvent(new Event('vtab-reset-state'))}return}
   const commands=resolveActionCommands(a,page);if(!commands.length)return;
   setRuntimeHidden(hidden=>{const next={...hidden};for(const command of commands){const allHidden=command.targets.length>0&&command.targets.every((target:Visual)=>visualIsHidden(target,next));for(const target of command.targets){if(!Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,target.id))runtimeVisibilityDefaultsRef.current[target.id]=!!target.hidden;const value=command.operation==='show'?false:command.operation==='hide'?true:!allHidden;target.hidden=value;next[target.id]=value}}return next});
  };
@@ -715,7 +705,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
          <ShieldCheck size={15} color="#0f6cbd" /> Admin Portal
        </a>
        {interactionFilters.length > 0 && (
-         <button className="pbi-cmd-btn" onClick={() => setInteractionFilters([])}>
+         <button className="pbi-cmd-btn" onClick={() => setInteractionFilterMap({})}>
            <Eraser size={15} color="#b45309" /> Reset filters
          </button>
        )}
@@ -811,7 +801,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
      {s.backgroundImage&&<div className="viewerPageBg" style={{backgroundImage:`url(${s.backgroundImage})`,backgroundSize:s.backgroundImageFit||'cover',opacity:(s.backgroundImageOpacity??24)/100}}/>}
      <div className="viewerPageLayer">
       {s.header?.visible!==false&&<div className="viewerDashboardHeader" style={{background:s.header?.background||'#fff','--viewer-header-bg':s.header?.background||'#fff','--viewer-header-height':`${s.header?.height||84}px`,'--viewer-header-pad-top':`${s.header?.paddingTop??12}px`,'--viewer-header-pad-bottom':`${s.header?.paddingBottom??12}px`,'--viewer-header-pad-left':`${s.header?.paddingLeft??24}px`,'--viewer-header-pad-right':`${s.header?.paddingRight??24}px`,'--viewer-header-radius':`${s.header?.borderRadius??14}px`,'--viewer-header-title-size':`${s.header?.fontSize||28}px`,'--viewer-header-title-color':s.header?.titleColor||'#111827','--viewer-header-subtitle-size':`${s.header?.subtitleFontSize||12}px`,'--viewer-header-subtitle-color':s.header?.subtitleColor||'#475569'} as any}><div className="viewerDashboardHeaderCopy" style={{textAlign:s.header?.alignment||'left'}}><h1 style={{color:s.header?.titleColor||'#111827'}}>{s.header?.title||''}</h1><p style={{color:s.header?.subtitleColor||'#475569'}}>{s.header?.subtitle||''}</p></div>{s.header?.showGeneratedInfo!==false&&<div className="viewerReportMeta" style={{background:s.header?.generatedInfoBackground||'#f8fbff'}}><CalendarDays size={20}/><div><small>REPORT GENERATED</small><b>{new Date(item.updated_at||item.published_at).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}</b><span>{new Date(item.updated_at||item.published_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span></div></div>}</div>}
-      <div className={'viewerGrid '+(pixelLayout?'pixelLayout':'legacyLayout')}>{visibleVisuals.map((v:Visual,index:number)=><div key={v.id} className={`viewerVisualWrapper ${v.geometryVersion===2?'canvasObject':''}`} style={v.geometryVersion===2?{position:'absolute',left:v.x,top:v.y,width:v.w,height:v.h,zIndex:v.zIndex??index,transform:`rotate(${v.rotation||0}deg)`,transformOrigin:'center',display:'flex',flexDirection:'column',boxSizing:'border-box',overflow:'hidden'}:{gridColumn:`${v.x+1} / span ${v.w}`,gridRow:`${v.y+1} / span ${v.h}`}}><ViewerVisual v={v} result={visualResults[v.id]||(visualLoadError?{rows:[],error:visualLoadError}:undefined)} loading={!['textbox','button','image','shape'].includes(v.type)&&visualLoading} selected={buttonSelections[(v.format?.buttonSelectionGroup||'default').trim()||'default']===v.id} onCrossFilter={f=>setInteractionFilters(f?[f]:[])} onAction={executeAction}/></div>)}{visibleVisuals.length===0&&<div className="viewerEmptyPage"><b>No visible visuals on this published page</b><span>Open this page in Report Designer, verify visual visibility, save the report, and publish again.</span></div>}</div>
+      <div className={'viewerGrid '+(pixelLayout?'pixelLayout':'legacyLayout')}>{visibleVisuals.map((v:Visual,index:number)=>{const visualField=v.bindings.axis?.[0]||'';const activeFilter=interactionFilterMap[v.id]||(visualField?interactionFilters.find(filter=>filter.field===visualField||filter.field.endsWith('.'+visualField)||visualField.endsWith('.'+filter.field)):null)||null;return <div key={v.id} className={`viewerVisualWrapper ${v.geometryVersion===2?'canvasObject':''}`} style={v.geometryVersion===2?{position:'absolute',left:v.x,top:v.y,width:v.w,height:v.h,zIndex:v.zIndex??index,transform:`rotate(${v.rotation||0}deg)`,transformOrigin:'center',display:'flex',flexDirection:'column',boxSizing:'border-box',overflow:'hidden'}:{gridColumn:`${v.x+1} / span ${v.w}`,gridRow:`${v.y+1} / span ${v.h}`}}><ViewerVisual v={v} result={visualResults[v.id]||(visualLoadError?{rows:[],error:visualLoadError}:undefined)} loading={v.type==='slicer'?(!visualResults[v.id]&&visualLoading):(!['textbox','button','image','shape'].includes(v.type)&&visualLoading&&!visualResults[v.id])} selected={buttonSelections[(v.format?.buttonSelectionGroup||'default').trim()||'default']===v.id} activeFilter={activeFilter} onCrossFilter={filter=>handleCrossFilter(v.id,filter)} onAction={executeAction}/></div>})}{visibleVisuals.length===0&&<div className="viewerEmptyPage"><b>No visible visuals on this published page</b><span>Open this page in Report Designer, verify visual visibility, save the report, and publish again.</span></div>}</div>
      </div>
     </div>
     </div>

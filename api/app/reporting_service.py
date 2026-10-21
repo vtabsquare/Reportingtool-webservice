@@ -490,22 +490,34 @@ def list_workspace_reports(workspace_id: str, access_token: str) -> list[dict[st
     return response.data or []
 
 
-def _workspace_access(workspace_id: str, access_token: str, require_manage: bool = False) -> dict[str, Any]:
-    """Return the caller's workspace entry and enforce model-management roles."""
-    client = _anon_client(access_token)
-    result = client.table("workspaces").select("id").eq("id", workspace_id).execute()
-    if not result.data:
+def _workspace_access(workspace_id: str, access_token: str, require_manage: bool = False, require_semantic_model: bool = False) -> dict[str, Any]:
+    """Resolve membership and enforce semantic-model access server-side."""
+    user = authenticate(access_token)
+    user_id = str(user.get("id") or "")
+    from .supabase_store import _admin_client, is_admin_user
+    sb = _admin_client()
+    workspace = sb.table("workspaces").select("id,name,created_by,is_personal").eq("id", workspace_id).limit(1).execute()
+    if not workspace.data:
+        raise PermissionError("Workspace not found or you are not a member of this workspace.")
+    is_creator = str(workspace.data[0].get("created_by") or "") == user_id
+    is_admin = is_admin_user(user_id)
+    membership = sb.table("workspace_members").select("role").eq("workspace_id", workspace_id).eq("user_id", user_id).limit(1).execute()
+    if not is_creator and not is_admin and not membership.data:
         raise PermissionError("You are not a member of this workspace.")
-    if require_manage:
-        context = publish_context(access_token)
-        if not any(str(w.get("id")) == workspace_id for w in context.get("workspaces", [])):
-            raise PermissionError("Only Co-Owners and Owners are allowed to manage models in this workspace.")
-    return {"id": workspace_id}
+    role = "Admin" if (is_creator or is_admin) else str(membership.data[0].get("role") or "Viewer")
+    author_roles = ("Admin", "Member", "Contributor", "Owner", "Co-Owner")
+    if require_manage and role not in author_roles:
+        raise PermissionError("Only Co-Owners, Contributors, Members, and Owners are allowed to manage models in this workspace.")
+    if require_semantic_model and role == "Viewer":
+        raise PermissionError("Viewers are restricted to reports and dashboards. Semantic model access is not permitted.")
+    return {"id": workspace_id, "role": role}
 
 
 def list_workspace_semantic_models(workspace_id: str, access_token: str) -> list[dict[str, Any]]:
     """List first-class semantic model assets visible in a workspace."""
-    _workspace_access(workspace_id, access_token)
+    access = _workspace_access(workspace_id, access_token)
+    if access.get("role") == "Viewer":
+        return []
     client = _anon_client(access_token)
     response = (
         client.table("semantic_models")
@@ -540,7 +552,8 @@ def list_workspace_semantic_models(workspace_id: str, access_token: str) -> list
 def get_semantic_model(semantic_model_id: str, access_token: str) -> dict[str, Any]:
     """Return one model definition, version history and connected-report lineage."""
     authenticate(access_token)
-    client = _anon_client(access_token)
+    from .supabase_store import _admin_client
+    client = _admin_client()
     result = (
         client.table("semantic_models")
         .select("id,workspace_id,report_id,name,description,status,schema_version,created_at,updated_at,current_version_id,definition,metadata")
@@ -552,6 +565,9 @@ def get_semantic_model(semantic_model_id: str, access_token: str) -> dict[str, A
     if not rows:
         raise PermissionError("Semantic model was not found or you do not have access.")
     model = rows[0]
+    workspace_id = str(model.get("workspace_id") or "")
+    if workspace_id:
+        _workspace_access(workspace_id, access_token, require_semantic_model=True)
     reports = (
         client.table("published_reports")
         .select("id,name,updated_at")

@@ -449,6 +449,13 @@ def create_workspace(name: str, user_id: str) -> dict:
         'user_id': user_id,
         'role': 'Admin',
     }).execute()
+    try:
+        sb.table('workspace_direct_members').upsert({
+            'workspace_id': ws_id, 'user_id': user_id, 'role': 'Admin',
+        }).execute()
+    except Exception:
+        # Governance migration is optional during rolling deployment.
+        pass
     return {'id': ws_id, 'name': ws.get('name'), 'created_at': ws.get('created_at'), 'role': 'Admin', 'organization_id': organization_id, 'is_personal': False}
 
 def delete_workspace(workspace_id: str, user_id: str) -> dict:
@@ -471,11 +478,108 @@ def delete_workspace(workspace_id: str, user_id: str) -> dict:
     return {'ok': True, 'id': workspace_id}
 
 
+def ensure_personal_workspace(user_id: str) -> dict:
+    """Idempotently provision the signed-in user's private My Workspace.
+
+    This server-side fallback complements the database signup trigger.  It also
+    repairs users created before that trigger existed, without hiding any team
+    workspaces when provisioning encounters a transient failure.
+    """
+    sb = _admin_client()
+    existing = sb.table('workspaces') \
+        .select('id,name,created_at,created_by,is_personal,organization_id') \
+        .eq('created_by', user_id) \
+        .eq('is_personal', True) \
+        .limit(1) \
+        .execute()
+    if not existing.data:
+        # Compatibility repair for installations that pre-date is_personal.
+        legacy = sb.table('workspaces') \
+            .select('id,name,created_at,created_by,is_personal,organization_id') \
+            .eq('created_by', user_id) \
+            .ilike('name', 'My Workspace') \
+            .limit(1) \
+            .execute()
+        if legacy.data:
+            ws = legacy.data[0]
+            sb.table('workspaces').update({'is_personal': True}).eq('id', ws['id']).execute()
+            ws['is_personal'] = True
+            existing.data = [ws]
+
+    if existing.data:
+        ws = existing.data[0]
+        sb.table('workspace_members').upsert({
+            'workspace_id': ws['id'], 'user_id': user_id, 'role': 'Admin',
+        }).execute()
+        return ws
+
+    membership = sb.table('organization_members') \
+        .select('organization_id') \
+        .eq('user_id', user_id) \
+        .order('created_at') \
+        .limit(1) \
+        .execute()
+    organization_id = membership.data[0].get('organization_id') if membership.data else None
+    if not organization_id:
+        owned = sb.table('organizations').select('id').eq('created_by', user_id).limit(1).execute()
+        organization_id = owned.data[0].get('id') if owned.data else None
+    if not organization_id:
+        profile = sb.table('vtab_users').select('email').eq('id', user_id).limit(1).execute()
+        email = str(profile.data[0].get('email') or '') if profile.data else ''
+        base_name = (email.split('@', 1)[0] or 'VTAB').strip()
+        try:
+            org = sb.table('organizations').insert({
+                'name': f"{base_name}'s Organization",
+                'slug': f"org-{str(user_id).replace('-', '')}",
+                'created_by': user_id,
+            }).execute()
+            organization_id = org.data[0].get('id') if org.data else None
+        except Exception:
+            # A concurrent request/signup trigger may have created it first.
+            owned = sb.table('organizations').select('id').eq('created_by', user_id).limit(1).execute()
+            organization_id = owned.data[0].get('id') if owned.data else None
+        if organization_id:
+            sb.table('organization_members').upsert({
+                'organization_id': organization_id, 'user_id': user_id, 'role': 'Owner',
+            }).execute()
+    if not organization_id:
+        raise RuntimeError('Could not provision an organization for My Workspace.')
+
+    try:
+        created = sb.table('workspaces').insert({
+            'name': 'My Workspace',
+            'description': 'Private workspace',
+            'created_by': user_id,
+            'owner_id': user_id,
+            'organization_id': organization_id,
+            'is_personal': True,
+        }).execute()
+        ws = created.data[0] if created.data else None
+    except Exception:
+        # The partial unique index makes concurrent provisioning safe.
+        raced = sb.table('workspaces').select('id,name,created_at,created_by,is_personal,organization_id') \
+            .eq('created_by', user_id).eq('is_personal', True).limit(1).execute()
+        ws = raced.data[0] if raced.data else None
+    if not ws:
+        raise RuntimeError('Could not provision My Workspace.')
+    sb.table('workspace_members').upsert({
+        'workspace_id': ws['id'], 'user_id': user_id, 'role': 'Admin',
+    }).execute()
+    return ws
+
+
 def list_workspaces(user_id: str) -> list:
-    """List all workspaces the user is a member of or created."""
+    """List workspace shells visible through workspace or report access."""
     if is_admin_user(user_id):
         ensure_admin_workspace_access(user_id)
     sb = _admin_client()
+    try:
+        ensure_personal_workspace(user_id)
+    except Exception as error:
+        # Do not repeat the original bug by hiding valid team workspaces merely
+        # because a legacy database still needs the provisioning SQL patch.
+        import logging
+        logging.warning('Unable to ensure personal workspace for %s: %s', user_id, error)
     memberships = sb.table('workspace_members').select('workspace_id, role').eq('user_id', user_id).execute()
     created = sb.table('workspaces').select('id').eq('created_by', user_id).execute()
     
@@ -485,6 +589,20 @@ def list_workspaces(user_id: str) -> list:
     for m in (memberships.data or []):
         if m['workspace_id'] not in ws_map or m['role'] == 'Admin':
             ws_map[m['workspace_id']] = m['role']
+
+    # A direct report grant provides a restricted workspace shell. It does not
+    # make the user a workspace member and therefore never exposes sibling reports.
+    grants = sb.table('report_access_grants').select('report_id,role').eq('user_id', user_id).execute()
+    grant_role_by_report = {str(g['report_id']): g.get('role', 'Viewer') for g in (grants.data or [])}
+    direct_reports = []
+    if grant_role_by_report:
+        direct_reports = sb.table('published_reports').select('id,workspace_id').in_('id', list(grant_role_by_report)).execute().data or []
+    direct_reports_by_workspace = {}
+    for report in direct_reports:
+        workspace_id = report.get('workspace_id')
+        if workspace_id:
+            direct_reports_by_workspace.setdefault(workspace_id, set()).add(str(report['id']))
+            ws_map.setdefault(workspace_id, 'Viewer')
             
     if not ws_map:
         return []
@@ -507,13 +625,17 @@ def list_workspaces(user_id: str) -> list:
     res = []
     for w in workspaces.data:
         wid = w['id']
-        role = 'Admin' if w['created_by'] == user_id else ws_map.get(wid, 'Member')
+        has_workspace_access = w['created_by'] == user_id or any(m.get('workspace_id') == wid for m in (memberships.data or [])) or is_admin_user(user_id)
+        access_scope = 'workspace' if has_workspace_access else 'report'
+        role = 'Admin' if w['created_by'] == user_id or is_admin_user(user_id) else ws_map.get(wid, 'Viewer')
         res.append({
             'id': wid, 'name': w['name'], 'created_at': w['created_at'],
             'role': role,
             'member_count': mc.get(wid, 0),
-            'report_count': rc.get(wid, 0),
+            'report_count': rc.get(wid, 0) if access_scope == 'workspace' else len(direct_reports_by_workspace.get(wid, set())),
             'is_personal': _is_personal_workspace(w),
+            'access_scope': access_scope,
+            'can_manage_workspace': access_scope == 'workspace' and role == 'Admin',
         })
     return sorted(res, key=lambda item: (not item.get('is_personal', False), str(item.get('name') or '').casefold()))
 
@@ -538,26 +660,32 @@ def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
         .eq('user_id', user_id) \
         .execute()
     
-    if not is_creator and not is_admin and not mem.data:
-        raise PermissionError('You are not a member of this workspace.')
+    grants = sb.table('report_access_grants').select('report_id,role').eq('user_id', user_id).execute()
+    grant_role_by_report = {str(g['report_id']): g.get('role', 'Viewer') for g in (grants.data or [])}
+    direct_report_rows = []
+    if grant_role_by_report:
+        direct_report_rows = sb.table('published_reports').select('id').eq('workspace_id', workspace_id).in_('id', list(grant_role_by_report)).execute().data or []
+    direct_report_ids = {str(row['id']) for row in direct_report_rows}
+
+    has_workspace_access = is_creator or is_admin or bool(mem.data)
+    if not has_workspace_access and not direct_report_ids:
+        raise PermissionError('You do not have access to this workspace or any report in it.')
         
-    role = 'Admin' if (is_creator or is_admin) else mem.data[0]['role']
+    role = 'Admin' if (is_creator or is_admin) else (mem.data[0]['role'] if mem.data else 'Viewer')
+    access_scope = 'workspace' if has_workspace_access else 'report'
 
     # Get members with emails
-    members = sb.table('workspace_members') \
-        .select('user_id, role, added_at') \
-        .eq('workspace_id', workspace_id) \
-        .execute()
+    members = sb.table('workspace_members').select('user_id, role, added_at').eq('workspace_id', workspace_id).execute() if has_workspace_access else None
 
     member_list = []
-    member_ids = [m['user_id'] for m in (members.data or [])]
+    member_ids = [m['user_id'] for m in ((members.data if members else []) or [])]
     if member_ids:
         users = sb.table('vtab_users').select('id, email').in_('id', member_ids).execute()
         email_map = {u['id']: u['email'] for u in (users.data or [])}
     else:
         email_map = {}
 
-    for m in (members.data or []):
+    for m in ((members.data if members else []) or []):
         email = email_map.get(m['user_id'], m['user_id'])
         member_list.append({
             'user_id': m['user_id'],
@@ -590,6 +718,8 @@ def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
         for report_id, shared_at in shared_map.items():
             if report_id in report_map:
                 report_map[report_id]['shared_at'] = shared_at
+    if access_scope == 'report':
+        report_map = {report_id: report for report_id, report in report_map.items() if report_id in direct_report_ids}
     report_list = []
     for report in report_map.values():
         paginated_mode = report.pop('paginatedPublishMode', None)
@@ -597,6 +727,7 @@ def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
 
         report['itemKey'] = str(report['id'])
         report['itemType'] = 'Report'
+        report['role'] = role if access_scope == 'workspace' else grant_role_by_report.get(str(report['id']), 'Viewer')
         report_list.append(report)
         if paginated_mode == 'separate':
             for definition in paginated_reports or []:
@@ -612,6 +743,7 @@ def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
                     'updated_at': report.get('updated_at'),
                     'semantic_model_id': report.get('semantic_model_id'),
                     'itemType': 'Paginated report',
+                    'role': report.get('role', 'Viewer'),
                 })
     report_list.sort(key=lambda rpt: str(rpt.get('updated_at') or rpt.get('published_at') or ''), reverse=True)
 
@@ -622,6 +754,10 @@ def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
         'is_personal': _is_personal_workspace(ws.data[0]),
         'members': member_list,
         'reports': report_list,
+        'report_count': len({str(report.get('id')) for report in report_list}),
+        'member_count': len(member_list) if has_workspace_access else 0,
+        'access_scope': access_scope,
+        'can_manage_workspace': access_scope == 'workspace' and role == 'Admin',
     }
 
 def add_workspace_member(workspace_id: str, email: str, role: str, granter_id: str) -> dict:
@@ -680,6 +816,12 @@ def add_workspace_member(workspace_id: str, email: str, role: str, granter_id: s
         'user_id': target_uid,
         'role': role,
     }).execute()
+    try:
+        sb.table('workspace_direct_members').upsert({
+            'workspace_id': workspace_id, 'user_id': target_uid, 'role': role,
+        }).execute()
+    except Exception:
+        pass
 
     # Also grant access to all reports already in this workspace
     ws_reports = sb.table('published_reports').select('id').eq('workspace_id', workspace_id).execute()
@@ -709,8 +851,22 @@ def remove_workspace_member(workspace_id: str, target_user_id: str, requester_id
     if ws.get('created_by') == target_user_id:
         raise ValueError('Cannot remove the workspace creator.')
 
-    # Remove from workspace_members
-    sb.table('workspace_members').delete().eq('workspace_id', workspace_id).eq('user_id', target_user_id).execute()
+    # Revoke only the direct assignment. If an Admin Console group still grants
+    # access, keep the strongest group-derived role materialized for Services.
+    remaining_group_roles = []
+    try:
+        sb.table('workspace_direct_members').delete().eq('workspace_id', workspace_id).eq('user_id', target_user_id).execute()
+        remaining_group_roles = sb.table('workspace_group_member_links').select('role').eq('workspace_id', workspace_id).eq('user_id', target_user_id).execute().data or []
+    except Exception:
+        pass
+    if remaining_group_roles:
+        role_weight = {'Viewer': 1, 'Contributor': 2, 'Member': 3, 'Admin': 4}
+        effective_role = max((row.get('role', 'Viewer') for row in remaining_group_roles), key=lambda item: role_weight.get(item, 0))
+        sb.table('workspace_members').upsert({
+            'workspace_id': workspace_id, 'user_id': target_user_id, 'role': effective_role,
+        }).execute()
+    else:
+        sb.table('workspace_members').delete().eq('workspace_id', workspace_id).eq('user_id', target_user_id).execute()
 
     # Revoke report access grants for reports in this workspace
     ws_reports = sb.table('published_reports').select('id').eq('workspace_id', workspace_id).execute()
@@ -819,10 +975,15 @@ def _semantic_model_manager(sb, semantic_model_id: str, user_id: str) -> dict:
     if not rows:
         raise ValueError('Semantic model not found.')
     model = rows[0]
+    workspace = sb.table('workspaces').select('created_by').eq('id', model['workspace_id']).limit(1).execute().data or []
+    is_creator = bool(workspace and str(workspace[0].get('created_by') or '') == str(user_id))
+    is_admin = is_admin_user(user_id)
     members = sb.table('workspace_members').select('role').eq('workspace_id', model['workspace_id']).eq('user_id', user_id).limit(1).execute().data or []
-    if (not members or members[0].get('role') not in ('Admin', 'Member', 'Contributor')) and not is_admin_user(user_id):
+    member_role = members[0].get('role') if members else None
+    allowed_roles = ('Admin', 'Member', 'Contributor', 'Owner', 'Co-Owner')
+    if not is_creator and not is_admin and member_role not in allowed_roles:
         raise PermissionError('You need edit access to manage this semantic model.')
-    model['role'] = 'Admin' if is_admin_user(user_id) else (members[0]['role'] if members else 'Admin')
+    model['role'] = 'Admin' if (is_creator or is_admin) else (member_role or 'Admin')
     return model
 
 

@@ -2151,43 +2151,22 @@ def export_published_rendered(report_id:str,fmt:str,payload:dict,authorization:s
     """Export the browser-rendered dashboard so every report page and chart is retained."""
     if not (isinstance(payload, dict) and payload.get("isPaginated")):
         _enforce_viewer_block(authorization, report_id)
-    item = store.get_published(report_id)
-    project = (
-        (item or {}).get('project')
-        or _get_cloud_project(report_id)
-        or (payload.get('project') if isinstance(payload, dict) else None)
-    )
-    if not isinstance(project, dict) or not project:
-        report_name = (
-            (item or {}).get('name')
-            or ((payload.get('project') or {}).get('name') if isinstance(payload, dict) else None)
-            or 'VTAB Report'
-        )
-        project = {
-            'name': report_name,
-            'report': {'name': report_name}
-        }
-    pages = payload.get('pages') if isinstance(payload, dict) else None
-    if not isinstance(pages, list) or not pages:
-        raise HTTPException(400, 'At least one rendered report page is required.')
-    if len(pages) > 50:
-        raise HTTPException(400, 'A maximum of 50 report pages can be exported at once.')
-    total_size = 0
-    valid_prefixes = (
-        'data:image/png;base64,',
-        'data:image/jpeg;base64,',
-        'data:image/jpg;base64,',
-        'data:image/webp;base64,'
-    )
+    item=store.get_published(report_id)
+    project=(item or {}).get('project') or _get_cloud_project(report_id) or (payload.get('project') if isinstance(payload,dict) else None)
+    if not isinstance(project,dict) or not project:
+        report_name=(item or {}).get('name') or ((payload.get('project') or {}).get('name') if isinstance(payload,dict) else None) or 'VTAB Report'
+        project={'name':report_name,'report':{'name':report_name}}
+    pages=payload.get('pages') if isinstance(payload,dict) else None
+    if not isinstance(pages,list) or not pages:raise HTTPException(400,'At least one rendered report page is required.')
+    if len(pages)>50:raise HTTPException(400,'A maximum of 50 report pages can be exported at once.')
+    total_size=0
     for page in pages:
-        if not isinstance(page, dict):
-            raise HTTPException(400, 'Invalid rendered report page.')
-        image = page.get('image')
-        if not isinstance(image, str) or not image.startswith(valid_prefixes):
-            raise HTTPException(400, 'Rendered report pages must use PNG, JPEG, or WebP images.')
-        total_size += len(image)
-    if total_size > 100 * 1024 * 1024:
-        raise HTTPException(413, 'The rendered report export is larger than 100 MB.')
+        if not isinstance(page,dict):raise HTTPException(400,'Invalid rendered report page.')
+        image=page.get('image')
+        if not isinstance(image,str) or not image.startswith(('data:image/png;base64,','data:image/jpeg;base64,','data:image/jpg;base64,','data:image/webp;base64,')):
+            raise HTTPException(400,'Rendered report pages must use valid base64 images (PNG, JPEG, WebP).')
+        total_size+=len(image)
+    if total_size>100*1024*1024:raise HTTPException(413,'The rendered report export is larger than 100 MB.')
     report_name=(item or {}).get('name') or (project.get('report') or {}).get('name') or project.get('name') or 'VTAB Report'
     safe=''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in report_name) or 'VTAB_Report'
     try:
@@ -2893,6 +2872,17 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
             (f.get('operator') not in ('is_blank', 'is_not_blank', 'top_n', 'in') and f.get('value') not in ('', None))
         )
     ]
+    if visual.get('type') == 'slicer':
+        axis_fields = set(bindings.get('axis') or [])
+        filters = [
+            item for item in filters
+            if item.get('field') not in axis_fields
+            and not any(
+                str(item.get('field') or '').endswith('.' + str(axis_field))
+                or str(axis_field).endswith('.' + str(item.get('field') or ''))
+                for axis_field in axis_fields
+            )
+        ]
     sort_config = visual.get('sort') or []
     default_limit = 5000 if visual.get('type') in ('map', 'table', 'matrix') else (2000 if visual.get('type') == 'histogram' else 500)
     limit = default_limit

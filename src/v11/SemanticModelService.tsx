@@ -5,9 +5,9 @@ import SimpleSemanticModelSettings from './SimpleSemanticModelSettings';
 import RlsSecurityPanel from './RlsSecurityPanel';
 import FabricModelView from './FabricModelView';
 
-export type WorkspaceReport={id:string;itemKey?:string;itemType?:string;paginatedId?:string;name:string;published_at?:string;updated_at?:string;semantic_model_id?:string};
+export type WorkspaceReport={id:string;itemKey?:string;itemType?:string;paginatedId?:string;name:string;published_at?:string;updated_at?:string;semantic_model_id?:string;role?:string};
 export type SemanticModelAsset={id:string;workspace_id:string;report_id?:string;name:string;description?:string;status?:string;updated_at?:string;reports?:WorkspaceReport[];definition?:any};
-type Workspace={id:string;name:string;role:string;is_personal?:boolean};
+type Workspace={id:string;name:string;role:string;is_personal?:boolean;access_scope?:'workspace'|'report';can_manage_workspace?:boolean};
 type Connection={id:string;name:string;source_type:string;connection_config?:any;table_mappings?:any[];gateway_id?:string;authentication_method?:string;privacy_level?:string;encrypted_transport?:boolean;status?:string;last_tested_at?:string;last_error?:string};
 type Gateway={id:string;name:string;status:string;last_heartbeat?:string;version?:string;execution_mode?:'service_network'|'on_premises_agent';description?:string;region?:string;allow_cloud_sources?:boolean};
 type Parameter={name:string;data_type?:string;current_value?:any;default_value?:any;allowed_values?:any[]};
@@ -16,12 +16,13 @@ type Props={workspace:Workspace;reports:WorkspaceReport[];onOpenReport:(r:Worksp
 type View='model'|'settings'|'security'|'history';
 type Content={id:string;name:string;type:'Report'|'Paginated report'|'Semantic model';updated_at?:string;report?:WorkspaceReport;model?:SemanticModelAsset};
 const canManage=(role?:string)=>['Admin','Member','Contributor','Owner','Co-Owner'].includes(String(role||''));
+const canAccessSemanticModel=(role?:string)=>['Admin','Member','Contributor','Owner','Co-Owner'].includes(String(role||''));
 const when=(value?:string)=>value?new Date(value).toLocaleString():'—';
 
 export default function SemanticModelService({workspace,reports,onOpenReport,onReportSettings,onShareReport,onDeleteReport,onNewItem,otherWorkspaces,onSelectWorkspace}:Props){
   const[models,setModels]=useState<SemanticModelAsset[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[selected,setSelected]=useState<SemanticModelAsset|null>(null),[view,setView]=useState<View>('model'),[search,setSearch]=useState(''),[menu,setMenu]=useState<string|null>(null),[readiness,setReadiness]=useState<Record<string,Runtime['readiness']>>({}),[pendingJobId,setPendingJobId]=useState('');
-  const load=async()=>{setBusy(true);setError('');try{const next=await api<SemanticModelAsset[]>(`/service/workspaces/${encodeURIComponent(workspace.id)}/semantic-models`);setModels(next);const runtimeRows=await Promise.all(next.map(async model=>{try{const[rt,binding]=await Promise.all([api<Runtime>(`/service/semantic-models/${model.id}/runtime`),api<any>(`/service/semantic-models/${model.id}/data-bridge`)]);const sources=(rt.source_manifest?.sources||[]).filter((s:any)=>!['managed_file','published_data','snapshot','file'].includes(String(s.type||'').toLowerCase()));const bridgeReady=!!sources.length&&binding?.bridge?.status==='online';const bridgeReadiness:NonNullable<Runtime['readiness']>={refresh_ready:bridgeReady,required_tables:rt.readiness?.required_tables||[],mapped_tables:rt.readiness?.mapped_tables||[],missing_tables:rt.readiness?.missing_tables||[],tested_connection_count:rt.readiness?.tested_connection_count||0,blockers:bridgeReady?[]:!sources.length?['Republish from the updated Desktop to include source identity.']:['Connect an online Desktop Data Bridge.']};return[model.id,bridgeReadiness]as const}catch{return[model.id,undefined]as const}}));setReadiness(Object.fromEntries(runtimeRows))}catch(e:any){setError(e?.message||String(e))}finally{setBusy(false)}};
-  useEffect(()=>{setSelected(null);setMenu(null);void load()},[workspace.id]);
+  const load=async()=>{setBusy(true);setError('');try{if(workspace.access_scope==='report'){setModels([]);setReadiness({});return}if(!canAccessSemanticModel(workspace.role)){setModels([]);setReadiness({});return}const next=await api<SemanticModelAsset[]>(`/service/workspaces/${encodeURIComponent(workspace.id)}/semantic-models`);setModels(next);const runtimeRows=await Promise.all(next.map(async model=>{try{const[rt,binding]=await Promise.all([api<Runtime>(`/service/semantic-models/${model.id}/runtime`),api<any>(`/service/semantic-models/${model.id}/data-bridge`)]);const sources=(rt.source_manifest?.sources||[]).filter((s:any)=>!['managed_file','published_data','snapshot','file'].includes(String(s.type||'').toLowerCase()));const bridgeReady=!!sources.length&&binding?.bridge?.status==='online';const bridgeReadiness:NonNullable<Runtime['readiness']>={refresh_ready:bridgeReady,required_tables:rt.readiness?.required_tables||[],mapped_tables:rt.readiness?.mapped_tables||[],missing_tables:rt.readiness?.missing_tables||[],tested_connection_count:rt.readiness?.tested_connection_count||0,blockers:bridgeReady?[]:!sources.length?['Republish from the updated Desktop to include source identity.']:['Connect an online Desktop Data Bridge.']};return[model.id,bridgeReadiness]as const}catch{return[model.id,undefined]as const}}));setReadiness(Object.fromEntries(runtimeRows))}catch(e:any){setError(e?.message||String(e))}finally{setBusy(false)}};
+  useEffect(()=>{setSelected(null);setMenu(null);void load()},[workspace.id,workspace.role,workspace.access_scope]);
   useEffect(()=>{if(!menu)return;const dismiss=()=>setMenu(null);document.addEventListener('pointerdown',dismiss);return()=>document.removeEventListener('pointerdown',dismiss)},[menu]);
   const items=useMemo(()=>{const reportMap=new Map<string,WorkspaceReport>();reports.forEach(r=>reportMap.set(r.itemKey||r.id,r));models.forEach(m=>(m.reports||[]).forEach(r=>{if(![...reportMap.values()].some(item=>item.id===r.id&&!item.paginatedId))reportMap.set(r.id,{...r,semantic_model_id:m.id})}));const modelById=new Map(models.map(m=>[m.id,m])),groups=new Map<string,WorkspaceReport[]>(),used=new Set<string>(),all:Content[]=[];[...reportMap.values()].forEach(report=>groups.set(report.id,[...(groups.get(report.id)||[]),report]));[...groups.values()].sort((a,b)=>(a.find(item=>!item.paginatedId)?.name||a[0]?.name||'').localeCompare(b.find(item=>!item.paginatedId)?.name||b[0]?.name||'')).forEach(group=>{const primary=group.find(item=>item.itemType!=='Paginated report'&&!item.paginatedId)||group[0];const ordered=[...group.filter(item=>item===primary),...group.filter(item=>item!==primary).sort((a,b)=>a.name.localeCompare(b.name))];ordered.forEach(report=>{const paginated=report.itemType==='Paginated report'||!!report.paginatedId;all.push({id:`report:${report.itemKey||report.id}`,name:report.name,type:paginated?'Paginated report':'Report',updated_at:report.updated_at||report.published_at,report})});const model=(primary.semantic_model_id&&modelById.get(primary.semantic_model_id))||models.find(m=>m.report_id===primary.id||(m.reports||[]).some(r=>r.id===primary.id));if(model&&!used.has(model.id)){all.push({id:`model:${model.id}`,name:model.name,type:'Semantic model',updated_at:model.updated_at,model});used.add(model.id)}});models.filter(m=>!used.has(m.id)).sort((a,b)=>a.name.localeCompare(b.name)).forEach(model=>all.push({id:`model:${model.id}`,name:model.name,type:'Semantic model',updated_at:model.updated_at,model}));const term=search.trim().toLowerCase();if(!term)return all;const matchingModelIds=new Set(models.filter(m=>m.name.toLowerCase().includes(term)||(m.reports||[]).some(r=>r.name.toLowerCase().includes(term))).map(m=>m.id));return all.filter(item=>item.name.toLowerCase().includes(term)||(item.report?.semantic_model_id&&matchingModelIds.has(item.report.semantic_model_id))||(item.model&&matchingModelIds.has(item.model.id)))},[reports,models,search]);
   const open=async(m:SemanticModelAsset,next:View)=>{
@@ -60,12 +61,12 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
       {/* Power BI Workspace Action Toolbar (Reference Images 1 & 5) */}
       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'10px 28px',background:'#ffffff',borderBottom:'1px solid #e1e1e1',flexWrap:'wrap'}}>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
-          {onNewItem && (
+          {onNewItem && workspace.access_scope !== 'report' && canManage(workspace.role) && (
             <button onClick={onNewItem} className="pbi-btn-tool" style={{fontWeight:600}}>
               <Plus size={15} color="#0d6257"/> New item
             </button>
           )}
-          {onNewItem && (
+          {onNewItem && workspace.access_scope !== 'report' && canManage(workspace.role) && (
             <button onClick={onNewItem} className="pbi-btn-tool" style={{borderColor:'transparent'}}>
               <Upload size={14} color="#616161"/> Import
             </button>
@@ -103,7 +104,7 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
               const paginated=item.type==='Paginated report';
               const isReady=item.model?readiness[item.model.id]?.refresh_ready:true;
               return (
-                <tr key={item.id} style={{cursor:'pointer'}} onClick={()=>item.report?onOpenReport(item.report):item.model&&void open(item.model,'model')}>
+                <tr key={item.id} style={{cursor:'pointer'}} onClick={()=>item.report?onOpenReport(item.report):item.model&&canAccessSemanticModel(workspace.role)&&void open(item.model,'model')}>
                   <td style={{paddingLeft:28}} onClick={e=>e.stopPropagation()}>
                     <input type="checkbox" style={{cursor:'pointer'}}/>
                   </td>
@@ -113,7 +114,7 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                         {item.type==='Report'?<BarChart2 size={15}/>:paginated?<FileText size={15}/>:<Database size={15}/>}
                       </span>
                       <b style={{color:'#242424',fontWeight:600}}>{item.name}</b>
-                      {item.report && !paginated && (
+                      {item.report && !paginated && canManage(item.report.role || workspace.role) && (
                         <button
                           title="Share / Manage permissions"
                           onClick={e=>{e.stopPropagation();onShareReport(item.report!)}}
@@ -141,7 +142,7 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                   <td style={{color:'#616161'}}>{item.type}</td>
                   <td style={{color:'#616161'}}>{workspace.name}</td>
                   <td style={{color:'#616161'}}>{when(item.updated_at)}</td>
-                  <td style={{color:'#616161'}}>{workspace.role}</td>
+                  <td style={{color:'#616161'}}>{item.report?.role || workspace.role}</td>
                   <td style={{position:'relative'}} onClick={e=>e.stopPropagation()} onPointerDown={e=>e.stopPropagation()}>
                     <button aria-label={`More options for ${item.name}`} onClick={()=>setMenu(menu===item.id?null:item.id)} style={moreButton}>
                       <MoreHorizontal size={16}/>
@@ -151,9 +152,9 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                         <Menu label={paginated?'Open paginated report':'Open report'} onClick={()=>{setMenu(null);onOpenReport(item.report!)}}/>
                         {!paginated&&(
                           <>
-                            <Menu label="Settings" onClick={()=>{setMenu(null);onReportSettings(item.report!)}}/>
-                            <Menu label="Manage permissions" onClick={()=>{setMenu(null);onShareReport(item.report!)}}/>
-                            {canManage(workspace.role)&&(
+                            {canManage(item.report!.role || workspace.role)&&<Menu label="Settings" onClick={()=>{setMenu(null);onReportSettings(item.report!)}}/>}
+                            {canManage(item.report!.role || workspace.role)&&<Menu label="Manage permissions" onClick={()=>{setMenu(null);onShareReport(item.report!)}}/>}
+                            {canManage(item.report!.role || workspace.role)&&(
                               <>
                                 <Divider/>
                                 <Menu danger label="Delete" onClick={()=>{setMenu(null);onDeleteReport(item.report!)}}/>
@@ -163,7 +164,7 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                         )}
                       </div>
                     )}
-                    {menu===item.id&&item.model&&(
+                    {menu===item.id&&item.model&&canAccessSemanticModel(workspace.role)&&(
                       <div style={menuStyle}>
                         <Menu label="Open semantic model" onClick={()=>void open(item.model!,'model')}/>
                         <Menu label="Refresh now" disabled={!readiness[item.model.id]?.refresh_ready} title={readiness[item.model.id]?.blockers?.join(' ')||''} onClick={()=>void refreshNow(item.model!)}/>

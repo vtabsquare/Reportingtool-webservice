@@ -75,18 +75,24 @@ async function fetchWithSessionRetry(url:string,init:RequestInit):Promise<Respon
   }
   return response;
 }
+function announceNetworkFailure(error:unknown){
+  const message=String((error as any)?.message||error||'');
+  if(typeof window!=='undefined'&&(!navigator.onLine||/failed to fetch|networkerror|load failed|network request failed|aborterror/i.test(message))){
+    window.dispatchEvent(new CustomEvent('vtab:network-offline'));
+  }
+}
 export async function api<T>(path:string,init?:RequestInit):Promise<T>{
   const base=await apiBase();
   let r:Response;
   try{r=await fetchWithSessionRetry(base+path,{...init,headers:mergeHeaders({'Content-Type':'application/json',...authHeaders()},init?.headers)});}
-  catch(e:any){if(String(e?.message||e).includes('session expired'))throw e;throw new Error(`Cannot reach VTAB API at ${base}. ${e?.message||e}`)}
+  catch(e:any){if(String(e?.message||e).includes('session expired'))throw e;announceNetworkFailure(e);throw new Error(`Cannot reach VTAB API at ${base}. ${e?.message||e}`)}
   return jsonResponse<T>(r,base,path);
 }
 export async function apiForm<T>(path:string,form:FormData,init?:RequestInit):Promise<T>{
   const base=await apiBase();
   let r:Response;
   try{r=await fetchWithSessionRetry(base+path,{...init,method:init?.method||'POST',headers:mergeHeaders(authHeaders(),init?.headers),body:form});}
-  catch(e:any){if(String(e?.message||e).includes('session expired'))throw e;throw new Error(`Cannot reach VTAB API at ${base}. ${e?.message||e}`)}
+  catch(e:any){if(String(e?.message||e).includes('session expired'))throw e;announceNetworkFailure(e);throw new Error(`Cannot reach VTAB API at ${base}. ${e?.message||e}`)}
   return jsonResponse<T>(r,base,path);
 }
 export async function apiDownload(path:string,filename:string){
