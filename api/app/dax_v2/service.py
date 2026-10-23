@@ -13,7 +13,7 @@ from .parser import ParseError, parse_measure
 from .renderer import render
 
 
-ENGINE_VERSION = "6.1.4"
+ENGINE_VERSION = "6.1.7"
 COMPATIBILITY_LEVEL = 100
 
 

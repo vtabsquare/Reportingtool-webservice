@@ -10,7 +10,7 @@
 .slicerVisual .slicerListItem,.slicerVisual .slicerList button,.slicerVisual .slicerDropdownMulti .slicerListItem,.viewerVisual-slicer .slicerListItem,.viewerVisual-slicer .viewerSlicerChips button{font:inherit!important;color:var(--slicer-text,#242424)!important;text-align:var(--slicer-align,left)!important;white-space:var(--slicer-wrap,nowrap)!important;padding-top:var(--slicer-row-padding,8px)!important;padding-bottom:var(--slicer-row-padding,8px)!important}
 .slicerVisual .slicerListItem:nth-child(even),.slicerVisual .slicerList button:nth-child(even),.viewerVisual-slicer .slicerListItem:nth-child(even),.viewerVisual-slicer .viewerSlicerChips button:nth-child(even){background:var(--slicer-alt,#f8fafc)!important}
 
-.viewerVisual{background:var(--viewer-background,var(--published-background,#fff))!important;border-top:var(--viewer-border-top,var(--published-border-top,0))!important;border-right:var(--viewer-border-right,var(--published-border-right,0))!important;border-bottom:var(--viewer-border-bottom,var(--published-border-bottom,0))!important;border-left:var(--viewer-border-left,var(--published-border-left,0))!important;border-radius:var(--viewer-radius,var(--published-radius,0))!important;box-shadow:var(--viewer-shadow,var(--published-shadow,none))!important}
+.viewerVisual{background:var(--viewer-background,var(--published-background,#fff))!important;border-top:var(--viewer-border-top,var(--published-border-top,0))!important;border-right:var(--viewer-border-right,var(--published-border-right,0))!important;border-bottom:var(--viewer-border-bottom,var(--published-border-bottom,0))!important;border-left:var(--viewer-border-left,var(--published-border-left,0))!important;border-radius:var(--viewer-radius,var(--published-radius,0))!important;box-shadow:var(--viewer-shadow,var(--published-shadow,none))!important;container-type:size!important}
 .viewerVisual:hover{transform:none!important;box-shadow:var(--viewer-shadow,var(--published-shadow,none))!important}
 .viewerVisual .viewerVisualTitle{background:var(--viewer-title-background,transparent)!important;color:var(--viewer-title-color,var(--published-title-color,#111827))!important}
 .viewerVisual .viewerVisualBody{background:transparent!important;padding-top:var(--viewer-padding-top,var(--published-pad-top,8px))!important;padding-right:var(--viewer-padding-right,var(--published-pad-right,8px))!important;padding-bottom:var(--viewer-padding-bottom,var(--published-pad-bottom,8px))!important;padding-left:var(--viewer-padding-left,var(--published-pad-left,8px))!important}
@@ -96,6 +96,23 @@
 .viewerVisual-card .powerCardItem{min-height:0!important;height:100%!important;padding:4px 8px!important;box-sizing:border-box!important}
 .viewerVisual-card .advancedCardValue{line-height:1.15!important}
 .viewerVisual-card .powerCardCategory{margin-top:2px!important;line-height:1.15!important}
+.viewerVisual-multirowcard .multiCardGrid{
+  overflow:hidden!important;
+  scrollbar-width:none!important;
+}
+.viewerVisual-multirowcard .multiCardGrid::-webkit-scrollbar{display:none!important}
+
+/* Multi-card density is determined by the saved visual rectangle. Browser
+   viewport media queries made the same report render differently in Desktop
+   and Services, especially around the 1200px browser breakpoint. */
+@container (max-height: 260px){
+  .viewerVisual-multirowcard .premiumMultiCardItem{
+    min-height:min(var(--multi-min-height,74px),74px)!important;
+  }
+  .viewerVisual-multirowcard .premiumMultiCardItem b{
+    font-size:min(var(--multi-value-size,19px),19px)!important;
+  }
+}
 .viewerVisual-textbox .viewerVisualBody{padding:0!important;overflow:hidden!important;flex:1!important;min-height:0!important}
 .viewerVisual-textbox .viewerTextBox{padding:var(--viewer-padding-top,8px) var(--viewer-padding-right,12px) var(--viewer-padding-bottom,8px) var(--viewer-padding-left,12px)!important;width:100%!important;height:100%!important;box-sizing:border-box!important;overflow:auto!important}
 .viewerVisual-button .viewerVisualBody{padding:0!important;overflow:hidden!important;flex:1!important;min-height:0!important}
@@ -147,6 +164,23 @@ div[style*="z-index: 9999999"] {
 .canvasObject.canvasObject-slicer:has(.slicerDropdownOpen) {
   overflow: visible !important;
   z-index: 10060 !important;
+}
+
+/* Published dropdowns must escape the compact slicer body.  Keep all other
+   visuals clipped; raise/unclip only the wrapper that owns an open menu. */
+.viewerVisualWrapper:has(.viewerVisual-slicer.slicerDropdownOpen) {
+  overflow: visible !important;
+  z-index: 10060 !important;
+}
+.viewerVisual-slicer.slicerDropdownOpen,
+.viewerVisual-slicer.slicerDropdownOpen .viewerVisualBody,
+.viewerVisual-slicer.slicerDropdownOpen .viewerSlicerContents,
+.viewerVisual-slicer.slicerDropdownOpen .slicerDropdownShell {
+  overflow: visible !important;
+}
+.viewerGrid:has(.viewerVisual-slicer.slicerDropdownOpen),
+.viewerPageLayer:has(.viewerVisual-slicer.slicerDropdownOpen) {
+  overflow: visible !important;
 }
 
 .slicerVisual .slicerTileContainer,

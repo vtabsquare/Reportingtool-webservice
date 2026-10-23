@@ -24,12 +24,14 @@ from pydantic import BaseModel
 from .storage import Store, META, DEMO
 from .demo import seed, default_project, blank_project
 from .transform_engine import preview, materialize, join_profile, ai_suggestions, suggest_calculated_column
-from .semantic_engine import execute, measure, cache_stats, clear_cache
+from .semantic_engine import execute, measure, compile_query, cache_stats, clear_cache, semantic_query_health
 from .dax_engine import dax_engine_health, diagnose_dax_definition, parse_measure_definition, repair_dax_definition
+from .dax_v2 import analyze_measure as analyze_dax_v2, correct_measure, ensure_semantic_catalog, reconstruct_measure
+from .dax_v2.service import engine_health as dax_v2_health
 from .measure_registry import merge_measure_registry
 from .measure_catalog import generate_measure_catalog
 from .gemini import generate
-from .local_engine import bootstrap_from_sqlite, ensure_analytics_ready, analytics_status, storage_stats, optimize_storage, delete_managed_table, create_calendar_table, calendar_column_catalog, table_columns, table_types, materialize_query
+from .local_engine import bootstrap_from_sqlite, ensure_analytics_ready, analytics_status, storage_stats, optimize_storage, delete_managed_table, create_calendar_table, calendar_column_catalog, table_columns, table_types, materialize_query, connect
 from .connectors import demo_metadata,test_connection,import_file,import_file_path,import_cloud,import_database,workbook_sheets,SOURCE_CATALOG,safe_table_name,friendly_table_name,list_google_sheets,list_database_tables
 from .exports import report_pdf,report_pptx,send_report_email
 from .paginated_reports import PaginatedReportError, render_paginated_pdf
@@ -2137,8 +2139,10 @@ def admin_save_settings(payload:dict):
 def export_published(report_id:str,fmt:str,authorization:str|None=Header(default=None)):
     _enforce_viewer_block(authorization, report_id)
     item=store.get_published(report_id)
-    if not item:raise HTTPException(404,'Published report not found')
-    project=item['project'];safe=''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in item['name']) or 'VTAB_Report'
+    project=(item or {}).get('project') or _get_cloud_project(report_id)
+    if not project:raise HTTPException(404,'Published report not found')
+    report_name=(item or {}).get('name') or (project.get('report') or {}).get('name') or project.get('name') or 'VTAB Report'
+    safe=''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in report_name) or 'VTAB_Report'
     if fmt.lower()=='pdf':
         data=report_pdf(project);return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{safe}.pdf"'})
     if fmt.lower() in ('ppt','pptx'):
@@ -2620,11 +2624,65 @@ def bulk_save_measures(req:BulkMeasureReq):
     store.save_project(p);clear_cache();store.log('measure.bulk-save',{'saved':len(saved),'errors':len(errors),'totalMeasures':len(working)})
     return {'ok':len(errors)==0,'saved':saved,'errors':errors,'measureCount':len(working),'project':p}
 
-def _validate_dax_measure(name:str,expression:str,model:dict)->dict:
-    health=dax_engine_health()
+def _measure_system_health():
+    language=dax_v2_health();storage=dax_engine_health();planner=semantic_query_health()
+    failures=list(language.get('failures') or [])+list(storage.get('failures') or [])+list(planner.get('failures') or [])
+    return {**storage,'engine':'VTAB Semantic Measure Engine','engineVersion':language.get('engineVersion'),
+            'compatibilityLevel':language.get('compatibilityLevel'),
+            'healthy':bool(language.get('healthy')) and bool(storage.get('healthy')) and bool(planner.get('healthy')),
+            'checks':int(language.get('checks') or 0)+int(storage.get('checks') or 0)+int(planner.get('checks') or 0),
+            'failures':failures,'languageFrontend':language,'storageAdapter':storage,'visualPlanner':planner}
+
+def _preflight_measure_visual(name:str,model:dict)->dict:
+    sql,params=compile_query(model,{'dimensions':[],'measures':[name],'filters':[],'limit':1})
+    try:
+        connect().execute('EXPLAIN '+sql,params).fetchall()
+        return {'visualReady':True,'visualSql':sql}
+    except Exception as exc:
+        message=str(exc);lowered=message.lower()
+        if any(token in lowered for token in ('does not exist','not found','catalog error','table with name','no files found')):
+            return {'visualReady':None,'visualSql':sql,
+                    'visualWarning':'Visual binding will be verified after the model data is loaded: '+message}
+        raise ValueError('Measure compiled but failed the visual-query preflight: '+message) from exc
+
+def _validate_dax_measure(name:str,expression:str,model:dict,offer_recovery:bool=True)->dict:
+    health=_measure_system_health()
     if not health['healthy']:
         return {'valid':False,'error':'The DAX engine self-test failed. Saving is disabled to protect the report.',
                 'engine':'VTAB DAX','health':health}
+    semantic=analyze_dax_v2(expression,model)
+    if not semantic.valid:
+        first=next((item for item in semantic.diagnostics if item.severity.value=='error'),None)
+        if not offer_recovery:
+            return {'valid':False,'error':first.message if first else 'The measure is not valid.',
+                    'engine':'VTAB Semantic Measure Engine','analysis':semantic.payload(),
+                    'diagnostics':[item.payload() for item in semantic.diagnostics]}
+        correction=correct_measure(expression,model);correction_payload=correction.payload();recovery_source=expression
+        if correction.available:
+            corrected=_validate_dax_measure('',correction.expression,model,False)
+            correction_payload.update({'validated':bool(corrected.get('valid')),
+                                       'diagnostics':corrected.get('diagnostics') or [],
+                                       'expression':corrected.get('expression') or correction.expression,
+                                       'compiled':corrected.get('compiled')})
+            if not corrected.get('valid'):
+                correction_payload['validationError']=corrected.get('error') or 'The corrected formula did not pass full execution validation.'
+            recovery_source=correction_payload['expression']
+        reconstruction=reconstruct_measure(recovery_source);reconstruction_payload=reconstruction.payload()
+        if reconstruction.available:
+            reconstructed=analyze_dax_v2(reconstruction.expression,model)
+            candidate_expression=reconstructed.canonical_source if reconstructed.valid else reconstruction.expression
+            candidate=_validate_dax_measure('',candidate_expression,model,False)
+            reconstruction_payload.update({'validated':bool(candidate.get('valid')),
+                                           'diagnostics':candidate.get('diagnostics') or [item.payload() for item in reconstructed.diagnostics],
+                                           'expression':candidate.get('expression') or candidate_expression,
+                                           'compiled':candidate.get('compiled')})
+            if not candidate.get('valid'):
+                reconstruction_payload['validationError']=candidate.get('error') or 'The reconstructed formula did not pass full execution validation.'
+        return {'valid':False,'error':first.message if first else 'The measure is not valid.',
+                'engine':'VTAB Semantic Measure Engine','analysis':semantic.payload(),
+                'diagnostics':[item.payload() for item in semantic.diagnostics],
+                'correction':correction_payload,'reconstruction':reconstruction_payload}
+    expression=semantic.canonical_source
     diagnostic=diagnose_dax_definition(expression)
     expression=diagnostic['expression']
     if diagnostic['issues']:
@@ -2640,8 +2698,10 @@ def _validate_dax_measure(name:str,expression:str,model:dict)->dict:
     old=model['measures'].get(name);model['measures'][name]=expression
     try:
         compiled=measure(name,model,context_filters=[])
-        return {'valid':True,'compiled':compiled,'engine':'VTAB DAX','name':name,
-                'expression':expression,'autoRepaired':diagnostic['changed'],'repairs':diagnostic['repairs']}
+        visual_preflight=_preflight_measure_visual(name,model)
+        return {'valid':True,'compiled':compiled,'engine':'VTAB Semantic Measure Engine','name':name,
+                'expression':expression,'autoRepaired':diagnostic['changed'],'repairs':diagnostic['repairs'],
+                'analysis':semantic.payload(),'compatibilityRewrites':semantic.rewrites,**visual_preflight}
     except Exception as e:
         err_msg = str(e)
         err_lower=err_msg.lower()
@@ -2661,7 +2721,7 @@ def validate_measure(req:MeasureReq):
 
 @app.get('/api/v1/measures/health')
 def measure_engine_health():
-    return dax_engine_health()
+    return _measure_system_health()
 
 @app.post('/api/v1/assist/chat')
 def assist_chat(req:AssistReq):

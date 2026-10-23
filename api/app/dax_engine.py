@@ -14,7 +14,7 @@ class DaxError(ValueError): pass
 
 # One authoritative public capability registry. API health checks, diagnostics,
 # AI prompting, and the editor all derive from this list so they cannot drift.
-DAX_ENGINE_VERSION='6.1.4-duckdb-storage-adapter-1'
+DAX_ENGINE_VERSION='6.1.7-duckdb-storage-adapter-2'
 SUPPORTED_DAX_FUNCTIONS=executable_function_names()
 
 # Known Power BI functions must never be treated as spelling mistakes merely
@@ -40,7 +40,7 @@ def _function_calls(text:str):
         if bracket_depth:i+=1;continue
         if ch.isalpha() or ch=='_':
             start=i;i+=1
-            while i<len(text) and (text[i].isalnum() or text[i]=='_'):i+=1
+            while i<len(text) and (text[i].isalnum() or text[i] in '_.'):i+=1
             end=i
             while i<len(text) and text[i].isspace():i+=1
             if i<len(text) and text[i]=='(':calls.append((start,end,text[start:end].upper()))
@@ -370,6 +370,29 @@ def _virtual_column(table:DaxTable,name:str):
     return None
 
 def _virtual_scalar(expr,table:DaxTable,model,measure_resolver=None,filters=None,as_condition=False):
+    expr=expr.strip()
+    # Iterator bodies may define local scalar variables.  Compile them in the
+    # virtual row/context-transition scope so a variable such as IssuerShare is
+    # never mistaken for a persisted measure.
+    if re.match(r'(?is)^VAR\b',expr):
+        variables,result=_parse_vars(expr);local_values={}
+        def local_resolver(name):
+            try:return _mapping_value(local_values,name)
+            except KeyError:pass
+            if measure_resolver:return measure_resolver(name)
+            raise DaxError(f"Unknown iterator variable or measure [{name}]")
+        for name,value in variables.items():
+            local_values[name]=_virtual_scalar(value,table,model,local_resolver,filters)
+        return _virtual_scalar(result,table,model,local_resolver,filters,as_condition)
+
+    divide=re.fullmatch(r'(?is)DIVIDE\s*\((.*)\)',expr)
+    if divide:
+        args=split_top(divide.group(1))
+        if len(args)<2 or len(args)>3:raise DaxError('DIVIDE requires numerator, denominator, and an optional alternate result.')
+        numerator=_virtual_scalar(args[0],table,model,measure_resolver,filters)
+        denominator=_virtual_scalar(args[1],table,model,measure_resolver,filters)
+        alternate=_virtual_scalar(args[2],table,model,measure_resolver,filters) if len(args)==3 else 'NULL'
+        return f'COALESCE(({numerator})/NULLIF(({denominator}),0),{alternate})'
     if as_condition:
         for operator,sql_operator in (('||','OR'),('&&','AND')):
             parts=_split_logical(expr,operator)
@@ -403,33 +426,35 @@ def _virtual_scalar(expr,table:DaxTable,model,measure_resolver=None,filters=None
         start=_virtual_scalar(args[0],table,model,measure_resolver,filters)
         end=_virtual_scalar(args[1],table,model,measure_resolver,filters)
         return f"date_diff('{unit.lower()}',CAST({start} AS TIMESTAMP),CAST({end} AS TIMESTAMP))"
-    context_transition=re.fullmatch(r'(?is)CALCULATE\s*\((.*)\)',expr.strip())
+    context_transition=re.fullmatch(r'(?is)CALCULATE\s*\((.*)\)',expr)
     if context_transition and table.source_table:
         args=split_top(context_transition.group(1))
         source=table.source_table;physical=model['tables'][source]['physical']
-        removes_source=any(
-            re.fullmatch(rf"(?is)REMOVEFILTERS\s*\(\s*'?{re.escape(source)}'?\s*\)",item.strip())
-            for item in args[1:]
-        )
-        if removes_source:
-            base=_compile_simple(args[0],model,measure_resolver,[])
-            predicates=[]
-            for item in args[1:]:
-                predicate,_=_compile_calculate_filter(item,model,{},[],measure_resolver)
-                if predicate:predicates.append(predicate)
-            sql=f'(SELECT {base} FROM {qi(physical)} {qi(source)}'
-            if predicates:sql+=' WHERE '+' AND '.join(f'({item})' for item in predicates)
-            return sql+')'
-        if len(args)==1 and table.group_columns:
-            base=_compile_simple(args[0],model,measure_resolver,filters)
-            predicates=[]
+        explicit=[];removed=set()
+        for item in args[1:]:
+            predicate,overrides=_compile_calculate_filter(item,model,{},filters or [],measure_resolver)
+            if predicate:explicit.append(predicate)
+            removed.update(overrides)
+        removed_lower={item.lower() for item in removed}
+        active_filters=[]
+        for item in filters or []:
+            field=str(item.get('field','')).split('::',1)[0]
+            table_name=field.split('.',1)[0] if '.' in field else ''
+            if field.lower() in removed_lower or (table_name+'.*').lower() in removed_lower:continue
+            active_filters.append(item)
+        base=_compile_simple(args[0],model,measure_resolver,active_filters)
+        predicates=[]
+        removes_source=(source+'.*').lower() in removed_lower
+        if not removes_source:
             for column in table.group_columns:
+                if semantic_field(source,column).lower() in removed_lower:continue
                 inner=resolve_field(model,source,column,source);outer=f'{qi("__row")}.{qi(column)}'
                 predicates.append(f'{inner} IS NOT DISTINCT FROM {outer}')
-            context=_context_predicate(model,source,filters or [],source)
-            if context:predicates.append(context)
-            aggregate=_attach_filter(base,' AND '.join(f'({item})' for item in predicates))
-            return f'(SELECT {aggregate} FROM {qi(physical)} {qi(source)})'
+        context=_context_predicate(model,source,active_filters,source)
+        if context:predicates.append(context)
+        predicates.extend(explicit)
+        aggregate=_attach_filter(base,' AND '.join(f'({item})' for item in predicates))
+        return f'(SELECT {aggregate} FROM {qi(physical)} {qi(source)})'
     def replace_field(match):
         column=match.group(2).strip();actual=_virtual_column(table,column)
         if actual is None:raise DaxError(f"Virtual table does not contain column [{column}]")
@@ -479,7 +504,7 @@ def _render_group_table(source_table,group_columns,computed,model,filters,measur
             placeholders[placeholder]=scalar
             return placeholder
         contains_aggregate=re.search(
-            r"(?is)\b(?:SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN)\s*\(",
+            r"(?is)\b(?:SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN|STDEV\.P|STDEV\.S|VAR\.P|VAR\.S)\s*\(",
             expression,
         )
         rewritten=(expression if contains_aggregate else re.sub(
@@ -976,7 +1001,7 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None,in_filter=Fals
     if m and measure_resolver:
         resolved = measure_resolver(m.group(1).strip())
         if in_filter and isinstance(resolved, str) and not resolved.strip().startswith('('):
-            if re.match(r'(?is)^\s*(SUM|AVG|MIN|MAX|COUNT|MEDIAN)\s*\(', resolved):
+            if re.match(r'(?is)^\s*(SUM|AVG|MIN|MAX|COUNT|MEDIAN|STDDEV_POP|STDDEV_SAMP|VAR_POP|VAR_SAMP)\s*\(', resolved):
                 return f'(SELECT {resolved})'
         return resolved
     field_ref=parse_field(expr)
@@ -1010,7 +1035,7 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None,in_filter=Fals
         tokens.append(_compile_simple(tail,model,measure_resolver,filters,in_filter=in_filter))
         return ' '.join(tokens)
 
-    m=re.fullmatch(r"(?is)(SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN)\s*\(\s*(?:('[^']+'|[A-Za-z_][\w ]*)\s*)?\[\s*([^\]]+)\]\s*\)",expr)
+    m=re.fullmatch(r"(?is)(SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN|STDEV\.P|STDEV\.S|VAR\.P|VAR\.S)\s*\(\s*(?:('[^']+'|[A-Za-z_][\w ]*)\s*)?\[\s*([^\]]+)\]\s*\)",expr)
     if m:
         fn,t,c=m.groups();fn=fn.upper();tbl=t.strip("'") if t else resolve_table(model,'',c.strip());col=c.strip()
         if in_filter:
@@ -1019,6 +1044,10 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None,in_filter=Fals
         if fn=='AVERAGE':fn='AVG'
         if fn=='DISTINCTCOUNT':return f'COUNT(DISTINCT {field})'
         if fn=='MEDIAN':return f'MEDIAN({field})'
+        if fn=='STDEV.P':return f'STDDEV_POP({field})'
+        if fn=='STDEV.S':return f'STDDEV_SAMP({field})'
+        if fn=='VAR.P':return f'VAR_POP({field})'
+        if fn=='VAR.S':return f'VAR_SAMP({field})'
         return f'{fn}({field})'
     m=re.fullmatch(r'(?is)COUNTROWS\s*\(\s*(\'?.*?\'?)\s*\)',expr)
     if m:
@@ -1482,7 +1511,7 @@ def _attach_filter(base_sql,predicate):
     # DuckDB/Postgres-style aggregate FILTER works for every aggregate generated by
     # this engine. Apply it to every aggregate in a composite/CASE expression so
     # CALCULATE([Measure], ...) and CALCULATE inside SWITCH/IF preserve filter context.
-    aggregate=re.compile(r'(?i)\b(SUM|AVG|MIN|MAX|COUNT|MEDIAN)\s*\(')
+    aggregate=re.compile(r'(?i)\b(SUM|AVG|MIN|MAX|COUNT|MEDIAN|STDDEV_POP|STDDEV_SAMP|VAR_POP|VAR_SAMP)\s*\(')
     spans=[]
     for match in aggregate.finditer(base_sql):
         open_pos=base_sql.find('(',match.start());depth=0;quote=None;close_pos=None
@@ -1555,7 +1584,10 @@ def compile_dax(expression,model,filters=None,measure_resolver=None):
 
     vars_sql={}
     ret=text
-    if re.search(r'(?i)\bVAR\b',text):
+    # Only a root-level VAR block belongs to the measure scope. Iterator-local
+    # VAR blocks are compiled by _virtual_scalar after SUMX/AVERAGEX establishes
+    # the virtual row context.
+    if re.match(r'(?is)^\s*VAR\b',text):
         variables,ret=_parse_vars(text)
         for name,expr in variables.items():vars_sql[name]=_compile_var_value(expr,model,vars_sql,filters,measure_resolver)
 
@@ -1597,7 +1629,7 @@ def dax_engine_health():
         if name not in model['measures']:raise DaxError(f'Unknown health-check measure [{name}]')
         return compile_dax(model['measures'][name],model,measure_resolver=resolver).sql
     cases={
-        'aggregates':'Health Aggregates = SUM(Health[Amount]) + AVERAGE(Health[Amount]) + MIN(Health[Amount]) + MAX(Health[Amount]) + COUNT(Health[Id]) + DISTINCTCOUNT(Health[Id]) + MEDIAN(Health[Amount])',
+        'aggregates':'Health Aggregates = SUM(Health[Amount]) + AVERAGE(Health[Amount]) + MIN(Health[Amount]) + MAX(Health[Amount]) + COUNT(Health[Id]) + DISTINCTCOUNT(Health[Id]) + MEDIAN(Health[Amount]) + STDEV.P(Health[Amount]) + STDEV.S(Health[Amount]) + VAR.P(Health[Amount]) + VAR.S(Health[Amount])',
         'iterators':'Health Iterators = SUMX(Health,Health[Amount]) + AVERAGEX(Health,Health[Amount]) + MINX(Health,Health[Amount]) + MAXX(Health,Health[Amount])',
         'countrows':'Health Rows = COUNTROWS(Health)',
         'calculate-filter-all':'Health Filter = CALCULATE([Base Amount],FILTER(ALL(Health),LOWER(TRIM(Health[Status])) = "open"))',

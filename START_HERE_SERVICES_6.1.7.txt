@@ -1,0 +1,12 @@
+VTAB Reporting Services 6.1.7 update
+====================================
+
+1. Back up the existing Services application.
+2. Copy this update over Services 6.1.6, preserving the folder structure.
+3. Keep the existing environment configuration and deployment secrets.
+4. Install dependencies if required, rebuild the web application, and restart
+   the API/service processes.
+
+This update keeps published-measure evaluation aligned with Desktop 6.1.7 and
+adds the same correction/reconstruction validation pipeline to the Services
+measure-validation endpoint.

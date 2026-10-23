@@ -181,7 +181,7 @@ def bind(root: Node, model: dict[str, Any], catalog: dict[str, Any], current_mea
         if isinstance(node, Call):
             spec = DAX_FUNCTION_REGISTRY.get(node.function.upper())
             function=node.function.upper()
-            column_functions={"SUM","AVERAGE","MIN","MAX","COUNT","DISTINCTCOUNT","MEDIAN","VALUES","ALL","REMOVEFILTERS","SELECTEDVALUE","HASONEVALUE"}
+            column_functions={"SUM","AVERAGE","MIN","MAX","COUNT","DISTINCTCOUNT","MEDIAN","STDEV.P","STDEV.S","VAR.P","VAR.S","VALUES","ALL","REMOVEFILTERS","SELECTEDVALUE","HASONEVALUE"}
             iterator_functions={"SUMX","AVERAGEX","MINX","MAXX","FILTER","CONCATENATEX","RANKX","ADDCOLUMNS","SUMMARIZE","TOPN"}
             for index,argument in enumerate(node.arguments):
                 argument_row_scope=allow_row_column

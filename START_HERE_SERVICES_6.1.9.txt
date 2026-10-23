@@ -1,0 +1,20 @@
+VTAB Reporting Services 6.1.9 - Desktop Publication Parity
+
+Full source package:
+1. Replace the existing Services source with this package.
+2. Install dependencies with npm install when required.
+3. Build/deploy the Services application normally.
+4. Republish the report from Desktop to create a fresh Services snapshot.
+
+Update-only package:
+1. Back up the current Services source.
+2. Copy the update-only package over the Services project root, preserving paths.
+3. Install dependencies only if your deployment process requires it.
+4. Rebuild/redeploy Services.
+5. Republish the report from Desktop.
+
+Expected result:
+- The complete report opens fitted to the available page.
+- Modern Desktop canvases do not receive a second legacy title header.
+- Saved title/background visuals retain their Desktop colors and geometry.
+- Multi-row cards do not gain browser-width-dependent scrollbars.

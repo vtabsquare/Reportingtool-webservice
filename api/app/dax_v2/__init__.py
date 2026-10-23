@@ -7,5 +7,6 @@ existing DuckDB adapter is used during the migration period.
 
 from .service import analyze_measure, ensure_semantic_catalog, engine_health
 from .reconstruction import reconstruct_measure
+from .correction import correct_measure
 
-__all__ = ["analyze_measure", "ensure_semantic_catalog", "engine_health", "reconstruct_measure"]
+__all__ = ["analyze_measure", "correct_measure", "ensure_semantic_catalog", "engine_health", "reconstruct_measure"]

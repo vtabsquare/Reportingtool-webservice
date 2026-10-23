@@ -1,0 +1,7 @@
+VTAB Reporting Services 6.1.6
+
+Use this source with VTAB Reporting Studio Desktop 6.1.6.
+
+Keep your existing environment files and secrets. They are intentionally excluded from the delivery package.
+
+If migration 019_workspace_report_access_and_provisioning.sql has already been applied, do not apply it again.

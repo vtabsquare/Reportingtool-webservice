@@ -46,7 +46,7 @@ class AnalysisResult:
     result_type: str = "unknown"
     result_kind: str = "scalar"
     compatibility_level: int = 100
-    engine_version: str = "6.1.4"
+    engine_version: str = "6.1.7"
 
     def payload(self) -> dict[str, Any]:
         return {

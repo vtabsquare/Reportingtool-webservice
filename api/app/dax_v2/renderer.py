@@ -34,6 +34,8 @@ def render(node: Node, parent_precedence: int = 0) -> str:
     if isinstance(node, QuotedName):
         return "'" + node.value.replace("'", "''") + "'"
     if isinstance(node, Unary):
+        if node.operator in {"+", "-"} and isinstance(node.operand, Literal) and node.operand.value_type in {"integer", "decimal"}:
+            return f"{node.operator}{render(node.operand, 8)}"
         return f"{node.operator} {render(node.operand, 8)}"
     if isinstance(node, Binary):
         precedence = _PREC.get(node.operator, 0)

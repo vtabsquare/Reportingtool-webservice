@@ -112,7 +112,7 @@ def _aggregate_reference_tables(model,expression):
     """Tables that provide values to an aggregate, excluding filter-only tables."""
     text=str(expression or '')
     owners=set()
-    functions=r'(?:SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN|SUMX|AVERAGEX|MINX|MAXX)'
+    functions=r'(?:SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN|STDEV\.P|STDEV\.S|VAR\.P|VAR\.S|SUMX|AVERAGEX|MINX|MAXX)'
     for table in model.get('tables',{}):
         escaped=re.escape(table);quoted=re.escape("'"+table.replace("'","''")+"'")
         table_token=r'(?:'+quoted+r'|(?<![A-Za-z0-9_])'+escaped+r')'
@@ -133,7 +133,7 @@ def _sql_aggregate_reference_tables(model,sql):
     expression happens to be formatted.
     """
     text=str(sql or '');owners=set()
-    aggregate=re.compile(r'(?i)\b(?:SUM|AVG|AVERAGE|MIN|MAX|COUNT|MEDIAN|STDDEV|VARIANCE|ANY_VALUE)\s*\(')
+    aggregate=re.compile(r'(?i)\b(?:SUM|AVG|AVERAGE|MIN|MAX|COUNT|MEDIAN|STDDEV(?:_POP|_SAMP)?|VAR(?:_POP|_SAMP)?|VARIANCE|ANY_VALUE)\s*\(')
     for match in aggregate.finditer(text):
         open_pos=text.find('(',match.start());depth=0;quote=None;close_pos=None;index=open_pos
         while index<len(text):
@@ -268,36 +268,12 @@ def measure(name,model,stack=None,context_filters=None,with_meta=False):
     def resolve_measure(ref):
         return measure(ref,model,stack+[name],context_filters,False)
 
-    if re.search(r'[A-Za-z_][\w ]*\[[^\]]+\]',exp) or re.search(r"'[^']+'\[[^\]]+\]",exp) or re.search(r'\[[^\]]+\]',exp) or re.search(r'(?i)\b(VAR|RETURN|CALCULATE|COUNTROWS|SUMX|AVERAGEX|MINX|MAXX|FILTER|EDATE|DATESBETWEEN)\b',exp):
-        c=compile_for_duckdb(exp,model,context_filters or [],resolve_measure)
-        return (c.sql,c.override_fields) if with_meta else c.sql
-
-    m=re.fullmatch(r'(SUM|AVG|MIN|MAX|COUNT|DISTINCTCOUNT)\(([^.]+)\.(.+)\)',exp,re.I)
-    if m:
-        tbl = m.group(2).strip().strip("'\"")
-        col = m.group(3).strip().strip("'\"")
-        sql=f'{m.group(1).upper()}({fld(model,tbl+"."+col)})'
-        return (sql,set()) if with_meta else sql
-
-    if exp.upper().startswith('DIVIDE('):
-        inner=exp[7:-1];depth=0;cut=None
-        for i,ch in enumerate(inner):
-            if ch=='(':depth+=1
-            elif ch==')':depth-=1
-            elif ch==',' and depth==0:cut=i;break
-        if cut is None:
-            raise ValueError('DIVIDE requires two arguments')
-        a,b=inner[:cut],inner[cut+1:]
-        def ce(x):
-            x=x.strip()
-            m2=re.fullmatch(r'\[([^]]+)\]',x)
-            return measure(m2.group(1),model,stack+[name],context_filters,False) if m2 else inline(x,model,stack+[name],context_filters)
-        aa,bb=ce(a),ce(b)
-        sql=f'(({aa})/NULLIF(({bb}),0))'
-        return (sql,set()) if with_meta else sql
-
-    sql=inline(exp,model,stack+[name],context_filters)
-    return (sql,set()) if with_meta else sql
+    # Every validated canonical measure must pass through the storage adapter.
+    # The previous heuristic bypassed compilation for scalar formulas without
+    # field references (notably BLANK()), leaking DAX function names directly
+    # into DuckDB and causing a visual-only API 400 after successful validation.
+    c=compile_for_duckdb(exp,model,context_filters or [],resolve_measure)
+    return (c.sql,c.override_fields) if with_meta else c.sql
 
 def inline(exp,model,stack,context_filters=None):
     # Single quotes are valid in DAX table names e.g. SUM('Sales'[Amount])

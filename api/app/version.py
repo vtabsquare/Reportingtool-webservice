@@ -20,7 +20,7 @@ def product_version() -> str:
         pass
 
     # Standalone backend builds may not ship the root package manifest.
-    return "6.1.5"
+    return "6.1.9"
 
 
 PRODUCT_VERSION = product_version()

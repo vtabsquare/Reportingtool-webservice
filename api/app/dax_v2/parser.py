@@ -121,6 +121,12 @@ class Parser:
     def parse_prefix(self) -> Node:
         self.skip_newlines()
         token = self.current
+        # VAR/RETURN blocks are valid scalar expressions inside iterators and
+        # function arguments, not only at the root of a measure.  Treating VAR
+        # as an ordinary name made the following identifier look like a stray
+        # token and produced the misleading "Expected paren" diagnostic.
+        if token.kind == "IDENT" and token.value.upper() == "VAR":
+            return self.parse_var_block()
         if token.kind == "OP" and token.value in {"+", "-"}:
             self.advance()
             operand = self.parse_expression(8)

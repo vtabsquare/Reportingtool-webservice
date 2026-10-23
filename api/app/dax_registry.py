@@ -26,7 +26,7 @@ class DaxFunctionSpec:
 
 
 _IMPLEMENTED_BY_CATEGORY = {
-    "aggregation": "SUM SUMX AVERAGE AVERAGEX MIN MINX MAX MAXX COUNT COUNTROWS DISTINCTCOUNT MEDIAN",
+    "aggregation": "SUM SUMX AVERAGE AVERAGEX MIN MINX MAX MAXX COUNT COUNTROWS DISTINCTCOUNT MEDIAN STDEV.P STDEV.S VAR.P VAR.S",
     "logical": "IF SWITCH AND OR NOT TRUE FALSE COALESCE BLANK",
     "information": "ISBLANK SELECTEDVALUE",
     "text": "FORMAT CONCATENATE CONCATENATEX LEFT RIGHT MID LEN SUBSTITUTE TRIM UPPER LOWER CONTAINSSTRING CONTAINSSTRINGEXACT VALUE",
@@ -65,6 +65,10 @@ _SIGNATURES: dict[str, tuple[int, int | None, tuple[str, ...], str, str]] = {
     "COUNTROWS": (1, 1, ("table",), "integer", "scalar"),
     "DISTINCTCOUNT": (1, 1, ("column",), "integer", "scalar"),
     "MEDIAN": (1, 1, ("column",), "number", "scalar"),
+    "STDEV.P": (1, 1, ("column",), "number", "scalar"),
+    "STDEV.S": (1, 1, ("column",), "number", "scalar"),
+    "VAR.P": (1, 1, ("column",), "number", "scalar"),
+    "VAR.S": (1, 1, ("column",), "number", "scalar"),
     "SUMX": (2, 2, ("table", "scalar_expression"), "number", "scalar"),
     "AVERAGEX": (2, 2, ("table", "scalar_expression"), "number", "scalar"),
     "MINX": (2, 2, ("table", "scalar_expression"), "variant", "scalar"),

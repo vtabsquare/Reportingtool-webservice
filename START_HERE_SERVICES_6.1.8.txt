@@ -1,0 +1,11 @@
+VTAB Reporting Services 6.1.8 — Services-only update
+=====================================================
+
+1. Back up the existing Services 6.1.7 application.
+2. Copy the contents of the update package over the Services application,
+   preserving the included folder structure.
+3. Keep the existing environment configuration and deployment secrets.
+4. Rebuild the web application and restart the API/service process.
+
+This update changes only Services. It fixes published slicer dropdown clipping
+and restores resilient PDF/PowerPoint export.

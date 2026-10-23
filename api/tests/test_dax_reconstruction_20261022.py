@@ -1,4 +1,4 @@
-from app.dax_v2 import analyze_measure, reconstruct_measure
+from app.dax_v2 import analyze_measure, correct_measure, reconstruct_measure
 from app.semantic_engine import measure
 
 
@@ -53,3 +53,22 @@ ROUNDUP(DIVIDE(SUM(GlobalSales[Net_Sales_USD]), SUM(GlobalSales[Order_Count]), 0
     subject["measures"]["Rounded Average Order Value"] = proposal.expression
     compiled = measure("Rounded Average Order Value", subject)
     assert "CEIL" in compiled and "POWER" not in compiled
+
+
+def test_missing_parenthesis_is_corrected_before_reconstruction():
+    subject = {
+        "tables": {"Calendar": {"physical": "calendar_data", "columns": {"Date": "Date"}}},
+        "columnTypes": {"Calendar.Date": "date"},
+        "measures": {"Net Revenue": "Net Revenue = 100"},
+    }
+    proposal = correct_measure("Revenue PM = CALCULATE([Net Revenue], DATEADD('Calendar'[Date], -1, MONTH)", subject)
+    assert proposal.available
+    assert proposal.changes == ["Added 1 missing closing parenthesis."]
+    assert analyze_measure(proposal.expression, subject).valid
+
+
+def test_unique_typos_are_corrected_but_ambiguous_damage_is_not_guessed():
+    proposal = correct_measure("Typo = CALCULAT([Total Net Sale], SUM(GlobalSale[Net_Sale_USD]))", model())
+    assert proposal.available and analyze_measure(proposal.expression, model()).valid
+    ambiguous = correct_measure("Broken = CALCULATE([Total Net Sales],", model())
+    assert not ambiguous.available
