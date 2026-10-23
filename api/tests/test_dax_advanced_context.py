@@ -65,5 +65,3 @@ def test_datediff_compiles_inside_a_variable_expression():
     RETURN DATEDIFF ( FirstDay, LastDay, DAY )'''
     compiled = compile_dax(expression, MODEL)
     assert "date_diff('day'" in compiled.sql
-
-

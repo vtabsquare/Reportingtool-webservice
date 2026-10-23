@@ -25,7 +25,7 @@ from .storage import Store, META, DEMO
 from .demo import seed, default_project, blank_project
 from .transform_engine import preview, materialize, join_profile, ai_suggestions, suggest_calculated_column
 from .semantic_engine import execute, measure, cache_stats, clear_cache
-from .dax_engine import dax_engine_health, diagnose_dax_definition, parse_measure_definition, repair_dax_definition, suggest_measure_from_prompt
+from .dax_engine import dax_engine_health, diagnose_dax_definition, parse_measure_definition, repair_dax_definition
 from .measure_registry import merge_measure_registry
 from .measure_catalog import generate_measure_catalog
 from .gemini import generate
@@ -2671,22 +2671,6 @@ def assist_chat(req:AssistReq):
             'You are VTAB Assist for VTAB Reporting Studio. Answer concisely using the supplied project context. Do not invent fields or data values. Use plain text where practical.'
         )
         return {'answer':answer}
-    except Exception as e:
-        raise HTTPException(400,str(e))
-
-@app.post('/api/v1/measures/ai-generate')
-def ai_generate_measure(req:MeasurePromptReq):
-    try:
-        p=req.project if req.project is not None else project();m=p['model'];feedback=None;result=None
-        for attempt in range(3):
-            result=suggest_measure_from_prompt(req.prompt,m,feedback)
-            validation=_validate_dax_measure(result['name'],result['expression'],m)
-            if validation.get('valid') and 'error' not in validation:
-                result['compiled']=validation.get('compiled','');result['valid']=True;result['generationAttempts']=attempt+1
-                return result
-            feedback=validation.get('error',validation.get('message','Validation failed'))
-        result['valid']=False;result['validationError']=feedback or 'The generated expression could not be validated.';result['generationAttempts']=3
-        return result
     except Exception as e:
         raise HTTPException(400,str(e))
 

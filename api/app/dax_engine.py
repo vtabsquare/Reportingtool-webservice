@@ -2,44 +2,42 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from .dax_registry import (
+    DAX_FUNCTION_REGISTRY,
+    canonical_function_name,
+    executable_function_names,
+    function_registry_payload,
+    known_function_names,
+)
 
 class DaxError(ValueError): pass
 
 # One authoritative public capability registry. API health checks, diagnostics,
 # AI prompting, and the editor all derive from this list so they cannot drift.
-DAX_ENGINE_VERSION='5.0.23-dax-recovery-2'
-SUPPORTED_DAX_FUNCTIONS=frozenset({
-    'ABS','ADDCOLUMNS','ALL','AND','AVERAGE','AVERAGEX','BLANK','CALCULATE','CEILING',
-    'COALESCE','CONCATENATE','CONTAINSSTRING','CONTAINSSTRINGEXACT','COUNT',
-    'CONCATENATEX','COUNTROWS','DATE','DATEADD','DATEDIFF','DATESBETWEEN','DATESINPERIOD',
-    'DATESMTD','DATESQTD','DATESYTD','DAY','DISTINCTCOUNT','DIVIDE','EDATE',
-    'ENDOFMONTH','EOMONTH','FALSE','FILTER','FLOOR','IF','INT','ISBLANK',
-    'KEEPFILTERS','LEFT','LEN','LOWER','MAX','MAXX','MEDIAN','MID','MIN',
-    'MINX','MONTH','NOT','NOW','OR','POWER','REMOVEFILTERS','RIGHT','ROUND',
-    'SAMEPERIODLASTYEAR','SELECTEDVALUE','SQRT','STARTOFMONTH','SUBSTITUTE',
-    'SUM','SUMMARIZE','SUMX','SWITCH','TODAY','TOPN','TOTALMTD','TOTALQTD','TOTALYTD','TRIM',
-    'TRUE','UPPER','VALUE','VALUES','YEAR',
-})
+DAX_ENGINE_VERSION='6.1.4-duckdb-storage-adapter-1'
+SUPPORTED_DAX_FUNCTIONS=executable_function_names()
 
 # Known Power BI functions must never be treated as spelling mistakes merely
 # because this engine does not support them yet. They receive an honest
 # compatibility diagnostic instead of an unsafe automatic substitution.
-KNOWN_DAX_FUNCTIONS=SUPPORTED_DAX_FUNCTIONS | frozenset({
-    'CALCULATETABLE','CURRENTGROUP','DISTINCT','EXCEPT','GENERATE','GENERATEALL',
-    'GROUPBY','INTERSECT','LOOKUPVALUE','NATURALINNERJOIN','NATURALLEFTOUTERJOIN',
-    'RANKX','RELATED','RELATEDTABLE','SELECTCOLUMNS','TREATAS','UNION',
-    'USERELATIONSHIP','VALUES','CROSSFILTER',
-})
+KNOWN_DAX_FUNCTIONS=known_function_names()
 
 def _function_calls(text:str):
     """Return (start, end, uppercase_name) calls, excluding quoted content."""
-    calls=[];i=0;quote=None
+    calls=[];i=0;quote=None;bracket_depth=0
     while i<len(text):
         ch=text[i]
         if quote:
             if ch==quote and (i==0 or text[i-1]!='\\'):quote=None
             i+=1;continue
         if ch in ("'",'"'):quote=ch;i+=1;continue
+        # Bracketed content is a field or measure identifier. Parentheses in a
+        # column name such as [VALUE OF AMT. ISSUED (J$)] are not function calls.
+        if ch=='[':bracket_depth+=1;i+=1;continue
+        if ch==']' and bracket_depth:
+            if i+1<len(text) and text[i+1]==']':i+=2;continue
+            bracket_depth-=1;i+=1;continue
+        if bracket_depth:i+=1;continue
         if ch.isalpha() or ch=='_':
             start=i;i+=1
             while i<len(text) and (text[i].isalnum() or text[i]=='_'):i+=1
@@ -49,6 +47,64 @@ def _function_calls(text:str):
             continue
         i+=1
     return calls
+
+def _function_invocations(text:str):
+    """Yield balanced function calls as ``(name, argument_text)``.
+
+    This is a structural scanner rather than a regex parser.  It understands
+    nested parentheses and quoted table/string content, which is sufficient for
+    signature validation before the existing SQL compiler builds its AST-like
+    table/scalar objects.
+    """
+    invocations=[]
+    for start,end,raw_name in _function_calls(text):
+        open_pos=end
+        while open_pos<len(text) and text[open_pos].isspace():open_pos+=1
+        if open_pos>=len(text) or text[open_pos]!='(':continue
+        depth=0;quote=None;close_pos=None;index=open_pos
+        while index<len(text):
+            char=text[index]
+            if quote:
+                if char==quote:
+                    # DAX escapes a quote by doubling it.
+                    if index+1<len(text) and text[index+1]==quote:index+=2;continue
+                    quote=None
+                index+=1;continue
+            if char in ("'",'"'):quote=char
+            elif char=='(':depth+=1
+            elif char==')':
+                depth-=1
+                if depth==0:close_pos=index;break
+            index+=1
+        if close_pos is not None:
+            invocations.append((canonical_function_name(raw_name),text[open_pos+1:close_pos]))
+    return invocations
+
+def _validate_function_signatures(text:str,mode:str='measure'):
+    errors=[]
+    for name,argument_text in _function_invocations(text):
+        spec=DAX_FUNCTION_REGISTRY.get(name)
+        if spec is None:
+            continue
+        if spec.status=='unsupported':
+            if name in {'EARLIER','EARLIEST'} and mode=='measure':
+                errors.append(
+                    f'{name} requires calculated-column row context, which this measure editor does not create. '
+                    'Create the derived column in Transform Data, or rewrite the logic with FILTER/ADDCOLUMNS and an iterator.'
+                )
+            else:
+                errors.append(f'Unsupported DAX function {name}. {spec.notes}'.strip())
+            continue
+        args=split_top(argument_text,keep_empty=True)
+        # Empty text means a genuine zero-argument invocation. Interior empty
+        # arguments are retained for legal forms such as RANKX(..., , DESC).
+        count=0 if not argument_text.strip() else len(args)
+        if count<spec.min_args or (spec.max_args is not None and count>spec.max_args):
+            expected=(str(spec.min_args) if spec.max_args==spec.min_args else
+                      f'{spec.min_args} to {spec.max_args}' if spec.max_args is not None else
+                      f'at least {spec.min_args}')
+            errors.append(f'{name} expects {expected} argument(s); received {count}.')
+    return errors
 
 def _edit_distance(a:str,b:str):
     previous=list(range(len(b)+1))
@@ -82,7 +138,7 @@ def sql_literal(v):
     if isinstance(v,(int,float)):return str(v)
     return "'"+str(v).replace("'","''")+"'"
 
-def split_top(s:str):
+def split_top(s:str,keep_empty:bool=False):
     out=[];start=0;depth=0;quote=None
     for i,ch in enumerate(s):
         if quote:
@@ -93,7 +149,7 @@ def split_top(s:str):
         elif ch==')':depth-=1
         elif ch==',' and depth==0:out.append(s[start:i].strip());start=i+1
     out.append(s[start:].strip())
-    return [x for x in out if x]
+    return out if keep_empty else [x for x in out if x]
 
 def repair_dax_definition(expression:str):
     """Apply only syntax-preserving repairs and report every change.
@@ -172,18 +228,30 @@ def repair_dax_definition(expression:str):
 
     return {'expression':text.strip(),'changed':text.strip()!=original.strip(),'repairs':repairs}
 
-def diagnose_dax_definition(expression:str):
+def diagnose_dax_definition(expression:str,mode:str='measure'):
     repair=repair_dax_definition(expression);text=repair['expression'];issues=_structure_issues(text)
     definition=parse_measure_definition(text)
     if not definition:
         issues.append('Start the formula with a measure name followed by =.')
-    unknown=sorted({name for _,_,name in _function_calls(strip_assignment(text)) if name not in SUPPORTED_DAX_FUNCTIONS})
+    body=strip_assignment(text)
+    calls={canonical_function_name(name) for _,_,name in _function_calls(body)}
+    unsupported=sorted(name for name in calls if name in KNOWN_DAX_FUNCTIONS and name not in SUPPORTED_DAX_FUNCTIONS)
+    unknown=sorted(name for name in calls if name not in KNOWN_DAX_FUNCTIONS)
     suggestions={}
     for name in unknown:
         ranked=sorted(SUPPORTED_DAX_FUNCTIONS,key=lambda candidate:(_edit_distance(name,candidate),candidate))
         suggestions[name]=ranked[:3]
-        issues.append(f'Unsupported DAX function {name}.')
-    return {**repair,'issues':issues,'unknownFunctions':unknown,'suggestions':suggestions,
+        issues.append(f'Unknown DAX function {name}.'+(f' Did you mean {", ".join(ranked[:3])}?' if ranked else ''))
+    issues.extend(_validate_function_signatures(body,mode))
+    if mode=='measure' and parse_field(body):
+        table,column=parse_field(body)
+        issues.append(
+            f"'{table}'[{column}] is a column and cannot be returned directly by a measure. "
+            'Wrap it in an aggregation such as SUM/MIN/MAX, use SELECTEDVALUE, or create a calculated column in Transform Data.'
+        )
+    return {**repair,'issues':list(dict.fromkeys(issues)),
+            'unknownFunctions':unknown,'unsupportedFunctions':unsupported,
+            'suggestions':suggestions,'functionRegistry':function_registry_payload(),
             'engineVersion':DAX_ENGINE_VERSION}
 
 def _mapping_value(mapping,name):
@@ -293,6 +361,7 @@ class DaxTable:
     group_columns:tuple[str,...]=()
     computed:tuple[tuple[str,str],...]=()
     remove_group_filters:bool=False
+    row_predicates:tuple[str,...]=()
 
 def _virtual_column(table:DaxTable,name:str):
     lowered=name.strip().lower()
@@ -301,11 +370,57 @@ def _virtual_column(table:DaxTable,name:str):
     return None
 
 def _virtual_scalar(expr,table:DaxTable,model,measure_resolver=None,filters=None,as_condition=False):
+    if as_condition:
+        for operator,sql_operator in (('||','OR'),('&&','AND')):
+            parts=_split_logical(expr,operator)
+            if parts:
+                return '('+f' {sql_operator} '.join(
+                    _virtual_scalar(part,table,model,measure_resolver,filters,True) for part in parts
+                )+')'
+        depth=0;quote=None;index=0
+        while index<len(expr):
+            char=expr[index]
+            if quote:
+                if char==quote and (index==0 or expr[index-1]!='\\'):quote=None
+                index+=1;continue
+            if char in ("'",'"'):quote=char;index+=1;continue
+            if char=='(':depth+=1;index+=1;continue
+            if char==')':depth-=1;index+=1;continue
+            if depth==0:
+                for operator in ('>=','<=','<>','>','<','='):
+                    if expr.startswith(operator,index):
+                        left=expr[:index].strip();right=expr[index+len(operator):].strip()
+                        return (f'{_virtual_scalar(left,table,model,measure_resolver,filters)} {operator} '
+                                f'{_virtual_scalar(right,table,model,measure_resolver,filters)}')
+            index+=1
+    datediff=re.fullmatch(r'(?is)DATEDIFF\s*\((.*)\)',expr.strip())
+    if datediff:
+        args=split_top(datediff.group(1))
+        if len(args)!=3:raise DaxError('DATEDIFF requires start date, end date and interval.')
+        unit=args[2].strip().upper()
+        if unit not in {'SECOND','MINUTE','HOUR','DAY','WEEK','MONTH','QUARTER','YEAR'}:
+            raise DaxError('DATEDIFF interval must be SECOND, MINUTE, HOUR, DAY, WEEK, MONTH, QUARTER, or YEAR.')
+        start=_virtual_scalar(args[0],table,model,measure_resolver,filters)
+        end=_virtual_scalar(args[1],table,model,measure_resolver,filters)
+        return f"date_diff('{unit.lower()}',CAST({start} AS TIMESTAMP),CAST({end} AS TIMESTAMP))"
     context_transition=re.fullmatch(r'(?is)CALCULATE\s*\((.*)\)',expr.strip())
-    if context_transition and table.source_table and table.group_columns:
+    if context_transition and table.source_table:
         args=split_top(context_transition.group(1))
-        if len(args)==1:
-            source=table.source_table;physical=model['tables'][source]['physical']
+        source=table.source_table;physical=model['tables'][source]['physical']
+        removes_source=any(
+            re.fullmatch(rf"(?is)REMOVEFILTERS\s*\(\s*'?{re.escape(source)}'?\s*\)",item.strip())
+            for item in args[1:]
+        )
+        if removes_source:
+            base=_compile_simple(args[0],model,measure_resolver,[])
+            predicates=[]
+            for item in args[1:]:
+                predicate,_=_compile_calculate_filter(item,model,{},[],measure_resolver)
+                if predicate:predicates.append(predicate)
+            sql=f'(SELECT {base} FROM {qi(physical)} {qi(source)}'
+            if predicates:sql+=' WHERE '+' AND '.join(f'({item})' for item in predicates)
+            return sql+')'
+        if len(args)==1 and table.group_columns:
             base=_compile_simple(args[0],model,measure_resolver,filters)
             predicates=[]
             for column in table.group_columns:
@@ -330,24 +445,73 @@ def _virtual_scalar(expr,table:DaxTable,model,measure_resolver=None,filters=None
     compiler=_condition if as_condition else _compile_simple
     return compiler(rewritten,virtual_model,resolver,filters or [])
 
-def _render_group_table(source_table,group_columns,computed,model,filters,measure_resolver,remove_group_filters=False):
+def _render_group_table(source_table,group_columns,computed,model,filters,measure_resolver,remove_group_filters=False,extra_predicates=()):
     source_table=resolve_table(model,source_table);physical=model['tables'][source_table]['physical'];alias=source_table
-    group_sql=[];select_sql=[];columns={}
+    group_sql=[];select_sql=[];columns={};calculated_scalars={}
+    grouped_names={re.sub(r'[^a-z0-9]','',str(column).casefold()) for column in group_columns}
     for column in group_columns:
         field=resolve_field(model,source_table,column,alias);actual=parse_field(f'{source_table}[{column}]')[1]
         select_sql.append(f'{field} AS {qi(actual)}');group_sql.append(field);columns[actual]=actual
     for name,expression in computed:
-        value=_compile_simple(expression,model,measure_resolver,filters)
+        # SUMMARIZE extension columns are evaluated in group context. Measures
+        # produced by the AI commonly define aggregate aliases first, for example
+        # "AdmissionDate", MIN(Table[Admission Date]), and then use the original
+        # field spelling inside DATEDIFF. Compiling that last expression as a raw
+        # column leaks it into a grouped SQL SELECT and DuckDB raises the large
+        # "must appear in GROUP BY" API error.
+        #
+        # Resolve a raw field to an earlier calculated scalar when their names
+        # match after removing spaces/punctuation. Otherwise use SELECTEDVALUE-
+        # style scalarization: a single distinct value is returned, while an
+        # ambiguous group becomes BLANK/NULL.
+        placeholders={}
+        def grouped_field(match):
+            requested_table=match.group(1).strip();column=match.group(2).strip()
+            try:actual_table=resolve_table(model,requested_table,column)
+            except DaxError:return match.group(0)
+            key=re.sub(r'[^a-z0-9]','',column.casefold())
+            if actual_table!=source_table or key in grouped_names:return match.group(0)
+            scalar=calculated_scalars.get(key)
+            if scalar is None:
+                field=resolve_field(model,source_table,column,alias)
+                scalar=f'(CASE WHEN COUNT(DISTINCT {field}) = 1 THEN ANY_VALUE({field}) ELSE NULL END)'
+            placeholder=f'__vtab_group_scalar_{len(placeholders)}'
+            placeholders[placeholder]=scalar
+            return placeholder
+        contains_aggregate=re.search(
+            r"(?is)\b(?:SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN)\s*\(",
+            expression,
+        )
+        rewritten=(expression if contains_aggregate else re.sub(
+            r"(?is)'?([A-Za-z_][\w ]*)'?\s*\[\s*([^\]]+)\s*\]",
+            grouped_field,
+            expression,
+        ))
+        def grouped_resolver(reference):
+            if reference in placeholders:return placeholders[reference]
+            # Bracket-only references inside a later SUMMARIZE/ADDCOLUMNS
+            # expression can target an extension column defined earlier in the
+            # same virtual row (for example [AdmissionDate] in DATEDIFF). They
+            # are row-scoped virtual columns, not persisted measures.
+            calculated=calculated_scalars.get(re.sub(r'[^a-z0-9]','',str(reference).casefold()))
+            if calculated is not None:return calculated
+            if measure_resolver:return measure_resolver(reference)
+            raise DaxError(f"Unknown measure or grouped scalar [{reference}]")
+        value=_compile_simple(rewritten,model,grouped_resolver,filters)
         select_sql.append(f'{value} AS {qi(name)}');columns[name]=name
+        calculated_scalars[re.sub(r'[^a-z0-9]','',str(name).casefold())]=value
     active_filters=filters or []
     if remove_group_filters:
         removed={semantic_field(source_table,column).lower() for column in group_columns}
         active_filters=[item for item in active_filters if str(item.get('field','')).split('::',1)[0].lower() not in removed]
-    predicate=_context_predicate(model,source_table,active_filters,alias)
+    predicates=[]
+    context_predicate=_context_predicate(model,source_table,active_filters,alias)
+    if context_predicate:predicates.append(context_predicate)
+    predicates.extend(item for item in extra_predicates if item)
     sql=f'SELECT {", ".join(select_sql)} FROM {qi(physical)} {qi(alias)}'
-    if predicate:sql+=' WHERE '+predicate
+    if predicates:sql+=' WHERE '+' AND '.join(f'({item})' for item in predicates)
     if group_sql:sql+=' GROUP BY '+', '.join(group_sql)
-    return DaxTable(sql,source_table,columns,source_table,tuple(group_columns),tuple(computed),remove_group_filters)
+    return DaxTable(sql,source_table,columns,source_table,tuple(group_columns),tuple(computed),remove_group_filters,tuple(extra_predicates))
 
 def _compile_table_expr(expr,model,vars_sql,filters,measure_resolver=None):
     e=expr.strip()
@@ -355,6 +519,20 @@ def _compile_table_expr(expr,model,vars_sql,filters,measure_resolver=None):
         existing=_mapping_value(vars_sql,e)
         if isinstance(existing,DaxTable):return existing
     except KeyError:pass
+
+    # A physical model table is a valid DAX table expression.  Keep every row
+    # and expose its columns to FILTER/ADDCOLUMNS/iterator row context.
+    bare=re.fullmatch(r"(?is)'?([A-Za-z_][\w ]*)'?",e)
+    if bare:
+        try:table=resolve_table(model,bare.group(1).strip())
+        except DaxError:table=None
+        if table:
+            physical=model['tables'][table]['physical'];columns=model['tables'][table].get('columns',{})
+            selections=[f'{qi(table)}.{qi(actual)} AS {qi(name)}' for name,actual in columns.items()]
+            sql=f'SELECT {", ".join(selections)} FROM {qi(physical)} {qi(table)}'
+            context=_context_predicate(model,table,filters or [],table)
+            if context:sql+=' WHERE '+context
+            return DaxTable(sql,table,{name:name for name in columns},table,(),(),False)
 
     match=re.fullmatch(r"(?is)(ALL|VALUES)\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*\[\s*([^\]]+)\]\s*\)",e)
     if match:
@@ -385,12 +563,49 @@ def _compile_table_expr(expr,model,vars_sql,filters,measure_resolver=None):
         if len(args)<3 or len(args)%2==0:raise DaxError('ADDCOLUMNS requires a table followed by name/expression pairs.')
         base=_compile_table_expr(args[0],model,vars_sql,filters,measure_resolver)
         if base is None or base.source_table is None:raise DaxError('ADDCOLUMNS requires a supported table expression.')
-        computed=list(base.computed)
+        computed=list(base.computed);new_computed=[]
         for index in range(1,len(args),2):
             name=args[index].strip()
             if not (name.startswith('"') and name.endswith('"')):raise DaxError('ADDCOLUMNS column name must be quoted.')
-            computed.append((name[1:-1],args[index+1]))
+            pair=(name[1:-1],args[index+1]);computed.append(pair);new_computed.append(pair)
+        if not base.group_columns:
+            select_parts=['__row.*'];columns=dict(base.columns)
+            working=base
+            for name,expression in new_computed:
+                value=_virtual_scalar(expression,working,model,measure_resolver,filters)
+                select_parts.append(f'{value} AS {qi(name)}');columns[name]=name
+                working=DaxTable(base.sql,base.table,columns,base.source_table,(),tuple(computed),base.remove_group_filters,base.row_predicates)
+            return DaxTable(f'SELECT {", ".join(select_parts)} FROM ({base.sql}) {qi("__row")}',base.table,columns,base.source_table,(),tuple(computed),base.remove_group_filters,base.row_predicates)
         return _render_group_table(base.source_table,list(base.group_columns),computed,model,filters,measure_resolver,base.remove_group_filters)
+
+    match=re.fullmatch(r'(?is)CALCULATETABLE\s*\((.*)\)',e)
+    if match:
+        args=split_top(match.group(1))
+        if not args:raise DaxError('CALCULATETABLE requires a table expression.')
+        base=_compile_table_expr(args[0],model,vars_sql,filters,measure_resolver)
+        if base is None:raise DaxError('CALCULATETABLE requires a supported table expression.')
+        def resolve_filter_value(name):
+            try:return _mapping_value(vars_sql,name)
+            except KeyError:pass
+            if measure_resolver:return measure_resolver(name)
+            raise DaxError(f"Unknown variable [{name}] in CALCULATETABLE filter")
+        predicates=[];overrides=set()
+        for item in args[1:]:
+            predicate,removed=_compile_calculate_filter(item,model,vars_sql,filters,resolve_filter_value)
+            if predicate:predicates.append(predicate)
+            overrides.update(removed)
+        active_filters=[]
+        for item in filters or []:
+            field=str(item.get('field','')).split('::',1)[0]
+            table=field.split('.',1)[0] if '.' in field else ''
+            if field.lower() in {x.lower() for x in overrides}:continue
+            if (table+'.*').lower() in {x.lower() for x in overrides}:continue
+            active_filters.append(item)
+        if base.source_table:
+            return _render_group_table(base.source_table,list(base.group_columns),list(base.computed),model,active_filters,measure_resolver,base.remove_group_filters,predicates)
+        if predicates:
+            raise DaxError('CALCULATETABLE filters require a table expression with source lineage.')
+        return base
 
     match=re.fullmatch(r'(?is)FILTER\s*\((.*)\)',e)
     if match:
@@ -399,7 +614,7 @@ def _compile_table_expr(expr,model,vars_sql,filters,measure_resolver=None):
         base=_compile_table_expr(args[0],model,vars_sql,filters,measure_resolver)
         if base is None:return None
         predicate=_virtual_scalar(args[1],base,model,measure_resolver,filters,True)
-        return DaxTable(f'SELECT * FROM ({base.sql}) {qi("__row")} WHERE {predicate}',base.table,base.columns,base.source_table,base.group_columns,base.computed,base.remove_group_filters)
+        return DaxTable(f'SELECT * FROM ({base.sql}) {qi("__row")} WHERE {predicate}',base.table,base.columns,base.source_table,base.group_columns,base.computed,base.remove_group_filters,base.row_predicates)
 
     match=re.fullmatch(r'(?is)TOPN\s*\((.*)\)',e)
     if match:
@@ -415,8 +630,15 @@ def _compile_table_expr(expr,model,vars_sql,filters,measure_resolver=None):
             if index+1<len(args) and args[index+1].strip().upper() in ('ASC','DESC'):
                 direction=args[index+1].strip().upper();index+=1
             order.append(f'{value} {direction}');index+=1
-        sql=f'SELECT * FROM ({base.sql}) {qi("__row")} ORDER BY {", ".join(order)} LIMIT {limit}'
-        return DaxTable(sql,base.table,base.columns,base.source_table,base.group_columns,base.computed,base.remove_group_filters)
+        # Power BI TOPN includes every row tied at the Nth boundary.  SQL RANK
+        # (with gaps after ties) models row-position boundaries: for 250,250,200
+        # and N=2 the ranks are 1,1,3, so only the tied first two rows qualify.
+        order_sql=', '.join(order)
+        sql=(f'SELECT * EXCLUDE ({qi("__topn_rank")}) FROM ('
+             f'SELECT *, RANK() OVER (ORDER BY {order_sql}) AS {qi("__topn_rank")} '
+             f'FROM ({base.sql}) {qi("__row")}) {qi("__topn")} '
+             f'WHERE {qi("__topn_rank")} <= {limit}')
+        return DaxTable(sql,base.table,base.columns,base.source_table,base.group_columns,base.computed,base.remove_group_filters,base.row_predicates)
     return None
 
 def parse_field(expr):
@@ -556,10 +778,34 @@ def _compile_var_value(expr,model,vars_sql,filters,measure_resolver=None):
         args=split_top(m.group(1))
         if not args:raise DaxError('CALCULATE requires an expression.')
         base=_compile_simple(args[0],model,var_aware_resolver,filters)
-        predicates=[]
+        # CALCULATE without filter arguments is evaluated in the visual's current
+        # filter/group context.  Returning the aggregate directly is important:
+        # wrapping MIN/MAX in an uncorrelated scalar subquery made cards appear to
+        # work in isolation but lost chart grouping, while older builds could emit
+        # the underlying date columns beside an aggregate and trigger DuckDB's
+        # "must appear in GROUP BY" binder error.
+        if len(args)==1:
+            return base
+        predicates=[];overrides=set()
         for item in args[1:]:
             pred,over=_compile_calculate_filter(item,model,vars_sql,filters,var_aware_resolver)
             if pred:predicates.append(pred)
+            overrides.update(over)
+        references=re.findall(r"(?is)'?([A-Za-z_][\w ]*)'?\s*\[\s*([^\]]+)\s*\]",args[0])
+        if references:
+            source=resolve_table(model,references[0][0],references[0][1]);physical=model['tables'][source]['physical']
+            removed={item.lower() for item in overrides}
+            active=[]
+            for item in filters or []:
+                field=str(item.get('field','')).split('::',1)[0]
+                table_name=field.split('.',1)[0] if '.' in field else ''
+                if field.lower() in removed or (table_name+'.*').lower() in removed:continue
+                active.append(item)
+            context=_context_predicate(model,source,active,source)
+            combined=([context] if context else [])+predicates
+            sql=f'(SELECT {base} FROM {qi(physical)} {qi(source)}'
+            if combined:sql+=' WHERE '+' AND '.join(f'({item})' for item in combined)
+            return sql+')'
         return _attach_filter(base,' AND '.join(f'({p})' for p in predicates))
     # EDATE
     m=re.fullmatch(r'(?is)EDATE\s*\(\s*([A-Za-z_]\w*)\s*,\s*(-?\d+)\s*\)\s*(?:\+\s*(\d+))?',expr)
@@ -662,11 +908,62 @@ def _is_wrapped(expr):
         if depth == 0 and i < len(expr) - 1: return False
     return depth == 0
 
+def _dax_format_sql(value_sql:str,format_expression:str,locale_expression:str|None=None):
+    """Compile the supported Power BI FORMAT subset to deterministic DuckDB SQL."""
+    literal=format_expression.strip()
+    if not (len(literal)>=2 and literal[0]=='"' and literal[-1]=='"'):
+        raise DaxError('FORMAT currently requires a literal format string, for example "#,##0.00".')
+    mask=literal[1:-1].replace('""','"')
+    if locale_expression:
+        locale=locale_expression.strip().strip('"').lower()
+        if locale not in {'','en-us','en-gb','en-in','invariant'}:
+            raise DaxError(
+                f'FORMAT locale {locale_expression} is not available. Use en-US, en-GB, en-IN, or omit the locale.'
+            )
+    upper=mask.upper()
+    named={
+        'GENERAL NUMBER':'{}','FIXED':'{:.2f}','STANDARD':'{:,.2f}',
+        'PERCENT':'{:.2%}','SCIENTIFIC':'{:.2E}',
+    }
+    if upper in named:
+        rendered=f'format({sql_literal(named[upper])}, CAST({value_sql} AS DOUBLE))'
+        return f"CASE WHEN ({value_sql}) IS NULL THEN '' ELSE {rendered} END"
+    # Common DAX date/time masks.  Month uses uppercase M; minute uses lowercase m.
+    if re.search(r'[dDyY]',mask) and not re.search(r'[0#]',mask):
+        replacements={
+            'yyyy':'%Y','yyy':'%Y','yy':'%y','MMMM':'%B','MMM':'%b','MM':'%m',
+            'dd':'%d','d':'%-d','HH':'%H','hh':'%I','mm':'%M','ss':'%S',
+        }
+        # Translate tokens in one pass. Sequential replacements corrupt the
+        # generated percent directives (for example `%d` becoming `%%-d`).
+        token_pattern='|'.join(sorted(map(re.escape,replacements),key=len,reverse=True))
+        strftime_mask=re.sub(token_pattern,lambda match:replacements[match.group(0)],mask)
+        rendered=f'strftime(CAST({value_sql} AS TIMESTAMP), {sql_literal(strftime_mask)})'
+        return f"CASE WHEN ({value_sql}) IS NULL THEN '' ELSE {rendered} END"
+    section=mask.split(';',1)[0]
+    percent='%' in section
+    numeric_mask=section.replace('%','')
+    decimal_part=numeric_mask.split('.',1)[1] if '.' in numeric_mask else ''
+    decimals=sum(1 for char in decimal_part if char in '0#')
+    grouping=',' in numeric_mask.split('.',1)[0]
+    python_mask='{:'+(',' if grouping else '')+'.'+str(decimals)+'f}'
+    numeric=f'(CAST({value_sql} AS DOUBLE)'+('* 100' if percent else '')+')'
+    rendered=f'format({sql_literal(python_mask)}, {numeric})'
+    if percent:rendered=f'({rendered} || \'%\')'
+    return f"CASE WHEN ({value_sql}) IS NULL THEN '' ELSE {rendered} END"
+
 def _compile_simple(expr,model,measure_resolver=None,filters=None,in_filter=False):
     expr=expr.strip()
     if _is_wrapped(expr):
         return '(' + _compile_simple(expr[1:-1],model,measure_resolver,filters,in_filter=in_filter) + ')'
     if re.fullmatch(r'-?\d+(?:\.\d+)?',expr):return expr
+    # Unary minus may wrap any scalar expression, not only a numeric literal.
+    # Reconstructed rounding formulas use -CEILING(ABS(...), significance)
+    # to preserve Power BI's away-from-zero behavior for negative values.
+    if expr.startswith('-'):
+        operand=expr[1:].strip()
+        if not operand:raise DaxError('Unary minus requires an expression.')
+        return f'(-({_compile_simple(operand,model,measure_resolver,filters,in_filter=in_filter)}))'
     if (expr.startswith('"') and expr.endswith('"')) or (expr.startswith("'") and expr.endswith("'")):return sql_literal(expr[1:-1])
     if re.fullmatch(r'(?i)BLANK\s*\(\s*\)',expr):return 'NULL'
     if re.fullmatch(r'(?i)TRUE\s*\(\s*\)|TRUE',expr):return 'TRUE'
@@ -726,18 +1023,44 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None,in_filter=Fals
     m=re.fullmatch(r'(?is)COUNTROWS\s*\(\s*(\'?.*?\'?)\s*\)',expr)
     if m:
         target=m.group(1).strip()
+        # A physical table owns the outer FROM selected by semantic_engine.
+        # Keeping COUNTROWS as COUNT(*) preserves visual/filter context and
+        # lets CALCULATE attach its predicate to that aggregate.
+        direct_table=target.strip("'")
+        resolved_table=next((name for name in model.get('tables',{}) if name.lower()==direct_table.lower()),None)
+        if resolved_table is not None:return 'COUNT(*)'
         if measure_resolver:
             try:
                 table_value=measure_resolver(target)
                 if isinstance(table_value,DaxTable):return f'(SELECT COUNT(*) FROM ({table_value.sql}) {qi("__row")})'
             except (DaxError,KeyError,ValueError):pass
+        table_value=_compile_table_expr(target,model,{},filters or [],measure_resolver)
+        if isinstance(table_value,DaxTable):
+            # SUMMARIZE produces the distinct grouping tuples. Expressing its
+            # row count as an aggregate on the visual's outer fact rows keeps
+            # category/date context for cards and charts instead of returning
+            # one global scalar for every bar or point.
+            if table_value.source_table and table_value.group_columns and not table_value.computed:
+                fields=[resolve_field(model,table_value.source_table,column) for column in table_value.group_columns]
+                distinct=fields[0] if len(fields)==1 else '('+', '.join(fields)+')'
+                aggregate=f'COUNT(DISTINCT {distinct})'
+                return _attach_filter(aggregate,' AND '.join(f'({item})' for item in table_value.row_predicates))
+            return f'(SELECT COUNT(*) FROM ({table_value.sql}) {qi("__row")})'
         return 'COUNT(*)'
 
-    m=re.fullmatch(r'(?is)(MINX|MAXX|CONCATENATEX)\s*\((.*)\)',expr)
+    m=re.fullmatch(r'(?is)(SUMX|AVERAGEX|MINX|MAXX|CONCATENATEX)\s*\((.*)\)',expr)
     if m:
         fn=m.group(1).upper();args=split_top(m.group(2))
         required=3 if fn=='CONCATENATEX' else 2
         if len(args)<required:raise DaxError(f'{fn} requires at least {required} arguments.')
+        # Iterating a physical table can remain in the outer query. This keeps
+        # chart grouping and slicer predicates in the iterator's row context.
+        if fn in ('SUMX','AVERAGEX','MINX','MAXX'):
+            requested_table=args[0].strip().strip("'")
+            direct_table=next((name for name in model.get('tables',{}) if name.lower()==requested_table.lower()),None)
+            if direct_table is not None:
+                aggregate={'SUMX':'SUM','AVERAGEX':'AVG','MINX':'MIN','MAXX':'MAX'}[fn]
+                return f'{aggregate}({_compile_row_expr(args[1],model,direct_table)})'
         table_value=None
         if measure_resolver:
             try:table_value=measure_resolver(args[0].strip())
@@ -746,8 +1069,9 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None,in_filter=Fals
             table_value=_compile_table_expr(args[0],model,{},filters or [],measure_resolver)
         if isinstance(table_value,DaxTable):
             value=_virtual_scalar(args[1],table_value,model,measure_resolver,filters)
-            if fn in ('MINX','MAXX'):
-                return f'(SELECT {fn[:-1]}({value}) FROM ({table_value.sql}) {qi("__row")})'
+            if fn in ('SUMX','AVERAGEX','MINX','MAXX'):
+                aggregate={'SUMX':'SUM','AVERAGEX':'AVG','MINX':'MIN','MAXX':'MAX'}[fn]
+                return f'(SELECT {aggregate}({value}) FROM ({table_value.sql}) {qi("__row")})'
             delimiter=_virtual_scalar(args[2],table_value,model,measure_resolver,filters)
             order=''
             if len(args)>=4:
@@ -762,9 +1086,42 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None,in_filter=Fals
         tbl=table.strip().strip("'")
         return f'{fn}({_compile_row_expr(rowexpr,model,tbl)})'
 
+    m=re.fullmatch(r'(?is)RANKX\s*\((.*)\)',expr)
+    if m:
+        args=split_top(m.group(1),keep_empty=True)
+        if len(args)<2:raise DaxError('RANKX requires a table and expression.')
+        table_value=_compile_table_expr(args[0],model,{},filters or [],measure_resolver)
+        if not isinstance(table_value,DaxTable) or len(table_value.group_columns)!=1:
+            raise DaxError('RANKX currently requires ALL or VALUES over one grouping column.')
+        value=_compile_simple(args[1],model,measure_resolver,filters)
+        order=(args[3].strip().upper() if len(args)>3 and args[3].strip() else 'DESC')
+        ties=(args[4].strip().upper() if len(args)>4 and args[4].strip() else 'SKIP')
+        if order not in {'ASC','DESC'}:raise DaxError('RANKX order must be ASC or DESC.')
+        if ties not in {'DENSE','SKIP'}:raise DaxError('RANKX ties must be DENSE or SKIP.')
+        rank_fn='DENSE_RANK' if ties=='DENSE' else 'RANK'
+        return f'{rank_fn}() OVER (ORDER BY {value} {order})'
+
     for fn,sqlfn in [('ABS','ABS'),('INT','FLOOR'),('FLOOR','FLOOR'),('CEILING','CEIL'),('LEN','LENGTH')]:
         m=re.fullmatch(rf'(?is){fn}\s*\((.*)\)',expr)
-        if m:return f'{sqlfn}({_compile_simple(m.group(1),model,measure_resolver,filters)})'
+        if m:
+            args=split_top(m.group(1))
+            if fn in {'FLOOR','CEILING'} and len(args)==2:
+                value=_compile_simple(args[0],model,measure_resolver,filters)
+                significance=_compile_simple(args[1],model,measure_resolver,filters)
+                # DuckDB's FLOOR/CEIL accept one argument while DAX accepts a
+                # significance. Scaling preserves the DAX two-argument shape
+                # and, unlike passing the comma expression through recursively,
+                # supports nested POWER/DIVIDE expressions safely.
+                return f'({sqlfn}(({value})/NULLIF(ABS({significance}),0))*ABS({significance}))'
+            if len(args)!=1:raise DaxError(f'{fn} requires one value'+(' and optional significance.' if fn in {'FLOOR','CEILING'} else '.'))
+            return f'{sqlfn}({_compile_simple(args[0],model,measure_resolver,filters)})'
+
+    m=re.fullmatch(r'(?is)FORMAT\s*\((.*)\)',expr)
+    if m:
+        args=split_top(m.group(1))
+        if len(args) not in (2,3):raise DaxError('FORMAT requires a value, format string, and optional locale.')
+        value=_compile_simple(args[0],model,measure_resolver,filters)
+        return _dax_format_sql(value,args[1],args[2] if len(args)==3 else None)
 
     # Scalar text expressions are valid anywhere a scalar is accepted, including
     # nested FILTER predicates such as LOWER(TRIM(Table[Status])) = "converted".
@@ -837,11 +1194,11 @@ def _compile_simple(expr,model,measure_resolver=None,filters=None,in_filter=Fals
         args=split_top(m.group(1))
         if len(args)!=3:raise DaxError('DATEDIFF requires start date, end date and interval.')
         unit=args[2].strip().upper()
-        if unit not in {'DAY','WEEK','MONTH','QUARTER','YEAR'}:
-            raise DaxError('DATEDIFF interval must be DAY, WEEK, MONTH, QUARTER, or YEAR.')
+        if unit not in {'SECOND','MINUTE','HOUR','DAY','WEEK','MONTH','QUARTER','YEAR'}:
+            raise DaxError('DATEDIFF interval must be SECOND, MINUTE, HOUR, DAY, WEEK, MONTH, QUARTER, or YEAR.')
         start=_compile_simple(args[0],model,measure_resolver,filters,in_filter=in_filter)
         end=_compile_simple(args[1],model,measure_resolver,filters,in_filter=in_filter)
-        return f"date_diff('{unit.lower()}',CAST({start} AS DATE),CAST({end} AS DATE))"
+        return f"date_diff('{unit.lower()}',CAST({start} AS TIMESTAMP),CAST({end} AS TIMESTAMP))"
 
     m=re.fullmatch(r'(?is)(EDATE|EOMONTH)\s*\((.*)\)',expr)
     if m:
@@ -1021,6 +1378,11 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
     if m:
         t=m.group(2).strip("'")
         return None,{t+'.*'}
+
+    m=re.fullmatch(r'(?is)FILTER\s*\(\s*ALL\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)\s*,\s*(.*)\)',e)
+    if m:
+        t=m.group(1).strip("'");c=m.group(2).strip();cond=m.group(3).strip()
+        return _condition(cond,model,resolve_filter_value,filters,in_filter=True),{semantic_field(t,c)}
         
     m=re.fullmatch(r'(?is)FILTER\s*\(\s*(?:ALL\s*\(\s*(\'?.*?\'?)\s*\)|(\'?.*?\'?))\s*,\s*(.*)\)',e)
     if m:
@@ -1109,8 +1471,11 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         table=m.group(1).strip();condition=m.group(2).strip()
         table=resolve_table(model,table)
         return _condition(condition,model,resolve_filter_value,filters,in_filter=True),set()
-    # Direct Table[Column] comparison / logical condition.
-    return _condition(e,model,resolve_filter_value,filters,in_filter=True),set()
+    # A direct Boolean CALCULATE filter replaces an existing filter on the same
+    # column (KEEPFILTERS, handled above, is the explicit intersection form).
+    referenced=parse_field(re.split(r'(?<![<>])(?:>=|<=|<>|=|>|<)',e,maxsplit=1)[0].strip())
+    overridden={semantic_field(*referenced)} if referenced else set()
+    return _condition(e,model,resolve_filter_value,filters,in_filter=True),overridden
 
 def _attach_filter(base_sql,predicate):
     if not predicate:return base_sql
@@ -1163,6 +1528,15 @@ class DaxCompilation:
 
 def compile_dax(expression,model,filters=None,measure_resolver=None):
     text=strip_assignment(repair_dax_definition(expression)['expression']);filters=filters or []
+    signature_errors=_validate_function_signatures(text,'measure')
+    if signature_errors:raise DaxError(' '.join(dict.fromkeys(signature_errors)))
+    direct_column=parse_field(text)
+    if direct_column:
+        table,column=direct_column
+        raise DaxError(
+            f"'{table}'[{column}] is a column, not a scalar measure. Wrap it in SUM/MIN/MAX, "
+            'use SELECTEDVALUE, or create a calculated column in Transform Data.'
+        )
     # Simple expression.
     if not re.search(r'(?i)\b(VAR|RETURN|CALCULATE|TOTALYTD|TOTALMTD|TOTALQTD)\b',text):
         return DaxCompilation(_compile_simple(text,model,measure_resolver,filters),set())
@@ -1227,6 +1601,7 @@ def dax_engine_health():
         'iterators':'Health Iterators = SUMX(Health,Health[Amount]) + AVERAGEX(Health,Health[Amount]) + MINX(Health,Health[Amount]) + MAXX(Health,Health[Amount])',
         'countrows':'Health Rows = COUNTROWS(Health)',
         'calculate-filter-all':'Health Filter = CALCULATE([Base Amount],FILTER(ALL(Health),LOWER(TRIM(Health[Status])) = "open"))',
+        'calculatetable-summary':'Health Table Context = VAR _Year = YEAR(TODAY()) RETURN COUNTROWS(CALCULATETABLE(SUMMARIZE(Health,Health[Id],Health[EventDate]),REMOVEFILTERS(Health),FILTER(ALL(Health[EventDate]),Health[EventDate] >= DATE(_Year,1,1) && Health[EventDate] < DATE(_Year+1,1,1))))',
         'filter-controls':'Health Controls = CALCULATE([Base Amount],KEEPFILTERS(Health[Status] = "open"),REMOVEFILTERS(Health[Status]))',
         'divide-selected':'Health Divide = DIVIDE([Base Amount],SELECTEDVALUE(Health[Quantity],1),0)',
         'null-logical':'Health Logic = IF(AND(NOT(ISBLANK([Base Amount])),OR(TRUE(),FALSE())),COALESCE([Base Amount],BLANK()),0)',
@@ -1245,9 +1620,12 @@ def dax_engine_health():
         'datesinperiod':'Health Period = CALCULATE([Base Amount],DATESINPERIOD(Health[EventDate],TODAY(),-3,MONTH))',
         'date-tables':'Health Date Tables = CALCULATE([Base Amount],DATESYTD(Health[EventDate]),DATESMTD(Health[EventDate]),DATESQTD(Health[EventDate]))',
         'prior-year':'Health Prior = CALCULATE([Base Amount],SAMEPERIODLASTYEAR(Health[EventDate]))',
+        'previous-periods':'Health Previous = CALCULATE([Base Amount],PREVIOUSMONTH(Health[EventDate]),PREVIOUSQUARTER(Health[EventDate]),PREVIOUSYEAR(Health[EventDate]),PARALLELPERIOD(Health[EventDate],-1,YEAR))',
         'totals':'Health Totals = TOTALYTD([Base Amount],Health[EventDate]) + TOTALMTD([Base Amount],Health[EventDate]) + TOTALQTD([Base Amount],Health[EventDate])',
         'variables':'Health Variables = VAR Current = [Base Amount] RETURN Current',
         'concat-operator':'Health Ampersand = LEFT(Health[Status],1) & RIGHT(Health[Status],1)',
+        'format-text':'Health Format = FORMAT([Base Amount], "#,##0.00") & " USD"',
+        'rankx':'Health Rank = RANKX(ALL(Health[Status]),CALCULATE([Base Amount]),,DESC,DENSE)',
         'virtual-topn':'''Health Top Status =
 VAR StatusSummary =
     TOPN ( 1, FILTER ( ADDCOLUMNS ( ALL ( Health[Status] ), "ItemCount", [Row Count] ), NOT ISBLANK ( Health[Status] ) && TRIM ( Health[Status] ) <> "" ), [ItemCount], DESC, Health[Status], ASC )
@@ -1272,236 +1650,3 @@ RETURN CONCATENATEX ( TopStatus, Health[Status], ", " )''',
             'checks':len(cases),'supportedFunctionCount':len(SUPPORTED_DAX_FUNCTIONS),
             'supportedFunctions':sorted(SUPPORTED_DAX_FUNCTIONS),'failures':failures}
 
-def _field_entries(model):
-    out=[]
-    for table,t in model.get('tables',{}).items():
-        for col in t.get('columns',{}):
-            dtype=str(model.get('columnTypes',{}).get(f'{table}.{col}','')).lower()
-            out.append({'table':table,'column':col,'dtype':dtype,'norm':normalize(col),'fullnorm':normalize(table+' '+col)})
-    return out
-
-def _best_field(prompt,entries,predicate,prefer=()):
-    n=normalize(prompt);cands=[x for x in entries if predicate(x)]
-    if not cands:return None
-    # Explicit field-name fragments have highest weight.
-    scored=[]
-    for x in cands:
-        score=0
-        if x['norm'] and x['norm'] in n:score+=100+len(x['norm'])
-        words=re.findall(r'[A-Za-z0-9_]+',prompt.lower())
-        colwords=re.findall(r'[A-Za-z0-9_]+',x['column'].lower())
-        score+=sum(8 for w in words if len(w)>=2 and any(cw.startswith(w) or w.startswith(cw) for cw in colwords))
-        score+=sum(5 for k in prefer if k in x['column'].lower())
-        scored.append((score,x))
-    return max(scored,key=lambda z:z[0])[1]
-
-def _explicit_fields(prompt,model):
-    """Return exact Table[Column] references mentioned by the user, in prompt order."""
-    hits=[]
-    for table,t in model.get('tables',{}).items():
-        # Match known semantic table names exactly so preceding prose (e.g. "overall")
-        # cannot become part of the table name.
-        pattern=re.compile(re.escape(table)+r'\s*\[\s*([^\]]+)\s*\]',re.I)
-        for m in pattern.finditer(prompt):
-            requested=m.group(1).strip()
-            actual=next((c for c in t.get('columns',{}) if c.lower()==requested.lower()),None)
-            if actual is None:continue
-            dtype=str(model.get('columnTypes',{}).get(f'{table}.{actual}','')).lower()
-            hits.append((m.start(),{'table':table,'column':actual,'dtype':dtype,'norm':normalize(actual),'fullnorm':normalize(table+' '+actual),'explicit':True}))
-    return [x for _,x in sorted(hits,key=lambda z:z[0])]
-
-def _is_identifier(field):
-    name=field['column'].lower().replace(' ','').replace('_','')
-    return bool(re.search(r'(id|key|code|number|no)$',name)) or name in ('id','key')
-
-def _is_numeric_field(field):
-    dtype=field.get('dtype','')
-    if any(x in dtype for x in ('int','decimal','numeric','double','float','real','currency','number')):return True
-    n=field['column'].lower().replace(' ','')
-    return any(k in n for k in ('amount','revenue','sales','cost','profit','quantity','qty','points','days','price','margin','discount','value'))
-
-def _semantic_measure_check(prompt,result,explicit):
-    """Fail closed when generated DAX loses an explicitly named field."""
-    expr=result.get('expression','')
-    missing=[]
-    for f in explicit:
-        ref=f"{f['table']}[{f['column']}]"
-        if ref not in expr:missing.append(ref)
-    if missing:
-        raise DaxError('Semantic verification failed: generated measure did not use the explicitly requested field(s): '+', '.join(missing))
-    return True
-
-def _prompt_filter_specs(prompt,explicit):
-    """Extract simple, deterministic filter conditions that are explicitly attached to Table[Column] refs."""
-    specs=[]
-    stop=r'(?=\s+(?:and|using|with|for|where|during|last|ytd|mtd|qtd|year\s+to\s+date|month\s+to\s+date|quarter\s+to\s+date)\b|[,;\n]|$)'
-    for f in explicit:
-        ref=f"{f['table']}[{f['column']}]"
-        mref=re.search(re.escape(ref),prompt,re.I)
-        if not mref:continue
-        tail=prompt[mref.end():mref.end()+140]
-        patterns=[
-          ('not_equals',rf'^\s*(?:<>|!=|not\s+equals?|not\s+equal\s+to|excluding?|exclude)\s+[\"\']?(.+?)[\"\']?{stop}'),
-          ('gte',rf'^\s*(?:>=|at\s+least|greater\s+than\s+or\s+equal\s+to)\s+[\"\']?(.+?)[\"\']?{stop}'),
-          ('lte',rf'^\s*(?:<=|at\s+most|less\s+than\s+or\s+equal\s+to)\s+[\"\']?(.+?)[\"\']?{stop}'),
-          ('gt',rf'^\s*(?:>|greater\s+than|above)\s+[\"\']?(.+?)[\"\']?{stop}'),
-          ('lt',rf'^\s*(?:<|less\s+than|below)\s+[\"\']?(.+?)[\"\']?{stop}'),
-          ('equals',rf'^\s*(?:=|equals?|is)\s+[\"\']?(.+?)[\"\']?{stop}'),
-        ]
-        for op,pat in patterns:
-            m=re.search(pat,tail,re.I)
-            if not m:continue
-            raw=m.group(1).strip().strip('"\'')
-            if not raw:break
-            if re.fullmatch(r'-?\d+(?:\.\d+)?',raw):value=float(raw) if '.' in raw else int(raw)
-            elif raw.lower() in ('true','false'):value=raw.lower()=='true'
-            else:value=raw
-            specs.append((f,op,value));break
-    return specs
-
-def _dax_filter_line(field,op,value):
-    symbol={'equals':'=','not_equals':'<>','gte':'>=','lte':'<=','gt':'>','lt':'<'}[op]
-    literal=str(value).upper() if isinstance(value,bool) else str(value) if isinstance(value,(int,float)) else '"'+str(value).replace('"','""')+'"'
-    return f"    {field['table']}[{field['column']}] {symbol} {literal}"
-
-def _deterministic_suggest_measure(prompt,model):
-    text=prompt.strip();low=text.lower();entries=_field_entries(model)
-    if not entries:raise DaxError('The semantic model has no fields. Add processed data to Model first.')
-    explicit=_explicit_fields(text,model)
-    filter_specs=_prompt_filter_specs(text,explicit)
-    filter_refs={(f['table'],f['column']) for f,_,_ in filter_specs}
-
-    date_explicit=next((x for x in explicit if 'date' in x['column'].lower() or 'time' in x['column'].lower() or x['dtype'] in ('date','datetime','timestamp')),None)
-    datef=date_explicit or _best_field(text,entries,lambda x:'date' in x['column'].lower() or 'time' in x['column'].lower() or x['dtype'] in ('date','datetime','timestamp'),('date','updated','created'))
-
-    # Explicit columns are role-classified: date/filter columns must never accidentally become the KPI value.
-    explicit_values=[x for x in explicit if x is not date_explicit and (x['table'],x['column']) not in filter_refs]
-    keyf=next((x for x in explicit_values if _is_identifier(x)),None) or _best_field(text,entries,lambda x:_is_identifier(x),('customerid','orderid','key','id'))
-    numeric_explicit=[x for x in explicit_values if _is_numeric_field(x)]
-    amount=(numeric_explicit[0] if numeric_explicit else _best_field(text,entries,lambda x:_is_numeric_field(x),('salesamount','revenue','amount','profit','quantity')))
-
-    is_count=bool(re.search(r'\b(count|number of|how many|distinct count|unique count|customers|orders|records|rows)\b',low))
-    is_avg=bool(re.search(r'\b(average|avg|mean)\b',low))
-    is_min=bool(re.search(r'\b(min|minimum|lowest)\b',low))
-    is_max=bool(re.search(r'\b(max|maximum|highest)\b',low))
-    is_sum=bool(re.search(r'\b(sum|total|overall|sales|revenue|amount|quantity|profit)\b',low))
-    wants_distinct=bool(re.search(r'\b(distinct|unique)\b',low))
-    wants_difference=bool(re.search(r'\b(difference|minus|subtract|variance|profit)\b',low)) and len(numeric_explicit)>=2
-    wants_ratio=bool(re.search(r'\b(ratio|percentage|percent|margin|rate)\b',low)) and len(numeric_explicit)>=2
-
-    # Deterministic two-column business arithmetic when the prompt explicitly names both numeric fields.
-    if wants_ratio or wants_difference:
-        a,b=numeric_explicit[:2];aref=f"{a['table']}[{a['column']}]";bref=f"{b['table']}[{b['column']}]"
-        if filter_specs:raise DaxError('For a ratio/difference with filters, create the base filtered measures first and reference them in the derived measure.')
-        if wants_ratio:
-            base=f"DIVIDE ( SUM ( {aref} ), SUM ( {bref} ), 0 )";base_name='Ratio_'+re.sub(r'\W+','_',a['column']).strip('_')+'_to_'+re.sub(r'\W+','_',b['column']).strip('_');intent='ratio'
-        else:
-            base=f"SUM ( {aref} ) - SUM ( {bref} )";base_name='Difference_'+re.sub(r'\W+','_',a['column']).strip('_')+'_Minus_'+re.sub(r'\W+','_',b['column']).strip('_');intent='difference'
-        result={'name':base_name,'expression':f'{base_name} =\n{base}','explanation':f'Verified semantic intent: {intent} using {aref} and {bref}.','warnings':[],'confidence':1.0,'intent':intent,'semanticChecks':{'explicitFieldLock':True,'aggregation':intent,'identifierProtectedFromSum':True},'grounding':{'valueField':aref,'secondaryValueField':bref,'dateField':None,'filterFields':[]}}
-        _semantic_measure_check(text,result,[a,b]);return result
-
-    primary=(keyf if is_count and keyf in explicit_values else (explicit_values[0] if explicit_values else None))
-    if primary:value=primary
-    elif is_count and keyf:value=keyf
-    elif amount:value=amount
-    elif keyf:value=keyf
-    else:raise DaxError('I could not determine the requested value field. Type or select a field such as Table[Column].')
-
-    ref=f"{value['table']}[{value['column']}]";identifier=_is_identifier(value);numeric=_is_numeric_field(value)
-    if is_avg:
-        if not numeric:raise DaxError(f"AVERAGE is not appropriate for identifier/text field {ref}. Please choose a numeric field.")
-        base=f"AVERAGE ( {ref} )";base_name='Average_'+re.sub(r'\W+','_',value['column']).strip('_');intent='average'
-    elif is_min:
-        base=f"MIN ( {ref} )";base_name='Minimum_'+re.sub(r'\W+','_',value['column']).strip('_');intent='minimum'
-    elif is_max:
-        base=f"MAX ( {ref} )";base_name='Maximum_'+re.sub(r'\W+','_',value['column']).strip('_');intent='maximum'
-    elif is_count or identifier or (primary and not numeric):
-        distinct=wants_distinct or identifier or not numeric;base=f"{'DISTINCTCOUNT' if distinct else 'COUNT'} ( {ref} )";base_name=('Distinct_Count_' if distinct else 'Count_')+re.sub(r'\W+','_',value['column']).strip('_');intent='distinct_count' if distinct else 'count'
-    elif is_sum or numeric:
-        if not numeric:raise DaxError(f"SUM is not appropriate for {ref}. Please specify Count/Distinct Count or choose a numeric field.")
-        base=f"SUM ( {ref} )";base_name='Total_'+re.sub(r'\W+','_',value['column']).strip('_');intent='sum'
-    else:raise DaxError(f"The aggregation for {ref} is ambiguous. Please say Total, Average, Count, Distinct Count, Minimum, or Maximum.")
-
-    filter_lines=[_dax_filter_line(*spec) for spec in filter_specs]
-    expression=None;name=base_name
-    if 'last month' in low:
-        if not datef:raise DaxError('A Date/DateTime field is required for "last month". Please select the exact date field.')
-        dref=f"{datef['table']}[{datef['column']}]";name=base_name+'_Last_Month'
-        lines=[f'{name} =','VAR MaxSelectedDate =',f'    MAX ( {dref} )','','VAR StartDate =','    EOMONTH ( MaxSelectedDate, -2 ) + 1','','VAR EndDate =','    EOMONTH ( MaxSelectedDate, -1 )','','RETURN','CALCULATE (',f'    {base},']
-        lines += [x+',' for x in filter_lines]
-        lines+=['    DATESBETWEEN (',f'        {dref},','        StartDate,','        EndDate','    )',')'];expression='\n'.join(lines)
-    else:
-        mm=re.search(r'last\s+(\d+)\s+months?',low)
-        if mm:
-            if not datef:raise DaxError('A Date/DateTime field is required for rolling-month logic. Please select the exact date field.')
-            months=int(mm.group(1));dref=f"{datef['table']}[{datef['column']}]";name=base_name+f'_Last_{months}_Months'
-            lines=[f'{name} =','VAR MaxSelectedDate =',f'    MAX ( {dref} )','','VAR StartDate =',f'    EDATE ( MaxSelectedDate, -{months} ) + 1','','RETURN','CALCULATE (',f'    {base},']
-            lines += [x+',' for x in filter_lines]
-            lines+=['    DATESBETWEEN (',f'        {dref},','        StartDate,','        MaxSelectedDate','    )',')'];expression='\n'.join(lines)
-        elif re.search(r'\b(ytd|year to date)\b',low):
-            if not datef:raise DaxError('A Date/DateTime field is required for YTD. Please select the exact date field.')
-            if filter_lines:raise DaxError('YTD with additional row filters is not supported by the deterministic generator yet. Create the filtered base measure first, then apply YTD.')
-            dref=f"{datef['table']}[{datef['column']}]";name=base_name+'_YTD';expression=f'{name} =\nTOTALYTD ( {base}, {dref} )'
-        elif re.search(r'\b(mtd|month to date)\b',low):
-            if not datef:raise DaxError('A Date/DateTime field is required for MTD. Please select the exact date field.')
-            if filter_lines:raise DaxError('MTD with additional row filters is not supported by the deterministic generator yet. Create the filtered base measure first, then apply MTD.')
-            dref=f"{datef['table']}[{datef['column']}]";name=base_name+'_MTD';expression=f'{name} =\nTOTALMTD ( {base}, {dref} )'
-        elif re.search(r'\b(qtd|quarter to date)\b',low):
-            if not datef:raise DaxError('A Date/DateTime field is required for QTD. Please select the exact date field.')
-            if filter_lines:raise DaxError('QTD with additional row filters is not supported by the deterministic generator yet. Create the filtered base measure first, then apply QTD.')
-            dref=f"{datef['table']}[{datef['column']}]";name=base_name+'_QTD';expression=f'{name} =\nTOTALQTD ( {base}, {dref} )'
-    if expression is None:
-        if filter_lines:
-            name=base_name+'_Filtered';expression=f'{name} =\nCALCULATE (\n    {base},\n'+',\n'.join(filter_lines)+'\n)'
-        else:expression=f'{name} =\n{base}'
-
-    used_explicit=[value]
-    if datef in explicit and ('last' in low or 'ytd' in low or 'mtd' in low or 'qtd' in low):used_explicit.append(datef)
-    used_explicit += [f for f,_,_ in filter_specs if f not in used_explicit]
-    result={'name':name,'expression':expression,'explanation':f"Verified semantic intent: {intent} of {ref}"+(f" using {datef['table']}[{datef['column']}] for time context" if datef and ('last' in low or 'ytd' in low or 'mtd' in low or 'qtd' in low) else '')+(f" with {len(filter_specs)} explicit filter condition(s)" if filter_specs else '')+'.','warnings':[],'confidence':1.0 if explicit else 0.85,'intent':intent,'semanticChecks':{'explicitFieldLock':bool(explicit),'aggregation':intent,'identifierProtectedFromSum':identifier,'filterCount':len(filter_specs)},'grounding':{'valueField':ref,'dateField':f"{datef['table']}[{datef['column']}]" if datef else None,'filterFields':[f"{f['table']}[{f['column']}]" for f,_,_ in filter_specs]}}
-    _semantic_measure_check(text,result,used_explicit)
-    return result
-
-
-def suggest_measure_from_prompt(prompt,model,validation_feedback=None):
-    """Generate DAX grounded to the active semantic model and this engine's supported subset."""
-    try:
-        # Import only for the explicit AI path. Manual parsing, validation, saving,
-        # and querying remain completely independent of Gemini configuration/network.
-        from .gemini import generate_json
-        entries=_field_entries(model)
-        fields='; '.join(f"{x['table']}[{x['column']}] ({x['dtype'] or 'unknown type'})" for x in entries)
-        relationships='; '.join(
-            f"{r.get('fromTable')}[{r.get('fromColumn')}] -> {r.get('toTable')}[{r.get('toColumn')}]"
-            for r in model.get('relationships',[]) if r.get('active',True)
-        ) or 'none'
-        measures='; '.join(f"[{name}] = {expression}" for name,expression in model.get('measures',{}).items()) or 'none'
-        retry_note=f"\nThe previous expression failed VTAB validation with: {validation_feedback}. Correct that failure." if validation_feedback else ''
-        result=generate_json(prompt+retry_note,(
-            'You create one valid DAX measure definition for VTAB Reporting Studio. '
-            'Use only the supplied active model; never invent a table, column, or measure. '
-            'Available semantic fields: '+fields+'. Active relationships: '+relationships+'. Existing measures: '+measures+'. '
-            'Supported scalar, aggregate, and table functions include VAR, RETURN, CALCULATE, FILTER, ALL, ADDCOLUMNS, SUMMARIZE, TOPN, CONCATENATEX, SUM, AVERAGE, MIN, MAX, COUNT, COUNTROWS, DISTINCTCOUNT, MEDIAN, SUMX, AVERAGEX, MINX, MAXX, DIVIDE, SELECTEDVALUE, COALESCE, ABS, ROUND, INT, FLOOR, CEILING, LEN, LOWER, UPPER, TRIM, LEFT, RIGHT, MID, CONCATENATE, SUBSTITUTE, VALUE, CONTAINSSTRING, CONTAINSSTRINGEXACT, IF, SWITCH, ISBLANK, BLANK, TODAY, NOW, DATE, YEAR, MONTH, DAY, EDATE, EOMONTH, STARTOFMONTH, ENDOFMONTH, DATEADD, DATESBETWEEN, DATESINPERIOD, DATESYTD, DATESMTD, DATESQTD, SAMEPERIODLASTYEAR, TOTALYTD, TOTALMTD, TOTALQTD, REMOVEFILTERS, KEEPFILTERS, IN, POWER, and SQRT. '
-            'Use exact Table[Column] references. Prefer straightforward expressions supported by this list. Return JSON only: '
-            '{"name":"short_measure_name","expression":"MeasureName =\\nDAX expression","explanation":"brief explanation"}.'
-        ))
-        name=str(result.get('name','')).strip();expression=str(result.get('expression','')).strip()
-        if not name or not expression: raise DaxError('AI response was missing name or expression.')
-        referenced=[]
-        for table,definition in model.get('tables',{}).items():
-            pattern=re.compile(r"'?"+re.escape(table)+r"'?\s*\[\s*([^\]]+)\s*\]",re.I)
-            for match in pattern.finditer(expression):
-                requested=match.group(1).strip()
-                actual=next((column for column in definition.get('columns',{}) if column.lower()==requested.lower()),None)
-                if actual is None:raise DaxError(f"Unknown column '{table}[{requested}]'")
-                referenced.append(f'{table}[{actual}]')
-        return {'name':re.sub(r'\s+','_',name)[:128],'expression':expression,'explanation':str(result.get('explanation','Generated by Gemini AI.')),'warnings':[],'confidence':0.95,'intent':'ai_generation','semanticChecks':{'modelGrounded':True,'referencedFields':referenced},'grounding':{'valueField':referenced[0] if referenced else None,'dateField':next((field for field in referenced if 'date' in field.lower()),None),'filterFields':referenced[1:]}}
-    except Exception as ai_error:
-        if not validation_feedback:
-            try:
-                fallback=_deterministic_suggest_measure(prompt,model)
-                fallback.setdefault('warnings',[]).append(f'AI generation was unavailable; the model-grounded generator was used. Details: {ai_error}')
-                return fallback
-            except Exception:
-                pass
-        raise DaxError(f"AI generation failed: {ai_error}")

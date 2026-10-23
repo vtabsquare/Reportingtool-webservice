@@ -29,7 +29,7 @@ export type VisualFormat={
   subtitle?:string; subtitleVisible?:boolean; subtitleFontFamily?:string; subtitleBold?:boolean; subtitleColor?:string; subtitleFontSize?:number;
   titleFontWeight?:number; titleAlignment?:'left'|'center'|'right'; titleFontStyle?:'normal'|'italic'; titleUnderline?:boolean; titleWrap?:boolean; titleBackgroundEnabled?:boolean; titleBackground?:string; titleBackgroundTransparency?:number;
   subtitleFontWeight?:number; subtitleAlignment?:'left'|'center'|'right'; subtitleFontStyle?:'normal'|'italic'; subtitleUnderline?:boolean; subtitleWrap?:boolean;
-  axisFontSize?:number; axisColor?:string; axisTitleVisible?:boolean; xAxisTitleVisible?:boolean; yAxisTitleVisible?:boolean;
+  axisFontSize?:number; axisColor?:string; axisTitleVisible?:boolean; xAxisTitleVisible?:boolean; yAxisTitleVisible?:boolean; xAxisLabelRotation?:number;
   xAxisTitle?:string; yAxisTitle?:string; gridLineColor?:string; gridLineStyle?:'solid'|'dashed'|'dotted'; zoomSlider?:boolean;
   legendColor?:string; legendFontSize?:number; visibleCategoryCount?:number;
   referenceLineEnabled?:boolean; referenceLineValue?:number; referenceLineLabel?:string; referenceLineColor?:string;

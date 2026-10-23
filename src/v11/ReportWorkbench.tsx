@@ -1151,8 +1151,9 @@ function RightPane({visual,updateVisual,removeVisual,duplicate,page,updatePage,r
   const[tab,setTab]=useState<'build'|'format'|'analytics'|'page'>('build');
   const[liveCategories,setLiveCategories]=useState<string[]>([]);
   useEffect(()=>{
-    if(!visual||!model||(visual.type!=='pie'&&visual.type!=='donut'&&visual.type!=='bar'&&visual.type!=='column'&&visual.type!=='stackedbar'&&visual.type!=='stackedcolumn')){setLiveCategories([]);return;}
-    const axis=(visual.bindings.axis||[])[visual.drillLevel||0]||(visual.bindings.axis||[]).slice(-1)[0]||(visual.bindings.legend||[])[0];
+    if(!visual||!model||!['pie','donut','bar','column','stackedbar','stackedcolumn','line','area','combo'].includes(visual.type)){setLiveCategories([]);return;}
+    const legend=(visual.bindings.legend||[])[0];
+    const axis=legend||(visual.bindings.axis||[])[visual.drillLevel||0]||(visual.bindings.axis||[]).slice(-1)[0];
     if(!axis){setLiveCategories([]);return;}
     const project={model,report:{pages:[{...page,visuals:page.visuals}],filters:[],activePageId:page.id}};
     queryVisual(visual,project,null,[]).then(r=>{

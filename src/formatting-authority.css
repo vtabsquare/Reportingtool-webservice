@@ -135,3 +135,47 @@ div[style*="z-index: 9999999"] {
   pointer-events: none !important;
 }
 .canvasObject:has(.menuOpen),.canvasObject:has(.slicerDropdownOpen){overflow:visible!important;z-index:99999!important}
+.slicerVisual .slicerTileContainer,.viewerVisual-slicer .slicerTileContainer{background:var(--slicer-bg,#fff)!important;text-align:center!important}
+.slicerVisual .slicerTileButton,.viewerVisual-slicer .slicerTileButton{font:inherit!important;color:var(--slicer-text,#242424)!important;text-align:center!important;background:var(--slicer-bg,#fff)!important}
+.slicerVisual .slicerTileButton.active,.viewerVisual-slicer .slicerTileButton.active{background:color-mix(in srgb,var(--accent,#118dff) 15%,var(--slicer-bg,#fff))!important}
+
+/* Authority rules for Slicer Dropdown and Tiles */
+.canvasObjectInteractionManager:has(.slicerDropdownOpen) .canvasObjectLayer {
+  z-index: 10050 !important;
+}
+
+.canvasObject.canvasObject-slicer:has(.slicerDropdownOpen) {
+  overflow: visible !important;
+  z-index: 10060 !important;
+}
+
+.slicerVisual .slicerTileContainer,
+.viewerVisual-slicer .slicerTileContainer {
+  background: transparent !important;
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  height: auto !important;
+  box-sizing: border-box !important;
+  padding: 4px 6px 6px 6px !important;
+}
+
+.slicerVisual .slicerTileButton:nth-child(even),
+.viewerVisual-slicer .slicerTileButton:nth-child(even) {
+  background: var(--slicer-bg, #ffffff) !important;
+}
+
+.slicerVisual .slicerTileButton.active:nth-child(even),
+.viewerVisual-slicer .slicerTileButton.active:nth-child(even),
+.slicerVisual .slicerTileButton.active:nth-child(odd),
+.viewerVisual-slicer .slicerTileButton.active:nth-child(odd) {
+  background: #0ea5e9 !important;
+  border-color: #0284c7 !important;
+  color: #ffffff !important;
+}
+
+.slicerSearchRow input,
+.slicerSearchInput {
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}

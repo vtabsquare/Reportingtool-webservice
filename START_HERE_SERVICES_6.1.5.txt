@@ -1,0 +1,22 @@
+VTAB REPORTING SERVICES 6.1.5
+================================
+
+This is the complete updated Services source code.
+
+1. Back up your existing Services application and private environment files.
+2. Replace the existing application files with this package.
+3. Restore your .env / web.env values. Private environment files are not included.
+4. Run npm install.
+5. Build the web workspace with npm run build:web.
+6. Restart the Services API and web deployment.
+
+DATABASE NOTE
+-------------
+If migration 019 was not already applied, execute:
+  api/supabase_migrations/019_workspace_report_access_and_provisioning.sql
+
+The migration is required for personal workspace provisioning and separate
+workspace-level/report-level access behavior. Do not run it again if your
+deployment process has already recorded it as applied.
+
+See RELEASE_NOTES_6.1.5_SERVICES.md for the compatibility and test summary.

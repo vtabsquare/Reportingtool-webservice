@@ -4,12 +4,18 @@ import type {ConditionalFormatRule,NumberFormat,Visual} from '../types';
 import {CURRENCIES,DEFAULT_NUMBER_FORMAT} from '../formatting';
 import {formattingDefaults,generalFormattingCards,VISUAL_DEFINITIONS,type FormattingCardSchema,type FormattingControlSchema} from '../visualFormattingSchema';
 import {useStudio} from '../store';
+import {DeferredNumberInput} from './DeferredNumberInput';
+import {CATEGORY_PALETTE,stableCategoryColor} from '../categoryColors';
 
 type Props={visual:Visual;updateVisual:(fn:(visual:Visual)=>void)=>void;mode?:'format'|'analytics';multiSelect?:boolean;multiSelectSameType?:boolean;categories?:string[]};
 type Scope='visual'|'general';
 
 const read=(visual:Visual,key:string)=>{
-  if(key==='title'||key==='slicerStyle')return (visual as any)[key];
+  if(key==='title')return (visual as any)[key];
+  if(key==='slicerStyle'){
+    const style=(visual as any)[key];
+    return ['button','tile','horizontalTiles','verticalTiles'].includes(style)?'button':style;
+  }
   if(key==='x'||key==='y'||key==='w'||key==='h'||key==='rotation'||key==='locked')return (visual as any)[key];
   if(key==='paddingTop'||key==='paddingRight'||key==='paddingBottom'||key==='paddingLeft')return (visual.format as any)[key]??visual.format.padding??8;
   if(key==='titleFontFamily')return visual.format.titleFontFamily??visual.format.fontFamily;
@@ -59,12 +65,10 @@ function Control({schema,visual,updateVisual}:{schema:FormattingControlSchema;vi
   const commit=(next:any)=>updateVisual(v=>write(v,schema.key,next));
   if(schema.type==='toggle')return <label className={'formatSchemaToggle '+(disabled?'disabled':'')}><span>{schema.label}</span><input type="checkbox" checked={!!value} disabled={disabled} onChange={e=>commit(e.target.checked)}/></label>;
   if(isAutoNumber){
-    // Render a clearable number input: empty = Auto (undefined), typed value = override
+    // Empty = Auto. Keystrokes stay local; the visual changes only on blur.
     return <label className={'formatSchemaControl '+(disabled?'disabled':'')}>
       <span>{schema.label}</span>
-      <input type="number" placeholder="Auto" value={value===undefined||value===null?'':String(value)} min={schema.min} max={schema.max} step={schema.step} disabled={disabled}
-        onChange={e=>{const v=e.target.value;commit(v===''?undefined:Number(v))}}
-      />
+      <DeferredNumberInput placeholder="Auto" value={value} min={schema.min} max={schema.max} step={schema.step} disabled={disabled} allowEmpty onCommit={commit}/>
     </label>;
   }
   return <label className={'formatSchemaControl '+(disabled?'disabled':'')}><span>{schema.label}{schema.suffix&&schema.type==='range'?<em>{value}{schema.suffix}</em>:null}</span>
@@ -72,6 +76,7 @@ function Control({schema,visual,updateVisual}:{schema:FormattingControlSchema;vi
     schema.type==='select'?<select value={value} disabled={disabled} onChange={e=>commit(e.target.value)}>{schema.options?.map(option=><option key={String(option.value)} value={option.value}>{option.label}</option>)}</select>:
     schema.type==='textarea'?<textarea rows={3} value={String(value||'')} disabled={disabled} onChange={e=>commit(e.target.value)}/>:
     schema.type==='text'?<input value={String(value||'')} disabled={disabled} onChange={e=>commit(e.target.value)}/>:
+    schema.type==='number'?<DeferredNumberInput value={Number(value)} min={schema.min} max={schema.max} step={schema.step} disabled={disabled} onCommit={commit}/>:
     <input type={schema.type} value={value} min={schema.min} max={schema.max} step={schema.step} disabled={disabled} onChange={e=>commit(Number(e.target.value))}/>}</label>;
 }
 
@@ -134,8 +139,7 @@ function CategoryColorFormat({visual,updateVisual,categories}:{visual:Visual;upd
   const[selected,setSelected]=useState(cats[0]||'');
   const active=cats.includes(selected)?selected:(cats[0]||'');
   if(!active||cats.length===0)return <div className="schemaEmptyNote">No categories available yet. Add data to the chart first, then return here to set individual colors.</div>;
-  const palette=['#118dff','#12239e','#e66c37','#6b007b','#e044a7','#744ec2','#d9b300','#d64550','#197278','#1aab40'];
-  const fallback=palette[cats.indexOf(active)%palette.length];
+  const fallback=stableCategoryColor(active,CATEGORY_PALETTE);
   const current=(visual.format.categoryColors as any)?.[active]||fallback;
   const set=(value:string)=>updateVisual(v=>{(v.format as any).categoryColors=(v.format as any).categoryColors||{};(v.format as any).categoryColors[active]=value});
   const reset=()=>updateVisual(v=>{if(!(v.format as any).categoryColors)return;delete (v.format as any).categoryColors[active]});

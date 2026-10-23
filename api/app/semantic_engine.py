@@ -1,17 +1,22 @@
 from __future__ import annotations
 import re, json, hashlib, time, threading
 from collections import OrderedDict
-from .dax_engine import compile_dax
+from .dax_engine import strip_assignment
+from .dax_v2 import analyze_measure as analyze_dax_v2
+from .dax_v2.storage_adapter import compile_for_duckdb
 from .local_engine import connect, ensure_analytics_ready
 
 def q(x):return '"'+str(x).replace('"','""')+'"'
+def resolve_table_name(model,name):
+    raw=str(name or '').strip().strip("'\"")
+    return next((table for table in model.get('tables',{}) if table.casefold()==raw.casefold()),raw)
 def fld(model,dotted):
     t,c=dotted.split('.',1);part=None
     if '::' in c:c,part=c.rsplit('::',1)
     t = t.strip().strip("'\"")
     c = c.strip().strip("'\"")
     tables=model["tables"]
-    actual_t=next((k for k in tables if k.lower()==t.lower()),t)
+    actual_t=resolve_table_name(model,t)
     tcols=tables[actual_t]["columns"]
     actual_c=next((k for k in tcols if k.lower()==c.lower()),c)
     physical=tcols[actual_c];base=f'{q(actual_t)}.{q(physical)}'
@@ -28,6 +33,14 @@ def _measure_name_key(value):
     """Power BI-friendly lookup key for legacy underscore/case variants."""
     return re.sub(r'[\s_-]+','',str(value or '')).casefold()
 
+def normalize_binding_name(value):
+    """Normalize field-well payloads from current and legacy report versions."""
+    raw=str(value or '').strip()
+    # Drag payload prefixes should normally be removed by the UI.  Treat the API
+    # as the compatibility boundary as imported/older reports can retain them.
+    raw=re.sub(r'(?i)^(?:field|numericfield|hierarchy|measure):','',raw).strip()
+    return raw
+
 def resolve_measure_name(name,measures):
     """Resolve an exact measure name first, then a unique friendly alias.
 
@@ -35,6 +48,8 @@ def resolve_measure_name(name,measures):
     lookup lets [Total Discount], [total_discount], and [TOTAL-DISCOUNT]
     reference the same saved measure without weakening exact-name behavior.
     """
+    name=normalize_binding_name(name)
+    if len(name)>=2 and name[0]=='[' and name[-1]==']':name=name[1:-1].strip()
     if name in measures:return name
     short_name = str(name or '').split('.', 1)[1] if '.' in str(name or '') else None
     if short_name and short_name in measures: return short_name
@@ -93,8 +108,93 @@ def _measure_dependency_names(model,requested):
                     names.add(resolved);changed=True
     return names
 
+def _aggregate_reference_tables(model,expression):
+    """Tables that provide values to an aggregate, excluding filter-only tables."""
+    text=str(expression or '')
+    owners=set()
+    functions=r'(?:SUM|AVERAGE|AVG|MIN|MAX|COUNT|DISTINCTCOUNT|MEDIAN|SUMX|AVERAGEX|MINX|MAXX)'
+    for table in model.get('tables',{}):
+        escaped=re.escape(table);quoted=re.escape("'"+table.replace("'","''")+"'")
+        table_token=r'(?:'+quoted+r'|(?<![A-Za-z0-9_])'+escaped+r')'
+        if re.search(r'(?i)\b'+functions+r'\s*\(\s*'+table_token+r'\s*\[',text):owners.add(table)
+        if re.search(r'(?i)\bCOUNTROWS\s*\(\s*'+table_token+r'\s*\)',text):owners.add(table)
+    return owners
+
+def _sql_reference_tables(model,sql):
+    """Use compiled SQL as the authoritative table-lineage source."""
+    text=str(sql or '')
+    return {table for table in model.get('tables',{}) if re.search(r'"'+re.escape(table)+r'"\s*\.',text,re.I)}
+
+def _sql_aggregate_reference_tables(model,sql):
+    """Find semantic tables feeding SQL aggregate calls.
+
+    This complements DAX-text lineage for iterator/variable expressions.  The
+    compiler output is definitive and avoids guessing from how a valid DAX
+    expression happens to be formatted.
+    """
+    text=str(sql or '');owners=set()
+    aggregate=re.compile(r'(?i)\b(?:SUM|AVG|AVERAGE|MIN|MAX|COUNT|MEDIAN|STDDEV|VARIANCE|ANY_VALUE)\s*\(')
+    for match in aggregate.finditer(text):
+        open_pos=text.find('(',match.start());depth=0;quote=None;close_pos=None;index=open_pos
+        while index<len(text):
+            char=text[index]
+            if quote:
+                if char==quote:
+                    if index+1<len(text) and text[index+1]==quote:index+=2;continue
+                    quote=None
+                index+=1;continue
+            if char in ("'",'"'):quote=char
+            elif char=='(':depth+=1
+            elif char==')':
+                depth-=1
+                if depth==0:close_pos=index;break
+            index+=1
+        if close_pos is not None:owners.update(_sql_reference_tables(model,text[open_pos+1:close_pos]))
+    return owners
+
+def _strip_unreachable_filter_clauses(sql,unreachable):
+    """Remove aggregate FILTER clauses that target disconnected tables.
+
+    DAX permits a filter on a disconnected table; it simply cannot propagate to
+    the aggregate table. SQL cannot reference an alias that is absent from FROM,
+    so retaining such a predicate caused DuckDB Binder/API 400 errors. Removing
+    only the disconnected FILTER clause matches DAX filter-propagation semantics
+    while preserving filters on connected tables.
+    """
+    blocked={str(table) for table in unreachable if table}
+    if not blocked or 'FILTER' not in sql.upper():return sql
+    marker=re.compile(r'(?i)\s+FILTER\s*\(\s*WHERE\s+')
+    output=sql;offset=0
+    while True:
+        match=marker.search(output,offset)
+        if not match:break
+        open_pos=output.find('(',match.start());depth=0;quote=None;close_pos=None
+        for index in range(open_pos,len(output)):
+            char=output[index]
+            if quote:
+                if char==quote:
+                    if index+1<len(output) and output[index+1]==quote:
+                        continue
+                    quote=None
+                continue
+            if char in ("'",'"'):quote=char;continue
+            if char=='(':depth+=1
+            elif char==')':
+                depth-=1
+                if depth==0:close_pos=index;break
+        if close_pos is None:break
+        predicate=output[open_pos+1:close_pos]
+        references_blocked=any(re.search(r'"'+re.escape(table)+r'"\s*\.',predicate,re.I) for table in blocked)
+        if references_blocked:
+            output=output[:match.start()]+output[close_pos+1:]
+            offset=max(0,match.start()-1)
+        else:
+            offset=close_pos+1
+    return output
+
 def measure(name,model,stack=None,context_filters=None,with_meta=False):
     stack=stack or []
+    name=normalize_binding_name(name)
     agg_suffix = None
     if '::' in name:
         name, agg_suffix = name.split('::', 1)
@@ -146,13 +246,30 @@ def measure(name,model,stack=None,context_filters=None,with_meta=False):
             except Exception:
                 pass
         raise ValueError(f"Unknown measure [{name}]")
-    exp=measures[name].strip()
+    # Saved measures may contain the Power BI-style ``Name = expression`` form.
+    # Every compiler route must consume only the right-hand expression. The DAX
+    # route already stripped it, but the legacy dotted-column route did not,
+    # producing SQL such as ``Measure_One = SUM(...) AS Measure_One`` that passed
+    # editor validation and failed only when a visual executed it.
+    saved_source=measures[name].strip()
+    definition_source=saved_source if strip_assignment(saved_source)!=saved_source else f'{name} = {saved_source}'
+    semantic=analyze_dax_v2(definition_source,model)
+    if not semantic.valid:
+        errors=[item for item in semantic.diagnostics if item.severity.value=='error']
+        legacy_row_value=not model.get('measureDefinitions',{}).get(name) and errors and all(item.code=='DAX1013' for item in errors)
+        if not legacy_row_value:
+            first=errors[0] if errors else None
+            raise ValueError(first.message if first else f'Measure [{name}] is not semantically valid.')
+    # Visual execution consumes the exact canonical definition produced by the
+    # same v2 parser/binder used by Validate and Save. This closes the historical
+    # editor-valid/visual-fails split while DuckDB remains the storage adapter.
+    exp=strip_assignment(semantic.canonical_source)
 
     def resolve_measure(ref):
         return measure(ref,model,stack+[name],context_filters,False)
 
     if re.search(r'[A-Za-z_][\w ]*\[[^\]]+\]',exp) or re.search(r"'[^']+'\[[^\]]+\]",exp) or re.search(r'\[[^\]]+\]',exp) or re.search(r'(?i)\b(VAR|RETURN|CALCULATE|COUNTROWS|SUMX|AVERAGEX|MINX|MAXX|FILTER|EDATE|DATESBETWEEN)\b',exp):
-        c=compile_dax(exp,model,context_filters or [],resolve_measure)
+        c=compile_for_duckdb(exp,model,context_filters or [],resolve_measure)
         return (c.sql,c.override_fields) if with_meta else c.sql
 
     m=re.fullmatch(r'(SUM|AVG|MIN|MAX|COUNT|DISTINCTCOUNT)\(([^.]+)\.(.+)\)',exp,re.I)
@@ -197,11 +314,11 @@ def required(model,dims,measures,rls,filters=()):
     # or RLS predicate must participate in relationship-path planning.  Previously filter
     # tables were omitted, so a Customers[CustomerName] slicer could be compiled into the
     # WHERE clause while only the Sales table existed in FROM, producing a DuckDB Binder Error.
-    req={d.split('.',1)[0] for d in dims}
+    req={resolve_table_name(model,d.split('.',1)[0]) for d in dims}
     for f in filters or ():
         field=f.get('field') if isinstance(f,dict) else None
         if field and '.' in field:
-            table=field.split('.',1)[0]
+            table=resolve_table_name(model,field.split('.',1)[0])
             if table in model.get('tables',{}):
                 req.add(table)
     # Raw-column measures (e.g. "CHENNAI.Discount") are NOT in model["measures"] but still
@@ -209,14 +326,14 @@ def required(model,dims,measures,rls,filters=()):
     # and DuckDB raises "Binder Error: Referenced table '...' not found".
     for m in measures:
         if '.' in m and m not in model.get('measures',{}):
-            t=m.split('.',1)[0]
+            t=resolve_table_name(model,m.split('.',1)[0])
             if t in model.get('tables',{}):
                 req.add(t)
     names=_measure_dependency_names(model,measures)
     txt=' '.join(model.get('measures',{}).get(n,'') for n in names)
     for t in model['tables']:
         if t+'.' in txt or _expression_references_table(txt,t):req.add(t)
-    for r in rls:req.add(r['table'])
+    for r in rls:req.add(resolve_table_name(model,r['table']))
     return req
 
 _AGG_FUNC_RE = re.compile(r'\b(sum|count|avg|min|max|any_value|median|stddev|variance|first|last|approx_count_distinct)\s*\(', re.IGNORECASE)
@@ -234,8 +351,8 @@ def _ensure_aggregated(msql: str, groups: list) -> str:
     return f'ANY_VALUE({clean})'
 
 def compile_query(model,req,rls=()):
-    dims=list(dict.fromkeys(req.get('dimensions',[]) or []))
-    meas=list(dict.fromkeys(req.get('measures',[]) or []))
+    dims=list(dict.fromkeys(normalize_binding_name(x) for x in (req.get('dimensions',[]) or []) if normalize_binding_name(x)))
+    meas=list(dict.fromkeys(normalize_binding_name(x) for x in (req.get('measures',[]) or []) if normalize_binding_name(x)))
     filters=req.get('filters',[]) or []
     # Older reports and flexible visuals can persist a measure in a dimension
     # well (notably Map Color/Label). Normalize it before relationship planning;
@@ -253,14 +370,37 @@ def compile_query(model,req,rls=()):
     if not model.get('tables'):
         raise ValueError('The semantic model has no tables.')
 
+    # Compile measures before planning FROM/JOIN.  A formula can validate in
+    # isolation yet expand to table references that simple DAX-text heuristics
+    # miss (nested variables, iterators and dependent measures).  Planning from
+    # the compiled SQL closes that gap for every visual type using this endpoint.
+    compiled_measures=[]
+    sql_reference_tables=set();sql_aggregate_tables=set()
+    for m in meas:
+        msql,mover=measure(m,model,context_filters=filters,with_meta=True)
+        compiled_measures.append((m,msql,mover))
+        sql_reference_tables.update(_sql_reference_tables(model,msql))
+        sql_aggregate_tables.update(_sql_aggregate_reference_tables(model,msql))
+    needed.update(sql_reference_tables)
+
     # Prefer the table that owns a measure, then a raw-value column, then a dimension.
     # This keeps fact-table aggregation stable while still allowing slicers/dimensions to
     # join through one or more bridge tables.
     dependency_names=_measure_dependency_names(model,meas)
     measure_text=' '.join(str(model.get('measures',{}).get(m,'') or '') for m in dependency_names)
     preferred=[]
+    # When a measure combines an aggregate from a fact table with a date-table
+    # filter, start from the aggregate owner. Starting from Calendar was able to
+    # emit SUM("Lead CRM"."Revenue") without ever adding Lead CRM to FROM.
+    text_aggregate_tables=_aggregate_reference_tables(model,measure_text)
+    # DAX lineage is more precise for time-intelligence functions because their
+    # compiled SQL also contains MAX(date) context subqueries. Fall back to SQL
+    # lineage only for iterator/variable shapes the text classifier cannot see.
+    aggregate_tables=text_aggregate_tables or sql_aggregate_tables
     for table in model.get('tables',{}):
-        if table in needed and (table+'.' in measure_text or _expression_references_table(measure_text,table)):
+        if table in needed and table in aggregate_tables:preferred.append(table)
+    for table in model.get('tables',{}):
+        if table in needed and table not in preferred and (table+'.' in measure_text or _expression_references_table(measure_text,table)):
             preferred.append(table)
     if not preferred:
         for m in meas:
@@ -281,7 +421,7 @@ def compile_query(model,req,rls=()):
     relationships=[r for r in model.get('relationships',[]) if r.get('active',True) is not False]
     graph={t:[] for t in model.get('tables',{})}
     for idx,r in enumerate(relationships):
-        a,b=r.get('fromTable'),r.get('toTable')
+        a=resolve_table_name(model,r.get('fromTable'));b=resolve_table_name(model,r.get('toTable'))
         if a in graph and b in graph:
             graph[a].append((b,idx));graph[b].append((a,idx))
 
@@ -312,7 +452,7 @@ def compile_query(model,req,rls=()):
             unreachable.add(target);continue
         for prev,nxt,edge_idx in path:
             if nxt in joined:continue
-            r=relationships[edge_idx];a,b=r['fromTable'],r['toTable']
+            r=relationships[edge_idx];a=resolve_table_name(model,r['fromTable']);b=resolve_table_name(model,r['toTable'])
             # Both aliases use their semantic table names, so the relationship
             # expression is direction-independent.
             if nxt not in model['tables']:
@@ -326,9 +466,12 @@ def compile_query(model,req,rls=()):
     # A disconnected filter can be ignored (same behavior as before), but a
     # dimension/measure/RLS table must be reachable or the query would otherwise
     # reference a missing alias and fail with a Binder Error.
-    critical={d.split('.',1)[0] for d in dims if '.' in d}
-    critical.update(required(model,[],meas,rls,[]))
-    critical.update(r.get('table') for r in rls if r.get('table'))
+    critical={resolve_table_name(model,d.split('.',1)[0]) for d in dims if '.' in d}
+    # A filter-only table inside CALCULATE/TOTALMTD is not critical when it is
+    # disconnected: DAX does not propagate that filter to the fact table. Only
+    # aggregate-owner tables must be reachable for a measure-only visual.
+    critical.update(aggregate_tables)
+    critical.update(resolve_table_name(model,r.get('table')) for r in rls if r.get('table'))
     blocked=unreachable & critical
     if blocked:
         raise ValueError('No active relationship path connects the selected visual fields: '+', '.join(sorted(blocked)))
@@ -346,11 +489,11 @@ def compile_query(model,req,rls=()):
                 if d in model.get('measures', {}) and d not in meas:
                     meas.append(d)
                 continue
-        if d.split('.',1)[0] in unreachable:continue
+        if resolve_table_name(model,d.split('.',1)[0]) in unreachable:continue
         x=fld(model,d);sel.append(f'{x} AS {q(d)}');groups.append(x)
-    for m in meas:
-        msql,mover=measure(m,model,context_filters=filters,with_meta=True)
+    for m,msql,mover in compiled_measures:
         override_fields.update(mover)
+        msql=_strip_unreachable_filter_clauses(msql,unreachable)
         msql=_ensure_aggregated(msql, groups)
         sel.append(f'{msql} AS {q(m)}')
     if not sel:
@@ -363,7 +506,7 @@ def compile_query(model,req,rls=()):
     for f in filters:
         f_field=f.get('field','')
         if not f_field or '.' not in f_field:continue
-        t_name = f_field.split('.')[0]
+        t_name = resolve_table_name(model,f_field.split('.')[0])
         if f_field in override_fields or f"{t_name}.*" in override_fields:continue
         if t_name in unreachable:continue
         field_sql=fld(model,f_field)
@@ -401,6 +544,10 @@ def compile_query(model,req,rls=()):
                 }
                 sub_sql, sub_params = compile_query(model, sub_req, rls)
                 alias = f"__topn_{len(wh)}"
+                # Rank aggregated dimension members inside the current filter
+                # context. Null ranking values are excluded. Ties at the Nth
+                # position are resolved by the dimension ascending, retaining
+                # exactly N members without changing the visual's display sort.
                 ranked = (
                     f"SELECT {q(f_field)} FROM ({sub_sql}) {alias} "
                     f"WHERE {q(ranking_field)} IS NOT NULL "
@@ -481,8 +628,50 @@ def compile_query(model,req,rls=()):
         valid_aliases=set(dims+meas)
         safe_sort=[x for x in sort if x.get('field') in valid_aliases]
         if safe_sort:sql+=' ORDER BY '+', '.join(q(x['field'])+' '+('DESC' if x.get('direction')=='desc' else 'ASC') for x in safe_sort)
+    elif meas or dims:
+        fallback_sort=[]
+        if meas:fallback_sort.append(q(meas[0])+' DESC')
+        fallback_sort.extend(q(field)+' ASC' for field in dims)
+        if fallback_sort:sql+=' ORDER BY '+', '.join(fallback_sort)
     sql+=' LIMIT '+str(min(max(int(req.get('limit',200)),1),50000))
+    # Fail at the semantic boundary with an actionable planner error instead of
+    # leaking a generic DuckDB Binder Error as "API 400" to every visual.
+    bound_aliases=set(re.findall(r'(?i)(?:FROM|JOIN)\s+"[^"]+"\s+"([^"]+)"',sql))
+    missing_aliases=_sql_reference_tables(model,sql)-bound_aliases
+    if missing_aliases:
+        raise ValueError('Visual query planning could not bind semantic table(s): '+', '.join(sorted(missing_aliases))+'. Check active model relationships.')
     return sql,params
+
+def semantic_query_health():
+    """Self-test the measure-to-visual planner used by every query endpoint."""
+    model={
+        'tables':{
+            'Calendar':{'physical':'__health_calendar','columns':{'Date':'Date'}},
+            'Sales Fact':{'physical':'__health_sales','columns':{'Date':'Date','Region':'Region','Revenue':'Revenue'}},
+        },
+        'relationships':[{'fromTable':'Calendar','fromColumn':'Date','toTable':'Sales Fact','toColumn':'Date','active':True}],
+        'measures':{
+            'Total Revenue':"SUM('Sales Fact'[Revenue])",
+            'Current Revenue':"TOTALMTD([Total Revenue],Calendar[Date])",
+        },
+    }
+    cases={
+        'card':{'dimensions':[],'measures':['measure:Current Revenue']},
+        'bar':{'dimensions':['Sales Fact.Region'],'measures':['Current Revenue']},
+        'line':{'dimensions':['Calendar.Date::month'],'measures':['Current Revenue']},
+    }
+    disconnected={**model,'relationships':[]}
+    failures=[]
+    for name,request in cases.items():
+        try:
+            sql,_=compile_query(model,request)
+            if '"Sales Fact".' not in sql:raise ValueError('fact table missing from compiled query')
+        except Exception as exc:failures.append({'case':'visual-'+name,'error':str(exc)})
+    try:
+        sql,_=compile_query(disconnected,{'dimensions':[],'measures':['Current Revenue']})
+        if '"Calendar".' in sql:raise ValueError('disconnected date filter leaked into fact query')
+    except Exception as exc:failures.append({'case':'visual-disconnected-filter','error':str(exc)})
+    return {'healthy':not failures,'checks':len(cases)+1,'failures':failures,'plannerVersion':'2026.10.21.2'}
 
 _CACHE=OrderedDict()
 _CACHE_LOCK=threading.Lock()

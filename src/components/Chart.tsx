@@ -3,6 +3,7 @@ import ReactECharts from 'echarts-for-react';
 import type { Visual } from '../types';
 import { formatForField } from '../formatting';
 import {resolveTableFieldValueColor} from '../conditionalFormatting';
+import {stableCategoryColor} from '../categoryColors';
 
 const MapVisual=lazy(()=>import('./AdvancedMapVisual'));
 
@@ -359,6 +360,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
   const valueField = visual.bindings.values?.[0];
   const targetField = visual.bindings.target?.[0];
   const legendField=visual.bindings.legend?.[0];
+  const effectiveAxis = axis || legendField;
   const accent = visual.format.accent || '#118dff';
   const rawFormats=visual.format.fieldFormats||{};
   const globalNumberFormat={displayUnits:visual.format.displayUnits||'auto',decimals:visual.format.displayUnitDecimals??2};
@@ -409,7 +411,39 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
   const premiumPalette=[accent,...['#118dff','#12239e','#e66c37','#6b007b','#e044a7','#744ec2','#d9b300','#d64550','#197278','#1aab40'].filter(color=>color.toLowerCase()!==accent.toLowerCase())];
   const configuredSeriesColor=(field:string|undefined,index:number,fallback?:string)=>field&&visual.format.seriesColors?.[field]||fallback||premiumPalette[index%premiumPalette.length];
   const categoryOverrides=useMemo(()=>(visual.format as any).categoryColors||{},[visual.format]);
-  const categoryColor=(name:any,index:number,raw:any)=>categoryOverrides[String(name)]||(visual.format.conditionalColorsEnabled?valueColor(raw):visual.format.categoricalColors===false?accent:premiumPalette[index%premiumPalette.length]);
+  const categoryColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const palette = premiumPalette;
+
+    // 1. Honor explicit category color overrides saved in visual.format.categoryColors
+    const overrides = (visual.format as any).categoryColors || {};
+    for (const [cat, color] of Object.entries(overrides)) {
+      if (color && typeof color === 'string') {
+        map.set(String(cat), color);
+      }
+    }
+
+    // 2. Assign by category identity, never by query/row order.
+    const catField = axis || legendField || effectiveAxis || '';
+    const distinctCats = Array.from(new Set(
+      rows.map(r => String(r[catField] ?? '')).filter(Boolean)
+    ));
+    for (const cat of distinctCats) {
+      if (!map.has(cat)) {
+        map.set(cat, stableCategoryColor(cat, palette));
+      }
+    }
+    return map;
+  }, [rows, visual.format, axis, legendField, effectiveAxis, premiumPalette]);
+
+  const categoryColor = (name: any, index: number, raw: any) => {
+    const strName = String(name ?? '');
+    if (categoryOverrides[strName]) return categoryOverrides[strName];
+    if (visual.format.conditionalColorsEnabled) return valueColor(raw);
+    if (visual.format.categoricalColors === false) return accent;
+    const mapped = categoryColorMap.get(strName);
+    return mapped || stableCategoryColor(strName, premiumPalette);
+  };
   const onPointClickRef = useRef(onPointClick);
   useEffect(() => { onPointClickRef.current = onPointClick; }, [onPointClick]);
   
@@ -435,13 +469,32 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
   const formatRefreshKey=JSON.stringify(visual.format);
 
 
-  const visualH=visual.h||280;
-  const isCompact=visualH<240;
-  const isTiny=visualH<170;
-  const rawLegendFontSize=Number(visual.format.legendFontSize)||11;
-  const effectiveLegendFontSize=isTiny?Math.min(rawLegendFontSize,9):isCompact?Math.min(rawLegendFontSize,10):rawLegendFontSize;
-  const topLegendSpace=isTiny?24:isCompact?28:Math.max(30,effectiveLegendFontSize+18);
-  const bottomLegendSpace=isTiny?22:isCompact?25:Math.max(26,effectiveLegendFontSize+15);
+  const rawVisualH = visual.h || 280;
+  const visualH = rawVisualH <= 15 ? Math.max(160, rawVisualH * 60) : rawVisualH;
+  const rawVisualW = visual.w || 380;
+  const visualW = rawVisualW <= 15 ? Math.max(220, rawVisualW * 90) : rawVisualW;
+
+  const isCompact = visualH < 240;
+  const isTiny = visualH < 170;
+  const rawLegendFontSize = Number(visual.format.legendFontSize) || 11;
+  const effectiveLegendFontSize = isTiny ? Math.min(rawLegendFontSize, 9) : isCompact ? Math.min(rawLegendFontSize, 10) : rawLegendFontSize;
+
+  const hasDataLabels = Boolean(visual.format.dataLabels);
+  const legendItemHeight = Math.max(18, effectiveLegendFontSize + 8);
+  const legendTopOffset = isTiny ? 2 : isCompact ? 4 : 6;
+  const legendStripExtent = legendTopOffset + legendItemHeight;
+  const headerBuffer = isTiny ? 12 : isCompact ? 18 : 24;
+  const dataLabelHeadroom = hasDataLabels ? (isTiny ? 14 : isCompact ? 20 : 26) : 0;
+  const calculatedTopSpace = legendStripExtent + headerBuffer + dataLabelHeadroom;
+  const maxAllowedTopSpace = Math.max(28, Math.round(visualH * 0.32));
+  const topLegendSpace = Math.min(calculatedTopSpace, maxAllowedTopSpace);
+
+  const legendBottomOffset = isTiny ? 2 : isCompact ? 4 : 6;
+  const legendFooterStrip = legendBottomOffset + legendItemHeight;
+  const footerBuffer = isTiny ? 8 : isCompact ? 14 : 18;
+  const calculatedBottomSpace = legendFooterStrip + footerBuffer + (showXAxisTitle ? (isTiny ? 20 : 26) : 0);
+  const maxAllowedBottomSpace = Math.max(26, Math.round(visualH * 0.35));
+  const bottomLegendSpace = Math.min(calculatedBottomSpace, maxAllowedBottomSpace);
   const legendVisible = visual.format.legendVisible !== false;
   const legendPosition = visual.format.legendPosition === 'top' ? 'top' : 'bottom';
   const legendColor=visual.format.legendColor||axisColor;
@@ -582,7 +635,6 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
 
   // For pie/donut the category field is placed in bindings.legend (not axis).
   // Fall back to legendField so every chart type works regardless of which pane was used.
-  const effectiveAxis = axis || legendField;
   const names = rows.map((row) => row[effectiveAxis || '']);
   const values = rows.map((row) => row[valueField || '']);
   const globalMaxCatW = Math.max(0, ...(names.length ? names : ['']).map(c => String(fmtCategoryLabel(c)).length)) * (axisSize * 0.6);
@@ -944,7 +996,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
       color: premiumPalette,
       tooltip:{...tooltipBase,trigger:'axis'},legend:{...legend,show:comboHasLegend,data:[valueField,second].filter(Boolean)},grid:{containLabel:true,left:comboMargin,right:second&&showYAxisTitle?(isCompact?32:40):24,top:comboTop,bottom:comboBottom},dataZoom:categoryZoom(names),
       xAxis:{show:showXAxis||showXAxisTitle,type:'category',data:names,name:showXAxisTitle?(visual.format.xAxisTitle||effectiveAxis||'Category'):'',nameLocation:'middle',nameGap:comboXNameGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showXAxis,color:axisColor,fontSize:axisSize}},
-      yAxis:[{show:showYAxis||showYAxisTitle,type:'value',name:showYAxisTitle?(visual.format.yAxisTitle||valueField||'Value'):'',nameLocation:'middle',nameGap:comboYGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showYAxis,color:axisColor,fontSize:axisSize,formatter:(x:number)=>fmt(x,valueField),overflow:'truncate',ellipsis:'...',width:valLabelMaxW},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},...(second?[{show:(showYAxis||showYAxisTitle)&&visual.format.comboSecondaryAxisVisible!==false,type:'value',position:'right',name:showYAxisTitle?formatColumnHeader(second):'',nameLocation:'middle',nameGap:comboYGap,nameTextStyle:{...axisTitleStyle,color:secondaryColor},axisLabel:{show:showYAxis,color:secondaryColor,fontSize:axisSize,formatter:(x:number)=>formatForField(x,second,formats),overflow:'truncate',ellipsis:'...',width:valLabelMaxW},splitLine:{show:false}}]:[])],
+      yAxis:[{show:showYAxis||showYAxisTitle,type:'value',boundaryGap:hasDataLabels?[0,'15%']:[0,'4%'],name:showYAxisTitle?(visual.format.yAxisTitle||valueField||'Value'):'',nameLocation:'middle',nameGap:comboYGap,nameTextStyle:axisTitleStyle,axisLabel:{show:showYAxis,color:axisColor,fontSize:axisSize,formatter:(x:number)=>fmt(x,valueField),overflow:'truncate',ellipsis:'...',width:valLabelMaxW},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},...(second?[{show:(showYAxis||showYAxisTitle)&&visual.format.comboSecondaryAxisVisible!==false,type:'value',position:'right',name:showYAxisTitle?formatColumnHeader(second):'',nameLocation:'middle',nameGap:comboYGap,nameTextStyle:{...axisTitleStyle,color:secondaryColor},axisLabel:{show:showYAxis,color:secondaryColor,fontSize:axisSize,formatter:(x:number)=>formatForField(x,second,formats),overflow:'truncate',ellipsis:'...',width:valLabelMaxW},splitLine:{show:false}}]:[])],
       series:[{name:valueField,type:'bar',clip:true,data:values.map(v=>({value:v,itemStyle:{color:visual.format.conditionalColorsEnabled?valueColor(v):primaryColor}})),label:{show:!!visual.format.dataLabels,color:labelColor,fontSize:labelSize,position:visual.format.labelPosition==='outside'?'top':'inside',distance:5,formatter:(p:any)=>Number(p.value)===0?'':fmt(p.value)},labelLayout:{moveOverlap:'shiftY'},barMaxWidth:visual.format.barWidth||34,itemStyle:{color:primaryColor,opacity:chartOpacity,borderRadius:[visual.format.barRadius??0,visual.format.barRadius??0,0,0]},markLine:referenceMarkLine(false)},
        ...(second?[{name:second,type:'line',clip:true,yAxisIndex:1,data:secondData,smooth,lineStyle:{color:secondaryColor,width:lineWidth},itemStyle:{color:secondaryColor},symbol:visual.format.showDataPoints===false?'none':marker,symbolSize:visual.format.dataPointSize||7,label:{show:!!visual.format.dataLabels,color:visual.format.comboSecondaryLabelColor||labelColor,fontSize:labelSize,position:'top',distance:8,formatter:(p:any)=>Number(p.value)===0?'':formatForField(p.value,second,formats)},labelLayout:{moveOverlap:'shiftY'}}]:[])]
     }}/>;
@@ -960,6 +1012,32 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     if(autoLegend==='top')Object.assign(premiumLegend,{top:2,bottom:'auto'});
     else Object.assign(premiumLegend,{bottom:2,top:'auto'});
     const center:any=['50%','50%'];
+
+    const catField = axis || legendField || effectiveAxis || '';
+    const donutData = rows.map((row, i) => {
+      const name = String(row[catField] ?? '');
+      const value = Number(row[valueField || ''] || 0);
+      return { name, value, rawRow: row, originalIndex: i };
+    });
+    if (visual.sort && visual.sort.length > 0) {
+      donutData.sort((a, b) => {
+        for (const s of visual.sort!) {
+          const dir = s.direction === 'desc' ? -1 : 1;
+          if (s.field === valueField) {
+            if (a.value !== b.value) return (a.value - b.value) * dir;
+          } else {
+            const cmp = String(a.rawRow[s.field] ?? '').localeCompare(String(b.rawRow[s.field] ?? ''));
+            if (cmp !== 0) return cmp * dir;
+          }
+        }
+        return 0;
+      });
+    } else {
+      donutData.sort((a, b) => {
+        if (b.value !== a.value) return b.value - a.value;
+        return a.name.localeCompare(b.name);
+      });
+    }
     return (
       <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true}
         style={{ height: '100%' }}
@@ -973,7 +1051,8 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
             trigger: 'item',
             padding:[10,12],
             formatter: (p: any) => {
-              const row=rows[p.dataIndex]||{};
+              const item = donutData[p.dataIndex];
+              const row = item?.rawRow || rows[p.dataIndex] || {};
               const extras=(visual.bindings.tooltips||[]).map((field)=>`${field}: <b>${formatForField(row[field],field,formats)}</b>`).join('<br/>');
               return `<b>${p.name}</b><br/>${p.marker}${fmt(p.value)} &nbsp; <span style="color:#94a3b8">${p.percent}%</span>${extras?'<br/>'+extras:''}`;
             }
@@ -992,7 +1071,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
               center,
               minAngle:2,
               avoidLabelOverlap:true,
-              data: rows.map((row,i) => {const name=row[axis || legendField || ''],value=Number(row[valueField || '']||0);return {name,value,itemStyle:{color:categoryColor(name,i,value)}}}),
+              data: donutData.map((d, i) => ({ name: d.name, value: d.value, itemStyle: { color: categoryColor(d.name, i, d.value) } })),
               itemStyle: { borderColor: '#ffffff', borderWidth: visual.format.pieSliceGap??3,borderRadius:5,shadowBlur:4,shadowColor:'rgba(15,23,42,.08)',opacity:chartOpacity },
               emphasis:{scale:true,scaleSize:8,itemStyle:{shadowBlur:18,shadowColor:'rgba(15,23,42,.22)'}},
               labelLine:{show:!!visual.format.dataLabels,length:13,length2:10,lineStyle:{width:1.4}},
@@ -1012,9 +1091,9 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
                   const fsti=ov.italic?'italic':'normal';
                   return `{name_${p.dataIndex}|${p.name}}\n{value_${p.dataIndex}|${fmt(p.value)} (${p.percent}%)} `;
                 },
-                rich: rows.reduce((acc, r, i) => {
-                   const name = r[effectiveAxis||''];
-                   const ov:any = { color: categoryOverrides[String(name)] };
+                rich: donutData.reduce((acc, d, i) => {
+                   const name = d.name;
+                   const ov:any = categoryOverrides[String(name)] || {};
                   const sz = Math.max(10, ov.size || visual.format.labelFontSize || labelSize);
                   const clr = ov.color || labelColor;
                   const fstw = ov.bold ? 'bold' : 700;
@@ -1286,11 +1365,11 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     const lfBottomSpace=legendVisible&&legendPosition==='bottom'&&showXAxisTitle?(isTiny?46:isCompact?52:58):legendVisible&&legendPosition==='bottom'?bottomLegendSpace:showXAxisTitle?(isTiny?22:isCompact?26:32):(isTiny?6:isCompact?8:12);
 
     const categoryAxis:any={show:horizontal?(showYAxis||showYAxisTitle):(showXAxis||showXAxisTitle),type:'category',data:categories,name:(horizontal?showYAxisTitle:showXAxisTitle)?((horizontal?visual.format.yAxisTitle:visual.format.xAxisTitle)||axis||'Category'):'',nameTextStyle:axisTitleStyle,nameLocation:'middle',nameGap:horizontal?yNameGap:xNameGap,axisLabel:{show:horizontal?showYAxis:showXAxis,color:axisColor,fontSize:axisSize,fontFamily,rotate:horizontal?0:catRotation,formatter:(v:any)=>fmtCategoryLabel(v),overflow:'truncate',width:horizontal?barLabelMaxW:undefined,ellipsis:'...'},axisTick:{show:false,lineStyle:{color:axisColor}},axisLine:{show:horizontal?showYAxis:showXAxis,lineStyle:{color:axisColor}}};
-    const valueAxis:any={show:horizontal?(showXAxis||showXAxisTitle):(showYAxis||showYAxisTitle),type:'value',name:(horizontal?showXAxisTitle:showYAxisTitle)?((horizontal?visual.format.xAxisTitle:visual.format.yAxisTitle)||valueField||'Value'):'',nameTextStyle:axisTitleStyle,nameLocation:'middle',nameGap:horizontal?xNameGap:yNameGap,axisLabel:{show:horizontal?showXAxis:showYAxis,color:axisColor,fontSize:axisSize,fontFamily,formatter:(x:number)=>fmt(x),overflow:'truncate',ellipsis:'...',width:!horizontal?valLabelMaxW:undefined},axisLine:{show:false},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}};
+    const valueAxis:any={show:horizontal?(showXAxis||showXAxisTitle):(showYAxis||showYAxisTitle),type:'value',boundaryGap:(!horizontal&&hasDataLabels)?[0,'15%']:[0,'4%'],name:(horizontal?showXAxisTitle:showYAxisTitle)?((horizontal?visual.format.xAxisTitle:visual.format.yAxisTitle)||valueField||'Value'):'',nameTextStyle:axisTitleStyle,nameLocation:'middle',nameGap:horizontal?xNameGap:yNameGap,axisLabel:{show:horizontal?showXAxis:showYAxis,color:axisColor,fontSize:axisSize,fontFamily,formatter:(x:number)=>fmt(x),overflow:'truncate',ellipsis:'...',width:!horizontal?valLabelMaxW:undefined},axisLine:{show:false},splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}};
     const isLine=visual.type==='line'||visual.type==='area';
     const stacked=(visual.type==='stackedbar'||visual.type==='stackedcolumn')&&seriesNames.length>1;
     return <ChartScrollerWrapper echartsKey={formatRefreshKey} events={chartEvents} categories={categories} horizontal={horizontal} visibleCount={visual.format.visibleCategoryCount||12} option={{
-      animationDuration:650,color:palette,legend:{...legend,show:true,data:seriesNames},
+      animationDuration:650,color:seriesNames.map(name=>categoryColor(name,0,0)),legend:{...legend,show:true,data:seriesNames},
       tooltip:{...tooltipBase,trigger:'axis',formatter:tooltipFormatter},
       grid:{containLabel:true,left:yMargin,right:horizontal?42:24,top:lfTopSpace,bottom:lfBottomSpace},
       toolbox: { show: false },
@@ -1299,9 +1378,9 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
       series:seriesNames.map((sn,si)=>({
         name:sn,type:isLine?'line':'bar',stack:stacked?'total':undefined,smooth,
         data:categories.map(cat=>{const row=rows.find(r=>String(r[axis||''])===cat&&String(r[legendField])===sn);return Number(row?.[valueField||'']||0)}),
-        itemStyle:{color:palette[si%palette.length],opacity:chartOpacity,borderRadius:!isLine?(stacked?(si===seriesNames.length-1?(horizontal?[0,visual.format.barRadius??0,visual.format.barRadius??0,0]:[visual.format.barRadius??0,visual.format.barRadius??0,0,0]):0):[visual.format.barRadius??0,visual.format.barRadius??0,visual.format.barRadius??0,visual.format.barRadius??0]):0},
-        emphasis:{focus:'series',itemStyle:{shadowBlur:10,shadowColor:`${palette[si%palette.length]}55`}},
-        lineStyle:{color:palette[si%palette.length],width:lineWidth},areaStyle:visual.type==='area'?{opacity:.12}:undefined,markLine:si===0?referenceMarkLine(horizontal):undefined,
+        itemStyle:{color:categoryColor(sn,si,0),opacity:chartOpacity,borderRadius:!isLine?(stacked?(si===seriesNames.length-1?(horizontal?[0,visual.format.barRadius??0,visual.format.barRadius??0,0]:[visual.format.barRadius??0,visual.format.barRadius??0,0,0]):0):[visual.format.barRadius??0,visual.format.barRadius??0,visual.format.barRadius??0,visual.format.barRadius??0]):0},
+        emphasis:{focus:'series',itemStyle:{shadowBlur:10,shadowColor:`${categoryColor(sn,si,0)}55`}},
+        lineStyle:{color:categoryColor(sn,si,0),width:lineWidth},areaStyle:visual.type==='area'?{opacity:.12}:undefined,markLine:si===0?referenceMarkLine(horizontal):undefined,
         symbol:marker,symbolSize:visual.format.dataPointSize||7,barMaxWidth:visual.format.barWidth||42,
         label:{show:!!visual.format.dataLabels,color:stacked?'#ffffff':labelColor,fontWeight:700,fontSize:Math.max(10,labelSize),position:stacked?'inside':horizontal?'right':'top',formatter:(p:any)=>Number(p.value)===0?'':fmt(p.value)},labelLayout:{hideOverlap:true},clip:true
       }))
@@ -1312,7 +1391,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     visual.type === 'bar' || visual.type === 'stackedbar';
   const activeValues=visual.bindings.values&&visual.bindings.values.length>0?visual.bindings.values:[valueField||''];
   const multiValue=activeValues.length>1;
-  const hasLegend=multiValue||Boolean(legendField);
+  const hasLegend=multiValue||Boolean(legendField)||visual.format.legendVisible===true;
   const barLabelMaxW=Math.min(130,Math.max(75,Math.round((visual.w||380)*.22)));
   const catRotation=Number(visual.format.xAxisLabelRotation)||0,catRotRad=Math.abs(catRotation)*Math.PI/180;
   const maxCatW=Math.max(0,...names.map(c=>String(fmtCategoryLabel(c)).length))*(axisSize*.6);
@@ -1342,6 +1421,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
   const valueAxis: any = {
     show: horizontal ? (showXAxis || showXAxisTitle) : (showYAxis || showYAxisTitle),
     type: 'value',
+    boundaryGap: (!horizontal && hasDataLabels) ? [0, '15%'] : [0, '4%'],
     name:(horizontal ? showXAxisTitle : showYAxisTitle) ? ((horizontal?visual.format.xAxisTitle:visual.format.yAxisTitle)||valueField||'Value') : '',
     nameTextStyle:axisTitleStyle,
     nameLocation:'middle',nameGap:horizontal?xNameGap:yNameGap,
@@ -1426,12 +1506,16 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     base.legend={...legend,show:legendVisible,data:activeValues.map(vf=>formatColumnHeader(vf))};
     base.grid={...base.grid,top:legendHeaderSpace,bottom:legendFooterSpace};
   }
+  if(hasLegend&&!base.legend){
+    base.legend={...legend,show:legendVisible,data:activeValues.map(vf=>formatColumnHeader(vf, false, (visual.format as any).fieldDisplayNames)),textStyle:{color:legendColor,fontSize:effectiveLegendFontSize,fontFamily}};
+    base.grid={...base.grid,top:legendHeaderSpace,bottom:legendFooterSpace};
+  }
 
   base.series = activeValues.map((vf, si) => {
     const seriesColor = configuredSeriesColor(vf,si,multiValue?palette[si%palette.length]:accent);
     const isBar = chartType === 'bar';
     return {
-      name: multiValue ? formatColumnHeader(vf, false, (visual.format as any).fieldDisplayNames) : ((visual.format as any).fieldDisplayNames?.[vf] || vf),
+      name: formatColumnHeader(vf, false, (visual.format as any).fieldDisplayNames),
       type: chartType,
       clip:true,
       yAxisIndex: multiValue && !horizontal && !stacked ? si : 0,
