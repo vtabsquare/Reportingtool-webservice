@@ -120,7 +120,7 @@ async def secure_authoring_api(request, call_next):
         return await call_next(request)
     enforce=os.environ.get('VTAB_ENFORCE_API_AUTH','0')=='1'
     public=path in ('/api/v1/health','/api/v1/auth/status','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/password-reset/request','/api/v1/auth/password-reset/confirm','/api/v1/auth/register/request','/api/v1/auth/register/confirm')
-    consumer=path.startswith('/api/v1/published') or path.startswith('/api/v1/service/') or path.startswith('/api/v1/map/')
+    consumer=path.startswith('/api/v1/published') or path.startswith('/api/v1/service/') or path.startswith('/api/v1/map/') or path.startswith('/api/v1/public/')
     if enforce and path.startswith('/api/v1/') and not public and not consumer:
         token=(request.headers.get('authorization') or '').replace('Bearer ','',1).strip()
         user=store.session_user(token)
