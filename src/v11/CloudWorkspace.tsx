@@ -980,6 +980,18 @@ export default function CloudWorkspace({ session }: { session: any }) {
                                   <BarChart2 size={15} color="#d97706" /> Open report
                                 </button>
 
+                                <button 
+                                  onClick={() => {
+                                    setMenuReportId(null);
+                                    const embedUrl = `${window.location.origin}/?report=${encodeURIComponent(r.id)}&embed=1`;
+                                    navigator.clipboard.writeText(embedUrl);
+                                    alert(`Embed link copied to clipboard!\n\n${embedUrl}`);
+                                  }}
+                                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: '#242424' }}
+                                >
+                                  <ExternalLink size={15} color="#2563eb" /> Copy embed link
+                                </button>
+
                                 {canManage && !isPersonalReport(r) && (
                                   <button 
                                     onClick={() => { setMenuReportId(null); setSharing(r); }}
