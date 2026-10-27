@@ -1,6 +1,7 @@
 import{useEffect,useState}from'react';
 import SupabaseAuthGate from'./v11/SupabaseAuthGate';
 import CloudWorkspace from'./v11/CloudWorkspace';
+import PublishedViewer from'./v11/PublishedViewer';
 
 /** Lightweight production entry for Reporting Services.
  *
@@ -9,6 +10,9 @@ import CloudWorkspace from'./v11/CloudWorkspace';
  */
 export default function Services(){
  const[session,setSession]=useState<any>(null),[ready,setReady]=useState(false);
+ const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+ const isEmbed = params?.get('embed') === '1' || params?.get('public') === '1';
+ const embedReportId = params?.get('report');
  useEffect(()=>{document.documentElement.dataset.theme='vtab';document.documentElement.dataset.colorMode='light';document.documentElement.style.colorScheme='light';document.documentElement.dataset.density='comfortable'},[]);
  useEffect(()=>{
   let unsubscribe=()=>{};
@@ -24,6 +28,19 @@ export default function Services(){
   return()=>unsubscribe();
  },[]);
  if(!ready)return <div className="loading"><div className="brandMark">V</div><span>Loading workspace…</span></div>;
+ if(isEmbed && embedReportId && !session){
+  return (
+   <div className="pbi-app-shell" style={{width:'100vw',height:'100vh',overflow:'hidden',display:'flex',flexDirection:'column'}}>
+    <PublishedViewer 
+      reportId={embedReportId} 
+      embedded={true} 
+      cloudMode={true} 
+      userRole="Viewer"
+    />
+   </div>
+  );
+ }
+
  if(!session)return <SupabaseAuthGate onSignedIn={setSession}/>;
  return <CloudWorkspace session={session}/>;
 }

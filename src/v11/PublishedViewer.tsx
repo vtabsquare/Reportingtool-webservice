@@ -24,21 +24,26 @@ function parseProjectJson(value:any):any{
 }
 
 async function fetchReportFromSupabase(reportId:string):Promise<any>{
-  const{supabase}=await import('../supabase');
-  if(!supabase)throw new Error('Supabase not configured');
-  
-  const{data,error}=await supabase
-    .from('published_reports')
-    .select('id,name,published_at,updated_at,project_json,workspace_id')
-    .eq('id',reportId)
-    .single();
-  if(error)throw error;
+  try {
+    const{supabase}=await import('../supabase');
+    if(supabase){
+      const sess=(await supabase.auth.getSession()).data?.session;
+      if(sess){
+        const{data,error}=await supabase
+          .from('published_reports')
+          .select('id,name,published_at,updated_at,project_json,workspace_id')
+          .eq('id',reportId)
+          .single();
+        if(!error && data){
+          return{...data,project:parseProjectJson(data.project_json)};
+        }
+      }
+    }
+  } catch(e) {}
 
-  // Supabase RLS is the single source of truth. If this row was returned, the
-  // signed-in owner, direct grantee, workspace member, or service account is
-  // authorized. A second client-side grants check would incorrectly reject
-  // workspace access that is valid under RLS.
-  return{...data,project:parseProjectJson(data.project_json)};
+  // Fallback to backend public endpoint (for embedded visitors without a Supabase session)
+  const res = await api<any>(`/public/reports/${reportId}`);
+  return {...res, project: parseProjectJson(res.project || res.project_json)};
 }
 
 type VisualQueryResult={rows:any[];error?:string;conditionalValues?:Record<string,any>;conditionalError?:string};
@@ -564,8 +569,8 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    {!full && (
    <div className="pbi-report-topbar">
      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-       {(onBack || embedded) && (
-         <button onClick={onBack || (() => { location.href = '/?workspace=1'; })} className="pbi-btn-back" title="Back to workspace">
+       {onBack && (
+         <button onClick={onBack} className="pbi-btn-back" title="Back to workspace">
            <ArrowLeft size={14} /> Back
          </button>
        )}

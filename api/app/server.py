@@ -2948,7 +2948,12 @@ def _published_query_context(report_id:str,authorization:str|None):
     p = item['project'] if item else _get_cloud_project(report_id)
     if not p:raise HTTPException(404,'Published report not found')
     try:
-        token=_service_access_token(authorization)
+        token = ""
+        if authorization and authorization.startswith('Bearer '):
+            token = authorization.split(' ', 1)[1].strip()
+        if not token:
+            p = hydrate_snapshot_sources(p, access_token="", skip_auth_check=True)
+            return p, {'context': {'userId': 'public-viewer', 'applicationRole': 'Viewer'}, 'rules': []}
         resolved=resolve_published_rls(report_id,p,token)
         p = hydrate_snapshot_sources(p, token, skip_auth_check=True)
         return p,resolved
@@ -3094,3 +3099,34 @@ def first_login_setup(req: SetupPasswordReq):
     
     return {"ok": True}
 
+
+
+@app.get('/api/v1/public/reports/{report_id}')
+def public_get_report(report_id: str):
+    item = store.get_published(report_id)
+    if item and item.get('project'):
+        report_meta = (item.get('project') or {}).get('report') or {}
+        return {
+            'id': report_id,
+            'name': item.get('name') or report_meta.get('name') or 'VTAB Report',
+            'project': item.get('project'),
+            'published_at': item.get('published_at') or ''
+        }
+    p = _get_cloud_project(report_id)
+    if not p:
+        raise HTTPException(404, 'Published report not found')
+    report_meta = p.get('report') or {}
+    return {
+        'id': report_id,
+        'name': report_meta.get('name') or 'VTAB Report',
+        'project': p,
+        'published_at': p.get('published_at') or ''
+    }
+
+@app.post('/api/v1/public/reports/{report_id}/query-batch')
+def public_query_batch(report_id: str, req: PublishedBatchQueryReq):
+    return published_query_batch(report_id, req, authorization=None)
+
+@app.post('/api/v1/public/reports/{report_id}/query')
+def public_query(report_id: str, req: QueryReq):
+    return published_query(report_id, req, authorization=None)

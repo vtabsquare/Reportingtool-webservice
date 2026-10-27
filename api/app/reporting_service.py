@@ -305,7 +305,7 @@ def hydrate_snapshot_sources(project: dict[str, Any], access_token: str, expires
     query and rendering layers; avoiding a deep copy per visual is important for
     large published definitions.
     """
-    user = authenticate(access_token)
+    user = authenticate(access_token) if not skip_auth_check and access_token else {}
     report_id = str(((project or {}).get("report") or {}).get("id") or "").strip()
     tables = (((project or {}).get("model") or {}).get("tables") or {})
     storage_paths = tuple(sorted(
@@ -350,7 +350,7 @@ def _hydrate_snapshot_sources_uncached(project: dict[str, Any], access_token: st
     report_id = str((snapshot.get("report") or {}).get("id") or "").strip()
     if not report_id:
         raise ServiceValidationError("Published report id is missing from the snapshot.")
-    client = _anon_client(access_token)
+    client = _anon_client(access_token) if access_token else _anon_client()
     if not skip_auth_check:
         visible = client.table("published_reports").select("id").eq("id", report_id).limit(1).execute()
         if not getattr(visible, "data", None):
@@ -380,9 +380,10 @@ def _hydrate_snapshot_sources_uncached(project: dict[str, Any], access_token: st
         # applying a token to PostgREST does not update every supabase-py
         # sub-client, so the bearer must be attached to Storage as well.
         from storage3._sync.client import SyncStorageClient
+        auth_header = f"Bearer {access_token}" if access_token else f"Bearer {service_role_key or key}"
         sb_storage = SyncStorageClient(
             f"{url}/storage/v1/",
-            {"apiKey": key, "Authorization": f"Bearer {access_token}"},
+            {"apiKey": key, "Authorization": auth_header},
         )
         storage = sb_storage.from_("vtab-reports")
     else:
