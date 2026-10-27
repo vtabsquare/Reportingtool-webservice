@@ -1,0 +1,24 @@
+VTAB REPORTING SERVICES 6.1.10 - COMPLETE SOURCE UPDATE
+
+1. Back up the currently deployed Services project and its environment variables.
+2. Replace the application source with this folder.
+3. Restore your private environment files from the backup. They are intentionally not included here.
+4. Run: npm install
+5. Run: npm run build:web
+6. Deploy the web build and the existing Services API using your normal deployment process.
+7. Republish a report from the latest Desktop build and verify it in Services.
+
+No database migration is required for this update.
+
+Do not rename internal API paths, database columns, or tables containing semantic_model.
+Those are compatibility contracts. The application now displays the product term
+"Unified Data Model" to users while retaining the existing internal contracts.
+
+Recommended verification commands:
+  npm run test:desktop-parity
+  npm run test:visual-formatting
+  npm run test:map
+  node test_services_618_ui_export_contract.cjs
+  node test_services_desktop_617_sync_contract.cjs
+
+See RELEASE_NOTES_6.1.10_SERVICES.md for the included changes.

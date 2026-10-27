@@ -339,7 +339,7 @@ class Store:
         report=json.loads(json.dumps(source['report']));report['id']=uid();report['name']=(report.get('name') or 'Report')+' Copy';project=json.loads(json.dumps(source.get('project'))) if source.get('project') else None
         if project:
             project['id']='current';project['name']=report['name'];project['report']=report
-            if project.get('model'):project['model']['id']=uid();project['model']['name']=report['name']+' Semantic Model'
+            if project.get('model'):project['model']['id']=uid();project['model']['name']=report['name']+' Unified Data Model'
         return self.save_report(report,project)
     def rename_report(self,report_id,name):
         item=self.get_report(report_id)

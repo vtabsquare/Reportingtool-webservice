@@ -171,10 +171,10 @@ export default function PublishToServiceDialog({
             <dl>
               <div><dt>Workspace</dt><dd>{selected?.name}</dd></div>
               <div><dt>Report</dt><dd>{name}</dd></div>
-              <div><dt>Semantic model</dt><dd>{result.semanticModelName || result.semantic_model_name || `${name} Semantic Model`}</dd></div>
+              <div><dt>Unified Data Model</dt><dd>{result.semanticModelName || result.semantic_model_name || `${name} Unified Data Model`}</dd></div>
               <div><dt>Version</dt><dd>{result.version}</dd></div>
             </dl>
-            <p className="servicePublishDescription">The report and its connected semantic model were created or updated together by the service.</p>
+            <p className="servicePublishDescription">The report and its connected Unified Data Model were created or updated together by the service.</p>
             <button className="primary" onClick={() => onOpenReport(result)}><ExternalLink size={16}/>Open in Reporting Service</button>
           </div>
         ) : replaceTarget ? (
@@ -205,8 +205,8 @@ export default function PublishToServiceDialog({
               {selected?.description && <p className="servicePublishDescription">{selected.description}</p>}
               <label>Report name<input value={name} maxLength={160} onChange={event => setName(event.target.value)}/></label>
               <label>What changed? <span>Optional</span><textarea rows={3} value={changeDescription} maxLength={500} onChange={event => setChangeDescription(event.target.value)} placeholder="Describe this version"/></label>
-              {paginatedReportCount>0&&<fieldset className="paginatedPublishChoice"><legend>Publish paginated reports</legend><p>{paginatedReportCount} paginated report{paginatedReportCount===1?' is':'s are'} included in this project.</p><label className={paginatedMode==='together'?'selected':''}><input type="radio" name="paginatedMode" value="together" checked={paginatedMode==='together'} onChange={()=>setPaginatedMode('together')}/><span><b>Publish together</b><small>Keep one package and add a Paginated Reports entry inside the published dashboard.</small></span></label><label className={paginatedMode==='separate'?'selected':''}><input type="radio" name="paginatedMode" value="separate" checked={paginatedMode==='separate'} onChange={()=>setPaginatedMode('separate')}/><span><b>Publish separately</b><small>Publish the dashboard and each paginated report as separate workspace items using the same semantic model.</small></span></label></fieldset>}
-              <div className="servicePublishWarning"><CheckCircle2 size={16}/><span>Publish automatically creates or updates the report and its connected semantic model. No separate model setup is required.</span></div>
+              {paginatedReportCount>0&&<fieldset className="paginatedPublishChoice"><legend>Publish paginated reports</legend><p>{paginatedReportCount} paginated report{paginatedReportCount===1?' is':'s are'} included in this project.</p><label className={paginatedMode==='together'?'selected':''}><input type="radio" name="paginatedMode" value="together" checked={paginatedMode==='together'} onChange={()=>setPaginatedMode('together')}/><span><b>Publish together</b><small>Keep one package and add a Paginated Reports entry inside the published dashboard.</small></span></label><label className={paginatedMode==='separate'?'selected':''}><input type="radio" name="paginatedMode" value="separate" checked={paginatedMode==='separate'} onChange={()=>setPaginatedMode('separate')}/><span><b>Publish separately</b><small>Publish the dashboard and each paginated report as separate workspace items using the same Unified Data Model.</small></span></label></fieldset>}
+              <div className="servicePublishWarning"><CheckCircle2 size={16}/><span>Publish automatically creates or updates the report and its connected Unified Data Model. No separate model setup is required.</span></div>
               {reportsBusy && <div className="servicePublishLoading"><LoaderCircle className="spin" size={16}/>Checking existing reports…</div>}
               {conflict && !reportsBusy && <div className="servicePublishWarning"><Replace size={16}/><span><b>{conflict.name}</b> already exists. Publish will ask before replacing it.</span></div>}
               {reportsError && <div className="servicePublishError"><span>{reportsError}</span><button onClick={() => void loadReports(workspaceId)}>Retry check</button></div>}

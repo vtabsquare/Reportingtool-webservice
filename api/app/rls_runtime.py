@@ -172,7 +172,7 @@ def add_member(semantic_model_id: str, role_id: str, principal_type: str, princi
     definition = model.get("definition") if isinstance(model.get("definition"), dict) else {}
     roles = ((definition.get("security") or {}).get("roles") or [])
     if not any(str(r.get("id")) == role_id for r in roles if isinstance(r, dict)):
-        raise ValueError("The selected RLS role is not part of this semantic model.")
+        raise ValueError("The selected RLS role is not part of this Unified Data Model.")
     sb = _admin_client()
     if principal_type == "group":
         rows = sb.table("security_groups").select("id,name").eq("id", principal).eq("workspace_id", model["workspace_id"]).limit(1).execute().data or []

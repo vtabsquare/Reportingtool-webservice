@@ -129,7 +129,7 @@ def prepare_report_snapshot(project: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(report, dict):
         raise ServiceValidationError("The project does not contain a report definition.")
     if not isinstance(model, dict):
-        raise ServiceValidationError("The project does not contain a semantic model.")
+        raise ServiceValidationError("The project does not contain a Unified Data Model.")
     pages = report.get("pages")
     if not isinstance(pages, list) or not pages:
         raise ServiceValidationError("Add at least one report page before publishing.")
@@ -205,7 +205,7 @@ def prepare_report_snapshot(project: dict[str, Any]) -> dict[str, Any]:
 
 
 def _attach_source_manifest(snapshot: dict[str, Any]) -> None:
-    """Persist non-secret source lineage with the semantic model.
+    """Persist non-secret source lineage with the Unified Data Model.
 
     Desktop projects have evolved through several schema versions, so the
     manifest deliberately reads the known source/query locations without
@@ -509,12 +509,12 @@ def _workspace_access(workspace_id: str, access_token: str, require_manage: bool
     if require_manage and role not in author_roles:
         raise PermissionError("Only Co-Owners, Contributors, Members, and Owners are allowed to manage models in this workspace.")
     if require_semantic_model and role == "Viewer":
-        raise PermissionError("Viewers are restricted to reports and dashboards. Semantic model access is not permitted.")
+        raise PermissionError("Viewers are restricted to reports and dashboards. Unified Data Model access is not permitted.")
     return {"id": workspace_id, "role": role}
 
 
 def list_workspace_semantic_models(workspace_id: str, access_token: str) -> list[dict[str, Any]]:
-    """List first-class semantic model assets visible in a workspace."""
+    """List first-class Unified Data Model assets visible in a workspace."""
     access = _workspace_access(workspace_id, access_token)
     if access.get("role") == "Viewer":
         return []
@@ -563,7 +563,7 @@ def get_semantic_model(semantic_model_id: str, access_token: str) -> dict[str, A
     )
     rows = result.data or []
     if not rows:
-        raise PermissionError("Semantic model was not found or you do not have access.")
+        raise PermissionError("Unified Data Model was not found or you do not have access.")
     model = rows[0]
     workspace_id = str(model.get("workspace_id") or "")
     if workspace_id:
@@ -601,9 +601,9 @@ def update_semantic_model(semantic_model_id: str, payload: dict[str, Any], acces
     if "name" in payload:
         name = str(payload.get("name") or "").strip()
         if not name:
-            raise ServiceValidationError("Semantic model name is required.")
+            raise ServiceValidationError("Unified Data Model name is required.")
         if len(name) > 160:
-            raise ServiceValidationError("Semantic model name must be 160 characters or fewer.")
+            raise ServiceValidationError("Unified Data Model name must be 160 characters or fewer.")
         updates["name"] = name
     if "description" in payload:
         updates["description"] = str(payload.get("description") or "").strip()[:1000]
@@ -706,7 +706,7 @@ def publish_report(payload: dict[str, Any], access_token: str, service_base_url:
         "versionId": str(data.get("version_id") or ""),
         "version": str(data.get("version") or "1.0"),
         "semanticModelId": str(data.get("semantic_model_id") or ""),
-        "semanticModelName": str(data.get("semantic_model_name") or f"{report_name} Semantic Model"),
+        "semanticModelName": str(data.get("semantic_model_name") or f"{report_name} Unified Data Model"),
         "semanticModelVersionId": str(data.get("semantic_model_version_id") or ""),
         "semanticModelVersion": str(data.get("semantic_model_version") or data.get("version") or "1.0"),
         "publishedAt": data.get("published_at"),

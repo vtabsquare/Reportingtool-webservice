@@ -5839,3 +5839,73 @@ html[data-color-mode="dark"] .pageTabContextMenu{border-color:#484c52;background
 .slicerTileButton.active{background:#0ea5e9!important;border-color:#0284c7!important;color:#fff!important;font-weight:600}.slicerTileButton span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .slicerVisual .slicerListItem,.slicerVisual .slicerDropdownTrigger,.slicerVisual .slicerTileButton,.viewerVisual-slicer .slicerListItem,.viewerVisual-slicer .slicerDropdownTrigger,.viewerVisual-slicer .slicerTileButton{font-family:var(--slicer-font,'Segoe UI')!important;font-size:var(--slicer-size,11px)!important;font-weight:var(--slicer-weight,400)!important;font-style:var(--slicer-style,normal)!important;text-align:var(--slicer-align,left)!important}
 .slicerVisual .slicerListItem,.viewerVisual-slicer .slicerListItem{padding-block:var(--slicer-row-padding,8px)!important}
+/* Services 6.1.10: one typography contract for list, dropdown, and tile slicers. */
+.slicerVisual .slicerDropdownTrigger,.viewerVisual-slicer .slicerDropdownTrigger,
+.slicerVisual .slicerListItem,.viewerVisual-slicer .slicerListItem,
+.slicerVisual .slicerTileButton,.viewerVisual-slicer .slicerTileButton{
+  color:var(--slicer-text,#242424)!important;
+  font-family:var(--slicer-font,'Segoe UI')!important;
+  font-size:var(--slicer-size,11px)!important;
+  font-weight:var(--slicer-weight,400)!important;
+  font-style:var(--slicer-style,normal)!important;
+  text-align:var(--slicer-align,left)!important;
+  line-height:1.35!important;
+}
+.slicerVisual .slicerDropdownTrigger,.viewerVisual-slicer .slicerDropdownTrigger{
+  min-height:calc(var(--slicer-size,11px)*1.35 + var(--slicer-row-padding,8px)*2 + 2px)!important;
+  height:auto!important;
+  padding-block:var(--slicer-row-padding,8px)!important;
+}
+.slicerVisual .slicerDropdownTrigger span,.viewerVisual-slicer .slicerDropdownTrigger span,
+.slicerVisual .slicerListItem span,.viewerVisual-slicer .slicerListItem span,
+.slicerVisual .slicerTileButton span,.viewerVisual-slicer .slicerTileButton span{
+  width:100%;min-width:0;text-align:var(--slicer-align,left)!important;
+  white-space:var(--slicer-wrap,nowrap)!important;
+  overflow-wrap:anywhere;
+}
+.slicerVisual .slicerTileButton,.viewerVisual-slicer .slicerTileButton{
+  height:auto!important;
+  min-height:var(--slicer-tile-min-height,30px)!important;
+  justify-content:var(--slicer-justify,flex-start)!important;
+  padding:var(--slicer-row-padding,8px) 8px!important;
+}
+.slicerVisual .slicerTileContainer,.viewerVisual-slicer .slicerTileContainer{
+  align-content:start!important;
+  overflow-y:auto!important;
+}
+.slicerVisual .slicerSearchRow,.viewerVisual-slicer .slicerSearchRow,
+.slicerVisual .slicerSearchRow input,.viewerVisual-slicer .slicerSearchRow input{
+  font-family:var(--slicer-font,'Segoe UI')!important;
+  font-size:var(--slicer-size,11px)!important;
+  font-weight:var(--slicer-weight,400)!important;
+  font-style:var(--slicer-style,normal)!important;
+}
+
+/* UI Issue 2026-10-27: collision-free calendar builder and a visible page-image opacity track. */
+.modalShade:has(.calendarTableModal){display:flex!important;align-items:center!important;justify-content:center!important;padding:16px!important;overflow:hidden!important;box-sizing:border-box!important}
+.modalCard.wide.calendarTableModal{width:min(1480px,calc(100vw - 32px))!important;max-width:1480px!important;height:min(880px,calc(100vh - 32px))!important;max-height:calc(100vh - 32px)!important;padding:14px 18px 12px!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;box-sizing:border-box!important}
+.calendarTableModal .modalHead{flex:0 0 auto!important;margin:0 0 8px!important;padding:0 0 8px!important;border-bottom:1px solid #cbd5e199!important}
+.calendarCompactLayout{flex:1 1 auto!important;min-height:0!important;min-width:0!important;width:100%!important;display:flex!important;flex-direction:column!important;overflow:hidden!important;box-sizing:border-box!important}
+.calendarCompactLayout.selectableCalendarBuilder{min-width:0!important;max-width:100%!important;width:100%!important}
+.calendarTableModal .calendarTopCompactBar{flex:0 0 auto;display:flex;flex-direction:column;gap:8px;padding:8px 10px;border:1px solid #d0dce8;border-radius:8px;background:#f7faff}
+.calendarTableModal .calendarTopHeaderRow,.calendarTableModal .calendarTitleBlock,.calendarTableModal .calendarModeTabs,.calendarTableModal .calendarFilterLeft,.calendarTableModal .calendarFilterRight{display:flex;align-items:center;gap:8px}
+.calendarTableModal .calendarTopHeaderRow{min-width:0;justify-content:space-between;flex-wrap:wrap;row-gap:6px}
+.calendarTableModal .calendarTitleBlock,.calendarTableModal .calendarModeTabs{min-width:0}.calendarTableModal .calendarModeTabs{margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
+.calendarTableModal .calendarModeTabs button{border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;padding:6px 9px;white-space:nowrap}.calendarTableModal .calendarModeTabs button.active{background:#dbeafe;border-color:#60a5fa;color:#1d4ed8;font-weight:700}
+.calendarTableModal .calendarBadge{border-radius:999px;background:#dcfce7;color:#166534;padding:3px 7px;font-size:10px;font-weight:700;white-space:nowrap}
+.calendarTableModal .calendarConfigRow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.calendarTableModal .compactFormField{display:flex;flex-direction:column;gap:3px;min-width:0}.calendarTableModal .compactFormField label{font-size:9px;font-weight:700;text-transform:uppercase;color:#64748b}.calendarTableModal .compactFormField input,.calendarTableModal .compactFormField select{min-height:30px!important;height:30px!important}
+.calendarTableModal .calendarColumnSelector{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden;margin-top:10px!important;border-radius:10px!important}
+.calendarTableModal .calendarFilterRow{flex:0 0 auto;display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center!important;gap:10px!important;padding:7px 9px!important;border-bottom:1px solid #e0e9f2;background:#f8fbff}
+.calendarTableModal .calendarFilterLeft,.calendarTableModal .calendarFilterRight{min-width:0;display:flex;align-items:center;gap:7px}.calendarTableModal .calendarFilterLeft{overflow:hidden}.calendarTableModal .calendarFilterRight{justify-content:flex-end}
+.calendarTableModal .calendarSelectAllCapsule{display:flex;align-items:center;gap:6px;background:#2563eb;color:#fff;border-radius:999px;padding:5px 9px;font-size:11px;font-weight:700;white-space:nowrap;flex:0 0 auto}.calendarTableModal .calendarSelectAllCapsule input{accent-color:#fff}.calendarTableModal .calendarTabDivider{width:1px;height:24px;background:#cbd5e1;flex:0 0 auto}
+.calendarTableModal .calendarGroupTabs{min-width:0;display:flex;flex-wrap:nowrap!important;gap:4px!important;margin:0!important;overflow-x:auto;overflow-y:hidden;padding:2px 1px;scrollbar-width:thin}.calendarTableModal .calendarGroupTabs button{white-space:nowrap;flex:0 0 auto}
+.calendarTableModal .calendarColumnSearch{width:190px;min-width:150px;height:30px!important;flex:0 1 190px;padding:0 6px}.calendarTableModal .calendarColumnSearch input{min-width:0!important;width:100%!important;min-height:28px!important;height:28px!important}.calendarTableModal .calendarSearchClear{border:0;background:transparent}.calendarTableModal .calendarQuickBtn{height:30px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;padding:0 8px;white-space:nowrap;flex:0 0 auto}
+.calendarTableModal .calendarCheckGrid{flex:1 1 auto;min-height:0;overflow:auto;display:grid!important;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))!important;grid-auto-rows:minmax(60px,auto)!important;align-content:start;gap:8px!important;padding:10px!important;max-height:none!important}
+.calendarTableModal .calendarCheck{box-sizing:border-box!important;width:100%;min-width:0;min-height:60px!important;height:auto!important;margin:0!important;padding:9px 10px!important;overflow:hidden;align-items:flex-start!important}.calendarTableModal .calendarCheck>input{flex:0 0 auto;margin:3px 0 0!important}.calendarTableModal .calendarCheckText,.calendarTableModal .calendarCheck>span{display:block;min-width:0;flex:1 1 auto;overflow:hidden}.calendarTableModal .calendarCheck b{display:block!important;line-height:1.25!important;white-space:normal;overflow-wrap:anywhere;margin:0!important}.calendarTableModal .calendarCheck small{display:block!important;line-height:1.25!important;white-space:normal;overflow-wrap:anywhere;margin:4px 0 0!important}
+.calendarTableModal>.dialogActions{flex:0 0 auto!important;margin-top:8px!important;padding-top:8px!important;border-top:1px solid #e2e8f0!important;background:inherit!important}
+@media (max-width:980px){.calendarTableModal .calendarConfigRow{grid-template-columns:1fr!important}.calendarTableModal .calendarFilterRow{grid-template-columns:1fr!important}.calendarTableModal .calendarFilterRight{justify-content:flex-start;flex-wrap:wrap}.calendarTableModal .calendarColumnSearch{width:min(100%,260px);flex:1 1 190px}}
+.propertyList input.pageImageOpacitySlider[type=range],.formatSectionBody input.pageImageOpacitySlider[type=range]{-webkit-appearance:none!important;appearance:none!important;display:block!important;box-sizing:border-box!important;width:100%!important;height:18px!important;min-height:18px!important;margin:4px 0!important;padding:7px 0!important;border:0!important;border-radius:0!important;background:transparent!important;outline:none!important;cursor:pointer}
+.propertyList input.pageImageOpacitySlider[type=range]::-webkit-slider-runnable-track,.formatSectionBody input.pageImageOpacitySlider[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:#b8c4d4;box-shadow:inset 0 0 0 1px rgba(71,85,105,.15)}
+.propertyList input.pageImageOpacitySlider[type=range]::-webkit-slider-thumb,.formatSectionBody input.pageImageOpacitySlider[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;margin-top:-6px;border:2px solid #fff;border-radius:50%;background:#2563eb;box-shadow:0 1px 4px rgba(15,23,42,.35)}
+.propertyList input.pageImageOpacitySlider[type=range]::-moz-range-track,.formatSectionBody input.pageImageOpacitySlider[type=range]::-moz-range-track{height:4px;border:0;border-radius:999px;background:#b8c4d4}.propertyList input.pageImageOpacitySlider[type=range]::-moz-range-progress,.formatSectionBody input.pageImageOpacitySlider[type=range]::-moz-range-progress{height:4px;border-radius:999px;background:#2563eb}.propertyList input.pageImageOpacitySlider[type=range]::-moz-range-thumb,.formatSectionBody input.pageImageOpacitySlider[type=range]::-moz-range-thumb{width:12px;height:12px;border:2px solid #fff;border-radius:50%;background:#2563eb;box-shadow:0 1px 4px rgba(15,23,42,.35)}
+.propertyList input.pageImageOpacitySlider[type=range]:focus-visible,.formatSectionBody input.pageImageOpacitySlider[type=range]:focus-visible{outline:2px solid #93c5fd!important;outline-offset:2px!important}

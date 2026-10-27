@@ -686,7 +686,7 @@ function ModelCanvasInner({
               <button onClick={() => setRelModalOpen(false)}>×</button>
             </div>
             <p style={{ margin: '8px 0 16px', color: '#616161', fontSize: 13 }}>
-              Review the active relationships between tables in this semantic model.
+              Review the active relationships between tables in this Unified Data Model.
             </p>
             <div style={{ maxHeight: 360, overflow: 'auto', border: '1px solid #e1dfdd', borderRadius: 6 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

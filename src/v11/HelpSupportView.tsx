@@ -701,7 +701,7 @@ export default function HelpSupportView({
                   >
                     <option>Reporting Services</option>
                     <option>Data Refresh / Bridge</option>
-                    <option>Semantic Models</option>
+                    <option>Unified Data Models</option>
                     <option>Workspaces & Access</option>
                     <option>PDF / Export</option>
                     <option>General</option>

@@ -973,7 +973,7 @@ def search_users(query: str = '', limit: int = 100) -> list:
 def _semantic_model_manager(sb, semantic_model_id: str, user_id: str) -> dict:
     rows = sb.table('semantic_models').select('id,workspace_id,report_id,name,definition,metadata').eq('id', semantic_model_id).limit(1).execute().data or []
     if not rows:
-        raise ValueError('Semantic model not found.')
+        raise ValueError('Unified Data Model not found.')
     model = rows[0]
     workspace = sb.table('workspaces').select('created_by').eq('id', model['workspace_id']).limit(1).execute().data or []
     is_creator = bool(workspace and str(workspace[0].get('created_by') or '') == str(user_id))
@@ -982,7 +982,7 @@ def _semantic_model_manager(sb, semantic_model_id: str, user_id: str) -> dict:
     member_role = members[0].get('role') if members else None
     allowed_roles = ('Admin', 'Member', 'Contributor', 'Owner', 'Co-Owner')
     if not is_creator and not is_admin and member_role not in allowed_roles:
-        raise PermissionError('You need edit access to manage this semantic model.')
+        raise PermissionError('You need edit access to manage this Unified Data Model.')
     model['role'] = 'Admin' if (is_creator or is_admin) else (member_role or 'Admin')
     return model
 
@@ -1240,7 +1240,7 @@ def _semantic_model_report_id(sb, model: dict, semantic_model_id: str) -> str:
         reports = sb.table('published_reports').select('id').eq('semantic_model_id', semantic_model_id).limit(1).execute().data or []
         report_id = str(reports[0]['id']) if reports else ''
     if not report_id:
-        raise ValueError('This semantic model has no connected report to refresh.')
+        raise ValueError('This Unified Data Model has no connected report to refresh.')
     return report_id
 
 
@@ -1356,7 +1356,7 @@ def semantic_model_refresh_status(semantic_model_id: str, job_id: str, user_id: 
     sb = _admin_client(); _semantic_model_manager(sb, semantic_model_id, user_id)
     jobs = sb.table('scheduled_jobs').select('id,run_requested_at,locked_at,locked_by,last_run,last_run_status,error_message').eq('id', job_id).eq('semantic_model_id', semantic_model_id).limit(1).execute().data or []
     if not jobs:
-        raise ValueError('Refresh job not found for this semantic model.')
+        raise ValueError('Refresh job not found for this Unified Data Model.')
     job = jobs[0]
     run_query = sb.table('refresh_runs').select('*').eq('job_id', job_id).eq('semantic_model_id', semantic_model_id)
     if job.get('run_requested_at'):

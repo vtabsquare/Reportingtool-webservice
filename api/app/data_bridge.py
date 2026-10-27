@@ -199,7 +199,7 @@ def _run_cloud_refresh_async(run_id: str, semantic_model_id: str, report_id: str
             from .notification_service import notify_workspace_members
             report_row = sb.table("published_reports").select("name,workspace_id").eq("id", report_id).limit(1).execute().data or []
             rep = report_row[0] if report_row else {}
-            rep_name = rep.get("name") or "Semantic Model"
+            rep_name = rep.get("name") or "Unified Data Model"
             ws_id = rep.get("workspace_id")
             if not ws_id:
                 m_row = sb.table("semantic_models").select("workspace_id").eq("id", semantic_model_id).limit(1).execute().data or []
@@ -260,7 +260,7 @@ def _run_cloud_refresh_async(run_id: str, semantic_model_id: str, report_id: str
             from .notification_service import notify_workspace_members
             report_row = sb.table("published_reports").select("name,workspace_id").eq("id", report_id).limit(1).execute().data or []
             rep = report_row[0] if report_row else {}
-            rep_name = rep.get("name") or "Semantic Model"
+            rep_name = rep.get("name") or "Unified Data Model"
             ws_id = rep.get("workspace_id")
             if not ws_id:
                 m_row = sb.table("semantic_models").select("workspace_id").eq("id", semantic_model_id).limit(1).execute().data or []

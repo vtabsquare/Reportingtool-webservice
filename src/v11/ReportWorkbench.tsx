@@ -1237,7 +1237,7 @@ function RightPane({visual,updateVisual,removeVisual,duplicate,page,updatePage,r
       <label>Image fit<select value={pageSettings.backgroundImageFit||'cover'} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.backgroundImageFit=e.target.value as any})}>
         <option value="cover">Cover</option><option value="contain">Contain</option><option value="stretch">Stretch</option><option value="center">Center</option>
       </select></label>
-      <label>Image opacity <span>{pageSettings.backgroundImageOpacity??24}%</span><input type="range" min="0" max="100" value={pageSettings.backgroundImageOpacity??24} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.backgroundImageOpacity=+e.target.value})}/></label>
+      <label>Image opacity <span>{pageSettings.backgroundImageOpacity??24}%</span><input className="pageImageOpacitySlider" aria-label="Background image opacity" type="range" min="0" max="100" value={pageSettings.backgroundImageOpacity??24} onChange={e=>updatePage(p=>{pageDefaults(p);p.settings!.backgroundImageOpacity=+e.target.value})}/></label>
       <div className="inlineActions"><button onClick={()=>updatePage(p=>{pageDefaults(p);p.settings!.backgroundImage=undefined})}><Trash2 size={13}/>Remove image</button><button onClick={()=>updatePage(p=>{const fresh=defaultPageSettings();p.settings=fresh})}><RotateCcw size={13}/>Reset page</button></div>
       <div className="formatHint">PNG, JPG, WEBP or GIF up to 8 MB. The image is stored with report metadata for this authoring build.</div>
     </Section>

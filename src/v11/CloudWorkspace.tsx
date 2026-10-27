@@ -1087,7 +1087,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
               <div style={{width:36,height:36,border:'3px solid #e1e1e1',borderTopColor:'#0d6257',borderRadius:'50%',animation:'pbiSpin .7s linear infinite'}}/>
               <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:6,textAlign:'center'}}>
                 <b style={{color:'#242424',fontSize:16,fontWeight:600}}>Loading {loadingWorkspaceName?`"${loadingWorkspaceName}"`:'workspace'} dashboards…</b>
-                <span style={{color:'#616161',fontSize:12}}>Fetching reports, semantic models, and workspace assets</span>
+                <span style={{color:'#616161',fontSize:12}}>Fetching reports, Unified Data Models, and workspace assets</span>
               </div>
             </div>
           )}
@@ -1132,7 +1132,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                 </div>
               </div>
 
-              {/* Semantic Model & Reports Service (Includes unified toolbar & table) */}
+              {/* Unified Data Model & Reports Service (Includes unified toolbar & table) */}
               <SemanticModelService 
                 workspace={activeWorkspace} 
                 reports={activeWorkspace.reports} 

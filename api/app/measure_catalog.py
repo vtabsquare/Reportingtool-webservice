@@ -225,7 +225,7 @@ def generate_measure_catalog(model:dict,limit:int=360):
             nm=f'Completeness_Rate_{base}';raw.append(_candidate(nm,f'{nm} =\nDIVIDE ( COUNT ( {ref} ), COUNTROWS ( {t} ), 0 )','Data Quality',f'Populated-value rate for {_human(c)}.',t,[f'{t}.{c}'],.84,250))
             nm=f'Uniqueness_Rate_{base}';raw.append(_candidate(nm,f'{nm} =\nDIVIDE ( DISTINCTCOUNT ( {ref} ), COUNTROWS ( {t} ), 0 )','Data Quality',f'Unique-value rate for {_human(c)}.',t,[f'{t}.{c}'],.82,260))
 
-    # Deduplicate, sort by business relevance, and validate each formula against the semantic model.
+    # Deduplicate, sort by business relevance, and validate each formula against the Unified Data Model.
     raw.sort(key=lambda x:(x.get('priority',100),-x.get('confidence',0),x['name']))
     out=[]; seen=set(); base_measures=dict(model.get('measures') or {})
     for cand in raw:

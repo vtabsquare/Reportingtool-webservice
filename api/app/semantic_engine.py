@@ -344,7 +344,7 @@ def compile_query(model,req,rls=()):
     dims=normalized_dims
     needed=set(required(model,dims,meas,rls,filters))
     if not model.get('tables'):
-        raise ValueError('The semantic model has no tables.')
+        raise ValueError('The Unified Data Model has no tables.')
 
     # Compile measures before planning FROM/JOIN.  A formula can validate in
     # isolation yet expand to table references that simple DAX-text heuristics

@@ -1,6 +1,9 @@
+import populatedPlaces from './assets/maps/natural-earth-places.json';
+
 export type MapGeographyScope='auto'|'india'|'country'|'world';
 
 export type LocalMapLocation={latitude:number;longitude:number;displayName:string};
+export type LocalMapContext={country?:any;region?:any;postalCode?:any};
 
 const normalize=(value:any)=>String(value??'').trim().toLowerCase().replace(/&/g,'and').replace(/[^a-z0-9]+/g,' ').trim();
 
@@ -35,14 +38,27 @@ const countries:Record<string,[number,number,string]>={
   'egypt':[26.8206,30.8025,'Egypt'],'kenya':[-0.0236,37.9062,'Kenya']
 };
 
-export function resolveLocalMapLocation(query:string):LocalMapLocation|undefined{
+type GazetteerPlace={name?:string;namepar?:string;namealt?:string;adm0name?:string;adm0_a3?:string;adm1name?:string;iso_a2?:string;latitude?:number;longitude?:number;pop_max?:number;coordinates?:number[]};
+const placeAliases=(place:GazetteerPlace)=>[place.name,place.namepar,...String(place.namealt||'').split('|')].map(normalize).filter(Boolean);
+const cityIndex=new Map<string,GazetteerPlace[]>();
+for(const place of populatedPlaces as GazetteerPlace[])for(const alias of placeAliases(place))cityIndex.set(alias,[...(cityIndex.get(alias)||[]),place]);
+const contextMatches=(value:any,...candidates:any[])=>{const wanted=normalize(value);return!!wanted&&candidates.some(candidate=>normalize(candidate)===wanted)};
+
+export function resolveLocalMapLocation(query:string,context:LocalMapContext={}):LocalMapLocation|undefined{
   const parts=String(query||'').split(',').map(normalize).filter(Boolean);
   if(!parts.length)return undefined;
   const first=parts[0];
   const state=indiaStates[first];
-  if(state&&(parts.length===1||parts.slice(1).some(part=>part==='india')))return{latitude:state[0],longitude:state[1],displayName:`${state[2]}, India`};
+  if(state&&(parts.length===1||parts.slice(1).some(part=>part==='india')||contextMatches(context.country,'India','IND','IN')))return{latitude:state[0],longitude:state[1],displayName:`${state[2]}, India`};
   const country=countries[first];
   if(country&&parts.length===1)return{latitude:country[0],longitude:country[1],displayName:country[2]};
+  const candidates=cityIndex.get(first)||[];
+  if(candidates.length){
+    const countryHint=context.country??parts[parts.length-1],regionHint=context.region??(parts.length>2?parts[1]:undefined);
+    const ranked=candidates.map(place=>({place,score:(contextMatches(countryHint,place.adm0name,place.adm0_a3,place.iso_a2)?1000:0)+(contextMatches(regionHint,place.adm1name)?500:0)+Math.log10(Math.max(1,Number(place.pop_max)||1))})).sort((a,b)=>b.score-a.score);
+    const place=ranked[0]?.place,longitude=Number(place?.longitude??place?.coordinates?.[0]),latitude=Number(place?.latitude??place?.coordinates?.[1]);
+    if(place&&Number.isFinite(latitude)&&Number.isFinite(longitude))return{latitude,longitude,displayName:[place.name,place.adm1name,place.adm0name].filter(Boolean).join(', ')};
+  }
   return undefined;
 }
 

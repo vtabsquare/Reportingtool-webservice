@@ -3,7 +3,11 @@ import ReactECharts from 'echarts-for-react';
 import type { Visual } from '../types';
 import { formatForField } from '../formatting';
 import {resolveTableFieldValueColor} from '../conditionalFormatting';
+import {compareFieldValues} from '../sortingEngine';
 import {stableCategoryColor} from '../categoryColors';
+import MatrixVisual from './MatrixVisual';
+
+const legendCategoryKey=(value:unknown)=>value===null||value===undefined||String(value).trim()===''?'(Blank)':String(value);
 
 const MapVisual=lazy(()=>import('./AdvancedMapVisual'));
 
@@ -86,14 +90,14 @@ function buildScatterSeriesData(
   }
   var legendVals: string[] = [];
   for (var li = 0; li < rows.length; li++) {
-    var lv = String(rows[li][legendField] || '');
+    var lv = legendCategoryKey(rows[li][legendField]);
     if (legendVals.indexOf(lv) < 0) legendVals.push(lv);
   }
   return legendVals.map(function(sn, si) {
     return {
       type: 'scatter',
       name: sn,
-      data: rows.filter(function(r) { return String(r[legendField] || '') === sn; }).map(makePoint),
+      data: rows.filter(function(r) { return legendCategoryKey(r[legendField]) === sn; }).map(makePoint),
       symbol: marker,
       symbolSize: showMarkers?dotSizeFn:0,
       itemStyle: { color: palette[si % palette.length], opacity: chartOpacity },
@@ -254,10 +258,10 @@ function matrixConditionalStyle(visual:Visual,field:string,value:any,conditional
   return style;
 }
 
-function PremiumDataTable({rows,formats,visual,matrix=false,conditionalValues={}}:{rows:any[];formats:any;visual:Visual;matrix?:boolean;conditionalValues?:Record<string,any>}){
+function PremiumDataTable({rows,formats,visual,model={},matrix=false,conditionalValues={}}:{rows:any[];formats:any;visual:Visual;model?:any;matrix?:boolean;conditionalValues?:Record<string,any>}){
   const[search,setSearch]=useState('');const[page,setPage]=useState(0);const[sort,setSort]=useState<{field:string,dir:'asc'|'desc'}|null>(null);const pageSize=20;
   const columns=rows.length?Object.keys(rows[0]):[];
-  const filtered=useMemo(()=>{const q=search.trim().toLowerCase();let data=!q?rows:rows.filter(r=>columns.some(c=>String(r[c]??'').toLowerCase().includes(q)));if(sort){data=[...data].sort((a,b)=>{const av=a[sort.field],bv=b[sort.field];const cmp=typeof av==='number'&&typeof bv==='number'?av-bv:String(av??'').localeCompare(String(bv??''));return sort.dir==='asc'?cmp:-cmp})}return data},[rows,search,sort]);
+  const filtered=useMemo(()=>{const q=search.trim().toLowerCase();let data=!q?rows:rows.filter(r=>columns.some(c=>String(r[c]??'').toLowerCase().includes(q)));if(sort){data=[...data].sort((a,b)=>{const cmp=compareFieldValues(sort.field,a[sort.field],b[sort.field],model);return sort.dir==='asc'?cmp:-cmp})}return data},[rows,search,sort,model?.columnTypes,model?.sortingSettings]);
   const pages=Math.max(1,Math.ceil(filtered.length/pageSize));const current=Math.min(page,pages-1);const visible=filtered.slice(current*pageSize,(current+1)*pageSize);
   const numericMax:Record<string,number>={};for(const c of columns){numericMax[c]=Math.max(...filtered.map(r=>typeof r[c]==='number'?Math.abs(r[c]):0),1)}
   const tableStyle=tableCssVariables(visual);
@@ -354,7 +358,7 @@ function PremiumMatrix({rows,visual,formats,conditionalValues={}}:{rows:any[];vi
   </div>;
 }
 
-function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: Visual; rows: any[]; onPointClick?:(field:string,value:any)=>void;conditionalValues?:Record<string,any> }) {
+function Chart({ visual, rows, model={}, onPointClick, conditionalValues={} }: { visual: Visual; rows: any[];model?:any; onPointClick?:(field:string,value:any)=>void;conditionalValues?:Record<string,any> }) {
   if(visual.type==='map')return <Suspense fallback={<div className="visualEmpty">Loading map renderer…</div>}><MapVisual visual={visual} rows={rows} onPointClick={onPointClick}/></Suspense>;
   const axis = visual.bindings.axis?.[visual.drillLevel || 0] || visual.bindings.axis?.slice(-1)[0];
   const valueField = visual.bindings.values?.[0];
@@ -424,9 +428,9 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     }
 
     // 2. Assign by category identity, never by query/row order.
-    const catField = axis || legendField || effectiveAxis || '';
+    const catField = legendField || axis || effectiveAxis || '';
     const distinctCats = Array.from(new Set(
-      rows.map(r => String(r[catField] ?? '')).filter(Boolean)
+      rows.map(r => legendCategoryKey(r[catField]))
     ));
     for (const cat of distinctCats) {
       if (!map.has(cat)) {
@@ -437,7 +441,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
   }, [rows, visual.format, axis, legendField, effectiveAxis, premiumPalette]);
 
   const categoryColor = (name: any, index: number, raw: any) => {
-    const strName = String(name ?? '');
+    const strName = legendCategoryKey(name);
     if (categoryOverrides[strName]) return categoryOverrides[strName];
     if (visual.format.conditionalColorsEnabled) return valueColor(raw);
     if (visual.format.categoricalColors === false) return accent;
@@ -540,7 +544,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     const columns=visual.format.cardLayoutDirection==='horizontal'?(autoFit?`repeat(auto-fit,minmax(130px,1fr))`:`repeat(${Math.max(1,visual.format.cardsPerRow||2)},minmax(0,1fr))`):'1fr';
     const justify={left:'flex-start',center:'center',right:'flex-end'}[visual.format.cardHorizontalAlign||'center'];
     const vertical={top:'flex-start',middle:'center',bottom:'flex-end'}[visual.format.cardVerticalAlign||'middle'];
-    const trans=Math.max(0,Math.min(100,visual.format.cardBackgroundTransparency??0));
+    const trans=visual.format.backgroundEnabled===false?100:Math.max(0,Math.min(100,visual.format.cardBackgroundTransparency??0));
     const imagePosition=visual.format.cardImagePosition||'left';
     const image=visual.format.cardImageEnabled&&visual.format.cardImageUrl?<img className="powerCardImage" src={visual.format.cardImageUrl} alt="" style={{width:visual.format.cardImageSize||44,height:visual.format.cardImageSize||44,objectFit:visual.format.cardImageFit||'contain'}}/>:null;
     return <div className="powerCardGrid" style={{gridTemplateColumns:columns,columnGap:visual.format.cardGapX??10,rowGap:visual.format.cardGapY??10}}>{fields.map(field=>{const category=visual.format.categoryLabelText||(visual.format as any).fieldDisplayNames?.[field]||(field||'Value').replace(/^.*\./,'').replace(/_/g,' ');const referenceValue=targetField?row[targetField]:undefined;const categoryNode=visual.format.categoryLabelVisible!==false?<div className="powerCardCategory" style={{color:visual.format.categoryLabelColor||'#616161',fontSize:visual.format.categoryLabelFontSize||11,fontWeight:visual.format.categoryLabelFontWeight||400}}>{category}</div>:null;const referenceNode=visual.format.referenceLabelsVisible?<div className="powerCardReference" style={{color:visual.format.referenceLabelColor||'#616161',fontSize:visual.format.referenceLabelFontSize||10}}><span>{visual.format.referenceLabelText||'Reference'}</span><b>{targetField?formatForField(referenceValue,targetField,formats):'-'}</b></div>:null;return <div key={field} className={'powerCardItem '+(image?'image-'+imagePosition:'image-none')} style={{background:`color-mix(in srgb, ${visual.format.cardBackground||'#ffffff'} ${100-trans}%, transparent)`,border:visual.format.cardBorderVisible?`${visual.format.cardBorderWidth||1}px solid ${visual.format.cardBorderColor||'#e2e8f0'}`:'none',borderRadius:visual.format.cardCornerRadius??8,padding:visual.format.cardPadding??12,minHeight:visual.format.cardMinHeight||92,alignItems:justify,justifyContent:vertical,textAlign:visual.format.cardHorizontalAlign||'center'}}>{imagePosition==='background'&&image?<div className="powerCardImageBackground">{image}</div>:null}{['left','above'].includes(imagePosition)&&image}{visual.format.referenceLabelPosition==='above'&&referenceNode}{visual.format.categoryLabelPosition==='above'&&categoryNode}{visual.format.calloutVisible!==false&&<div className="advancedCardValue" style={{color:visual.format.labelColor||'#242424',fontFamily,fontSize:visual.format.fontSize||28,fontWeight:visual.format.calloutFontWeight||700,whiteSpace:visual.format.calloutWrap===false?'nowrap':'normal'}}>{formatForField(row[field],field,formats)}</div>}{visual.format.categoryLabelPosition!=='above'&&categoryNode}{visual.format.referenceLabelPosition!=='above'&&referenceNode}{['right','below'].includes(imagePosition)&&image}</div>})}</div>;
@@ -555,7 +559,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     const niceValue=(field:string,value:any)=>{const n=Number(value);if(Number.isFinite(n)&&Number.isInteger(n)&&field.match(/customer|product|order|count|quantity/i))return n.toLocaleString();return formatForField(value,field,formats)};
     const autoFit=visual.format.cardAutoFit!==false,columns=visual.format.cardLayoutDirection==='vertical'?'1fr':autoFit?`repeat(auto-fit,minmax(${visual.format.cardMinWidth||150}px,1fr))`:`repeat(${Math.max(1,visual.format.cardsPerRow||2)},minmax(0,1fr))`;
     const justify={left:'flex-start',center:'center',right:'flex-end'}[visual.format.cardHorizontalAlign||'left'];const align={top:'flex-start',middle:'center',bottom:'flex-end'}[visual.format.cardVerticalAlign||'middle'];
-    const trans=Math.max(0,Math.min(100,visual.format.cardBackgroundTransparency??0));
+    const trans=visual.format.backgroundEnabled===false?100:Math.max(0,Math.min(100,visual.format.cardBackgroundTransparency??0));
     return <div className="multiCardGrid premiumMultiCardGrid" style={{'--multi-grid-columns':columns,columnGap:visual.format.cardGapX??10,rowGap:visual.format.cardGapY??10} as any}>{fields.map((field,i)=>{const local=visual.format.cardStyles?.[field]||{},c=local.accent||tilePalette[i%tilePalette.length],iconPosition=visual.format.cardIconPosition||'left',labelOrder=visual.format.cardTitlePosition==='bottom'?3:1,valueOrder=visual.format.cardValuePosition==='top'?0:visual.format.cardValuePosition==='bottom'?4:2,localBorder=local.borderVisible??visual.format.cardBorderVisible;return <div className={'multiCardItem premiumMultiCardItem icon-'+iconPosition} key={field} style={{'--metric-color':c,'--multi-bg':`color-mix(in srgb, ${local.background||visual.format.cardBackground||'#ffffff'} ${100-trans}%, transparent)`,'--multi-border':localBorder?`${local.borderWidth||visual.format.cardBorderWidth||1}px solid ${local.borderColor||visual.format.cardBorderColor||'#e2e8f0'}`:'none','--multi-radius':`${local.cornerRadius??visual.format.cardCornerRadius??8}px`,'--multi-padding':`${visual.format.cardPadding??12}px`,'--multi-min-height':`${visual.format.cardMinHeight||92}px`,'--multi-label-color':local.labelColor||visual.format.categoryLabelColor||'#616161','--multi-label-size':`${visual.format.categoryLabelFontSize||11}px`,'--multi-label-weight':visual.format.categoryLabelFontWeight||400,'--multi-value-color':local.valueColor||visual.format.labelColor||'#242424','--multi-value-size':`${visual.format.fontSize||28}px`,'--multi-value-weight':visual.format.calloutFontWeight||700,justifyContent:align,textAlign:visual.format.cardHorizontalAlign||'left'} as any}><span className="premiumMultiIcon" style={{background:`${c}14`,color:c,width:visual.format.cardIconSize||34,height:visual.format.cardIconSize||34,fontSize:Math.max(12,(visual.format.cardIconSize||34)*.4),alignSelf:justify}}>{iconFor(field)}</span><div className="premiumMultiContent" style={{alignItems:justify}}>{visual.format.categoryLabelVisible!==false&&<span className="premiumMultiLabel" style={{order:labelOrder}}>{visual.format.categoryLabelText||(visual.format as any).fieldDisplayNames?.[field]||(field||'').replace(/^.*\./,'').replace(/_/g,' ')}</span>}{visual.format.calloutVisible!==false&&<b style={{order:valueOrder,whiteSpace:visual.format.calloutWrap===false?'nowrap':'normal'}}>{niceValue(field,row[field])}</b>}<small style={{order:5}}>Current value</small></div></div>})}</div>;
   }
 
@@ -629,9 +633,9 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     );
   }
 
-  if (visual.type === 'matrix') return <PremiumMatrix rows={rows} visual={visual} formats={formats} conditionalValues={conditionalValues}/>;
+  if (visual.type === 'matrix') return <MatrixVisual rows={rows} visual={visual} formats={formats} model={model} conditionalValues={conditionalValues} onPointClick={onPointClick}/>;
 
-  if (visual.type === 'table') return <PremiumDataTable rows={rows} formats={formats} visual={visual} conditionalValues={conditionalValues}/>;
+  if (visual.type === 'table') return <PremiumDataTable rows={rows} formats={formats} visual={visual} model={model} conditionalValues={conditionalValues}/>;
 
   // For pie/donut the category field is placed in bindings.legend (not axis).
   // Fall back to legendField so every chart type works regardless of which pane was used.
@@ -1019,25 +1023,6 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
       const value = Number(row[valueField || ''] || 0);
       return { name, value, rawRow: row, originalIndex: i };
     });
-    if (visual.sort && visual.sort.length > 0) {
-      donutData.sort((a, b) => {
-        for (const s of visual.sort!) {
-          const dir = s.direction === 'desc' ? -1 : 1;
-          if (s.field === valueField) {
-            if (a.value !== b.value) return (a.value - b.value) * dir;
-          } else {
-            const cmp = String(a.rawRow[s.field] ?? '').localeCompare(String(b.rawRow[s.field] ?? ''));
-            if (cmp !== 0) return cmp * dir;
-          }
-        }
-        return 0;
-      });
-    } else {
-      donutData.sort((a, b) => {
-        if (b.value !== a.value) return b.value - a.value;
-        return a.name.localeCompare(b.name);
-      });
-    }
     return (
       <ReactECharts key={formatRefreshKey} opts={{renderer:'canvas'}} notMerge={true}
         style={{ height: '100%' }}
@@ -1343,18 +1328,26 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
 
 
   if (legendField && ['bar','column','stackedbar','stackedcolumn','line','area'].includes(visual.type)) {
-    const categories=Array.from(new Set(rows.map(r=>String(r[axis||'']))));
-    const seriesNames=Array.from(new Set(rows.map(r=>String(r[legendField]))));
+    const categories=Array.from(new Set(rows.map(r=>legendCategoryKey(r[axis||'']))));
+    const seriesNames=Array.from(new Set(rows.map(r=>legendCategoryKey(r[legendField]))));
     const palette=premiumPalette;
     const horizontal=visual.type==='bar'||visual.type==='stackedbar';
     const barLabelMaxW=Math.min(130,Math.max(75,Math.round((visual.w||380)*.22)));
     const catRotation=Number(visual.format.xAxisLabelRotation)||0,catRotRad=Math.abs(catRotation)*Math.PI/180;
     const maxCatW=Math.max(0,...categories.map(c=>String(fmtCategoryLabel(c)).length))*(axisSize*.6);
     const catLabelH=catRotRad>0?Math.min(60,Math.max(14,Math.sin(catRotRad)*maxCatW)):Math.max(12,axisSize+2);
-    const seriesData = seriesNames.map((sn,si)=>({
-      name:sn,
-      data:categories.map(cat=>{const row=rows.find(r=>String(r[axis||''])===cat&&String(r[legendField])===sn);return Number(row?.[valueField||'']||0)})
-    }));
+    // Group by both axis and legend. Summing duplicate pairs makes the visual
+    // deterministic even when imported/reconstructed query rows are not pre-aggregated.
+    const groupedValues=new Map<string,number>();
+    for(const row of rows){
+      const category=legendCategoryKey(row[axis||'']);
+      const series=legendCategoryKey(row[legendField]);
+      const key=JSON.stringify([category,series]);
+      const numeric=Number(row?.[valueField||'']);
+      groupedValues.set(key,(groupedValues.get(key)||0)+(Number.isFinite(numeric)?numeric:0));
+    }
+    const valueFor=(category:string,series:string)=>groupedValues.get(JSON.stringify([category,series]))||0;
+    const seriesData = seriesNames.map(sn=>({name:sn,data:categories.map(cat=>valueFor(cat,sn))}));
     const allValuesForGap=seriesData.flatMap((s:any)=>s.data);
     const estValLabelW=Math.min(estValLabelWFromNums(allValuesForGap,valueField),valLabelMaxW);
     const maxCatLen=Math.max(0,...categories.map(c=>String(fmtCategoryLabel(c)).length));
@@ -1369,7 +1362,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
     const isLine=visual.type==='line'||visual.type==='area';
     const stacked=(visual.type==='stackedbar'||visual.type==='stackedcolumn')&&seriesNames.length>1;
     return <ChartScrollerWrapper echartsKey={formatRefreshKey} events={chartEvents} categories={categories} horizontal={horizontal} visibleCount={visual.format.visibleCategoryCount||12} option={{
-      animationDuration:650,color:seriesNames.map(name=>categoryColor(name,0,0)),legend:{...legend,show:true,data:seriesNames},
+      animationDuration:650,color:seriesNames.map(name=>categoryColor(name,0,0)),legend:{...legend,show:legendVisible,data:seriesNames},
       tooltip:{...tooltipBase,trigger:'axis',formatter:tooltipFormatter},
       grid:{containLabel:true,left:yMargin,right:horizontal?42:24,top:lfTopSpace,bottom:lfBottomSpace},
       toolbox: { show: false },
@@ -1377,7 +1370,7 @@ function Chart({ visual, rows, onPointClick, conditionalValues={} }: { visual: V
       xAxis:horizontal?valueAxis:categoryAxis,yAxis:horizontal?categoryAxis:valueAxis,
       series:seriesNames.map((sn,si)=>({
         name:sn,type:isLine?'line':'bar',stack:stacked?'total':undefined,smooth,
-        data:categories.map(cat=>{const row=rows.find(r=>String(r[axis||''])===cat&&String(r[legendField])===sn);return Number(row?.[valueField||'']||0)}),
+        data:categories.map(cat=>valueFor(cat,sn)),
         itemStyle:{color:categoryColor(sn,si,0),opacity:chartOpacity,borderRadius:!isLine?(stacked?(si===seriesNames.length-1?(horizontal?[0,visual.format.barRadius??0,visual.format.barRadius??0,0]:[visual.format.barRadius??0,visual.format.barRadius??0,0,0]):0):[visual.format.barRadius??0,visual.format.barRadius??0,visual.format.barRadius??0,visual.format.barRadius??0]):0},
         emphasis:{focus:'series',itemStyle:{shadowBlur:10,shadowColor:`${categoryColor(sn,si,0)}55`}},
         lineStyle:{color:categoryColor(sn,si,0),width:lineWidth},areaStyle:visual.type==='area'?{opacity:.12}:undefined,markLine:si===0?referenceMarkLine(horizontal):undefined,

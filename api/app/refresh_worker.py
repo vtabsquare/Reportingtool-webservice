@@ -117,7 +117,7 @@ def execute_refresh(job: dict[str, Any], client=None) -> dict[str, Any]:
     if str(job.get("source_type") or "") == "semantic_model":
         runtime_connections = client.table("semantic_model_connections").select("id,name,source_type,connection_config,credentials_enc,table_mappings,gateway_id,status").eq("semantic_model_id", semantic_model_id).execute().data or []
         if not runtime_connections:
-            raise ValueError("The semantic model has no configured data sources.")
+            raise ValueError("The Unified Data Model has no configured data sources.")
         mappings = []
         for connection_row in runtime_connections:
             if connection_row.get("status") != "connected":

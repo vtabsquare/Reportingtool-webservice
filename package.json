@@ -1,7 +1,7 @@
 {
   "name": "vtab-reporting-studio-web",
   "private": true,
-  "version": "6.1.9",
+  "version": "6.1.10",
   "description": "VTAB Reporting Services with governed scheduled refresh",
   "author": "VTAB Square",
   "main": "electron/main.cjs",
@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "test:visual-formatting": "node test_visual_formatting_contract.cjs",
     "test:map": "node test_advanced_map_engine.mjs",
+    "test:desktop-parity": "node test_city_partition_runtime.mjs && node test_matrix_visual_runtime.mjs && node test_sorting_engine_runtime.mjs && node test_slicer_text_input_contract.mjs",
     "desktop": "electron .",
     "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-backend.ps1",
     "release": "npm run build:backend && npm run build && electron-builder --win nsis --publish never --config.electronDownload.cache=.electron-cache"

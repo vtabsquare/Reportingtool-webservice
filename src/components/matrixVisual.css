@@ -1,0 +1,19 @@
+.powerMatrix{display:flex;min-width:0;min-height:0;height:100%;flex-direction:column;font-family:var(--mx-font);font-size:var(--mx-size);color:var(--mx-text);background:var(--mx-bg)}
+.powerMatrixToolbar{display:flex;gap:5px;align-items:center;padding:3px 4px;border-bottom:1px solid var(--mx-grid);background:var(--mx-head-bg)}
+.powerMatrixToolbar button{display:flex;align-items:center;gap:3px;border:1px solid #cbd5e1;border-radius:4px;background:#fff;padding:3px 6px;color:#334155;font:inherit;cursor:pointer}
+.powerMatrixScroll{min-height:0;flex:1;overflow:auto;overscroll-behavior:contain}
+.powerMatrix table{border-collapse:separate;border-spacing:0;min-width:100%;table-layout:fixed}
+.powerMatrix th,.powerMatrix td{box-sizing:border-box;min-width:var(--mx-column-width);padding:6px 8px;border-right:var(--mx-grid-width) solid var(--mx-grid);border-bottom:var(--mx-grid-width) solid var(--mx-grid);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+.powerMatrix thead th{position:sticky;top:0;z-index:3;background:var(--mx-head-bg);color:var(--mx-head-text);font-weight:700;text-align:center}
+.powerMatrix .matrixCorner{left:0;z-index:5;text-align:left}
+.powerMatrix .matrixRowHeader{background:var(--mx-bg);text-align:left;font-weight:600;cursor:pointer}
+.powerMatrix.freeze-rows .matrixRowHeader{position:sticky;left:0;z-index:2}
+.powerMatrix tbody tr.alternate td,.powerMatrix tbody tr.alternate .matrixRowHeader{background:var(--mx-alt)}
+.powerMatrix .matrixSubtotal td,.powerMatrix .matrixSubtotal .matrixRowHeader{background:var(--mx-subtotal-bg);font-weight:700}
+.powerMatrix .matrixTotalColumn{font-weight:700;background:var(--mx-subtotal-bg)}
+.powerMatrix tfoot th{position:sticky;bottom:0;z-index:4;background:var(--mx-total-bg);color:var(--mx-total-text);font-weight:800}
+.powerMatrix tfoot th:first-child{left:0;z-index:5;text-align:left}
+.matrixExpand{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-right:3px;padding:0;border:0;background:transparent;color:inherit;vertical-align:middle;cursor:pointer}
+.matrixLeafIndent{display:inline-block;width:19px}
+.matrixSpacer td{padding:0!important;border:0!important;background:transparent!important}
+

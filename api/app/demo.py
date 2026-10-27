@@ -40,7 +40,7 @@ def blank_project(report_name='Untitled Report'):
       'appTheme':'vtab',
       'appAccent':'#2563eb',
       'uiDensity':'comfortable',
-      'model':{'id':model_id,'name':report_name+' Semantic Model','tables':{},'relationships':[],'columnTypes':{},'hierarchies':[],'measures':{}},
+      'model':{'id':model_id,'name':report_name+' Unified Data Model','tables':{},'relationships':[],'columnTypes':{},'hierarchies':[],'measures':{}},
       'transform':{'queries':[]},
       'report':{'id':report_id,'name':report_name,'activePageId':page_id,'filters':[],'pages':[{'id':page_id,'name':'Page 1','visuals':[],'filters':[],'settings':{'background':'#081321','themeId':'vtab-midnight','pageWidth':1280,'pageHeight':720,'pageSizePreset':'16:9','showNavigation':True,'header':{'visible':True,'title':report_name,'subtitle':'Add a subtitle or reporting period','fontSize':28,'titleColor':'#f4f8ff','subtitleColor':'#8fa4bb','alignment':'left','background':'#0b1725'}}}]},
       'security':{'roles':[],'activeRoleId':None}
@@ -48,7 +48,7 @@ def blank_project(report_name='Untitled Report'):
 
 def default_project():
     model={
-      'id':'sales-model','name':'Sales Semantic Model','tables':{
+      'id':'sales-model','name':'Sales Unified Data Model','tables':{
        'Sales':{'physical':'FactSales','x':450,'y':260,'columns':{'Date':'DateKey','Customer Id':'CustomerId','Product Id':'ProductId','Region Id':'RegionId','Quantity':'Quantity','Revenue':'Revenue','Cost':'Cost','Order Id':'OrderId'}},
        'Customer':{'physical':'DimCustomer','x':70,'y':90,'columns':{'Customer Id':'CustomerId','Customer Name':'CustomerName','Region Id':'RegionId','Segment':'Segment'}},
        'Product':{'physical':'DimProduct','x':70,'y':470,'columns':{'Product Id':'ProductId','Product Name':'ProductName','Category':'Category'}},

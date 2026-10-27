@@ -42,8 +42,8 @@ try{
     engine.WORLD_GEOJSON.features.forEach(feature=>walk(feature.geometry.coordinates));
     assert(maximumSegment<20,`Detected an unsafe full-width boundary segment (${maximumSegment}).`);
   });
-  test('latitude and longitude alone establish a viewport without drawing marks',()=>{
-    const data=engine.prepareMapData(base,rows);assert(data.points.length===448,'All valid coordinates should be prepared.');assert(data.hasPointPayload===false,'Coordinates alone must not create marks.');
+  test('latitude and longitude alone create geographic marks',()=>{
+    const data=engine.prepareMapData(base,rows);assert(data.points.length===448,'All valid coordinates should be prepared.');assert(data.hasPointPayload===true,'Published coordinate fields must remain visible without an additional detail field.');
   });
   test('detail enables bubbles and preserves all coordinates',()=>{
     const visual=clone(base);visual.bindings.detail=['City'];const data=engine.prepareMapData(visual,rows);assert(data.hasPointPayload&&data.points.length===448,'Detail did not enable all bubbles.');assert(new Set(data.points.map(point=>point.radius)).size===1,'Unweighted bubbles should use one configured size.');
@@ -95,7 +95,7 @@ try{
   });
   test('all exposed map properties are connected to the renderer',()=>{
     const source=fs.readFileSync('src/components/AdvancedMapVisual.tsx','utf8');
-    ['mapGeographyScope','mapDefaultCountry','mapAutoFit','mapNavigation','mapMarkerOpacity','mapBorderColor','mapBorderWidth','mapFillOpacity','mapMissingColor','mapLabels','mapCountryLabels','mapLabelColor','mapLabelSize','mapAllowOverlap','legendVisible','legendPosition','legendColor','legendFontSize'].forEach(property=>assert(source.includes(property),`${property} is not wired to the map renderer.`));
+    ['mapGeographyScope','mapDefaultCountry','mapDetailLevel','mapAutoFit','mapNavigation','mapMarkerOpacity','mapBorderColor','mapBorderWidth','mapFillOpacity','mapMissingColor','mapLabels','mapCountryLabels','mapLabelColor','mapLabelSize','mapAllowOverlap'].forEach(property=>assert(source.includes(property),`${property} is not wired to the map renderer.`));
     assert(source.includes('setZoom')&&source.includes('zoom,silent:false'),'Zoom buttons are not connected to controlled ECharts zoom.');
     assert(!source.includes("formatter:'{b}'")&&source.includes('const geoLabel='),'Country labels can render the literal {b} token.');
     assert(source.includes('tooltip:tooltipOptions')&&source.includes('const tooltipFormatter'),'Geo tooltip is not explicitly wired.');
@@ -103,7 +103,7 @@ try{
     assert(source.includes('emphasis:{disabled:true'),'Hover highlighting is still enabled.');
     const schema=fs.readFileSync('src/visualFormattingSchema.ts','utf8');
     assert(/select\('mapMode','Map type','bubble',\['bubble','filled'\]\)/.test(schema),'Map type is not limited to Bubble and Filled.');
-    assert(/id:'mapLabels',title:'Labels'/.test(schema)&&/id:'mapLegend',title:'Legend'/.test(schema),'Labels and Legend are not separate formatting cards.');
+    assert(/id:'mapLabels',title:'Labels'/.test(schema)&&! /id:'mapLegend',title:'Legend'/.test(schema),'Map labels must remain while the unused map legend card stays removed.');
     assert(/id:'displayUnits',title:'Display units'/.test(schema),'General display-units formatting is missing.');
     assert(/id:'mapAreas',title:'Color grading'/.test(schema)&&schema.includes("['table','matrix','map'].includes(type)"),'Map still exposes the generic conditional-formatting card.');
     const workspace=fs.readFileSync('src/components/FormattingWorkspace.tsx','utf8');

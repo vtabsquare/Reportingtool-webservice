@@ -8,7 +8,7 @@ const server = fs.readFileSync('api/app/server.py', 'utf8');
 const checks = [
   ['open published slicer wrapper escapes clipping', authority.includes('.viewerVisualWrapper:has(.viewerVisual-slicer.slicerDropdownOpen)')],
   ['open slicer body and contents escape clipping', authority.includes('.viewerVisual-slicer.slicerDropdownOpen .viewerVisualBody') && authority.includes('.viewerVisual-slicer.slicerDropdownOpen .viewerSlicerContents')],
-  ['published wrapper reads slicer style from format', viewer.includes("v.format?.slicerStyle==='dropdown'")],
+  ['published wrapper supports canonical and legacy slicer style', viewer.includes("v.slicerStyle||(v.format as any)?.slicerStyle") && viewer.includes("publishedSlicerStyle==='dropdown'")],
   ['rendered export has direct service fallback', viewer.includes("apiDownload(`/published/${reportId}/export/${fmt}`")],
   ['direct export supports cloud-published reports', server.includes("(item or {}).get('project') or _get_cloud_project(report_id)")],
 ];

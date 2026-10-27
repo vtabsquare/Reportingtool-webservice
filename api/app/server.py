@@ -1177,7 +1177,7 @@ def reporting_service_workspace_reports(workspace_id: str, authorization: str | 
 
 @app.get('/api/v1/service/workspaces/{workspace_id}/semantic-models')
 def reporting_service_workspace_semantic_models(workspace_id: str, authorization: str | None = Header(default=None)):
-    """List semantic models as independent workspace assets."""
+    """List Unified Data Models as independent workspace assets."""
     try:
         return service_list_workspace_semantic_models(workspace_id, _service_access_token(authorization))
     except Exception as error:
@@ -1381,7 +1381,7 @@ def semantic_model_test_notification(semantic_model_id: str, payload: dict | Non
         report_id = str(model.get('report_id') or '')
         body = payload or {}
         mode = str(body.get('mode') or 'success')
-        model_name = str(model.get('name') or 'Semantic Model')
+        model_name = str(model.get('name') or 'Unified Data Model')
 
         if mode == 'failure':
             title = f"Refresh failed: {model_name}"
@@ -1931,7 +1931,7 @@ def service_get_support_config():
         "services": [
             "Reporting Services",
             "Data Refresh / Bridge",
-            "Semantic Models",
+            "Unified Data Models",
             "Workspaces & Access",
             "PDF / Export",
             "General"
@@ -2798,7 +2798,7 @@ def query(req:QueryReq):
 @app.post('/api/v1/query-snapshot')
 def query_snapshot(req:AuthoringSnapshotQueryReq):
     p=req.project or {};rules=[]
-    if not p.get('model'):raise HTTPException(400,'Authoring project snapshot is missing a semantic model.')
+    if not p.get('model'):raise HTTPException(400,'Authoring project snapshot is missing a Unified Data Model.')
     if req.roleId:
         role=next((r for r in p.get('security',{}).get('roles',[]) if r.get('id')==req.roleId),None);rules=role.get('rules',[]) if role else []
     try:

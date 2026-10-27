@@ -1,0 +1,12 @@
+VTAB Services UI Issue Fix — 2026-10-27
+
+Replace only these three files in the Services project:
+
+1. src/styles.css
+2. src/v11/ReportWorkbench.tsx
+3. src/v11/TransformWorkbench.tsx
+
+Then run: npm run build
+
+Scope: Business Calendar dialog parity/spacing/scrolling and the page background image opacity slider track only.
+

@@ -5,7 +5,7 @@ import{useStudio}from'../store';
 
 type PackageType='app'|'complete'|'data';
 const cards=[
- {type:'app' as PackageType,ext:'.vtabapp',title:'Application Definition',contains:'UI + Model + ETL · NO DATA',icon:AppWindow,desc:'Portable report design, pages, visuals, semantic model, measures, relationships, transformations and RLS definitions. Business data is excluded.'},
+ {type:'app' as PackageType,ext:'.vtabapp',title:'Application Definition',contains:'UI + Model + ETL · NO DATA',icon:AppWindow,desc:'Portable report design, pages, visuals, Unified Data Model, measures, relationships, transformations and RLS definitions. Business data is excluded.'},
  {type:'complete' as PackageType,ext:'.vtabpkg',title:'Complete Application',contains:'UI + Model + ETL + DATA',icon:FileArchive,desc:'Complete portable VTAB application including the processed data needed to open and work with the report on another machine.'},
  {type:'data' as PackageType,ext:'.vtabdata',title:'Data Package',contains:'DATA ONLY · NO REPORT UI',icon:Database,desc:'Portable managed tables and schemas only. Use it to reuse prepared data while building a different report experience.'},
 ];

@@ -314,7 +314,7 @@ export default function MeasuresWorkbench(){
       <div style={{marginBottom:'32px'}}>
          <span className="eyebrow" style={{fontSize:'12px',fontWeight:700,color:'#64748b',letterSpacing:'0.05em'}}>VTAB MEASURE CATALOG</span>
          <h2 style={{fontSize:'28px',margin:'6px 0',color:'#0f172a'}}>Semantic Measures</h2>
-         <p style={{color:'#64748b',fontSize:'14px'}}>{names.length} custom measures available in the semantic model.</p>
+         <p style={{color:'#64748b',fontSize:'14px'}}>{names.length} custom measures available in the Unified Data Model.</p>
       </div>
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(300px, 1fr))',gap:'20px'}}>
          <button onClick={newMeasure} style={{background:'#fff',border:'2px dashed #cbd5e1',borderRadius:'12px',padding:'24px',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:'14px',color:'#2563eb',cursor:'pointer',minHeight:'180px',transition:'all 0.2s'}}>
