@@ -28,7 +28,7 @@ export default function Services(){
   return()=>unsubscribe();
  },[]);
  if(!ready)return <div className="loading"><div className="brandMark">V</div><span>Loading workspace…</span></div>;
- if(isEmbed && embedReportId && !session){
+ if(isEmbed && embedReportId){
   return (
    <div className="pbi-app-shell" style={{width:'100vw',height:'100vh',overflow:'hidden',display:'flex',flexDirection:'column'}}>
     <PublishedViewer 

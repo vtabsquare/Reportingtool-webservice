@@ -163,10 +163,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
           void loadWorkspace(initial.id);
         }
       }
-      const target = workspaceTarget();
-      if (target.reportId && !r.some((x: any) => x.id === target.reportId)) {
-        setTargetDenied("This report is not shared with the signed-in account.");
-      }
+      // Let target resolution load report from workspace, RLS, or public access
       void loadRegisteredUsers();
     } catch (e: any) { setErr(e.message || String(e)); } finally { setLoading(false); }
   };
@@ -184,19 +181,40 @@ export default function CloudWorkspace({ session }: { session: any }) {
       if (target.share && canShare) setSharing(report);
       return;
     }
-    if (!supabase) return;
-    supabase.from('published_reports').select('id, name, published_at, project_json')
-      .eq('id', target.reportId).eq('owner_id', session?.user?.id).maybeSingle()
-      .then(({ data }) => {
-        if (!data) { if (!loading) setTargetDenied('This report is not shared with the signed-in account.'); return; }
-        const r: Report = {
-          id: data.id, name: data.name, published_at: data.published_at, role: 'Owner',
-          pages: parseProjectJson(data.project_json)?.report?.pages?.length || 1,
-          project: parseProjectJson(data.project_json)
-        };
-        setTargetDenied(''); setViewing(r);
-        if (target.share) setSharing(r);
-      });
+    const loadTarget = async () => {
+      if (supabase) {
+        try {
+          const { data } = await supabase.from('published_reports').select('id, name, published_at, project_json')
+            .eq('id', target.reportId).maybeSingle();
+          if (data && data.project_json) {
+            const parsed = parseProjectJson(data.project_json);
+            const r: Report = {
+              id: data.id, name: data.name, published_at: data.published_at, role: 'Viewer',
+              pages: parsed?.report?.pages?.length || 1,
+              project: parsed
+            };
+            setTargetDenied(''); setViewing(r);
+            if (target.share) setSharing(r);
+            return;
+          }
+        } catch {}
+      }
+      try {
+        const pub = await api<any>(`/public/reports/${target.reportId}`);
+        if (pub && (pub.project || pub.project_json)) {
+          const parsed = parseProjectJson(pub.project || pub.project_json);
+          const r: Report = {
+            id: pub.id, name: pub.name, published_at: pub.published_at, role: 'Viewer',
+            pages: parsed?.report?.pages?.length || 1,
+            project: parsed
+          };
+          setTargetDenied(''); setViewing(r);
+          return;
+        }
+      } catch {}
+      if (!loading) setTargetDenied('This report is not shared with the signed-in account.');
+    };
+    void loadTarget();
   }, [loading, reports, viewing]);
 
   // Click outside listener for menus
