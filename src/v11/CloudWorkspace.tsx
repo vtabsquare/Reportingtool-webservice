@@ -360,7 +360,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
       if (homeFilter === 'favorites') return favorites.includes(r.id);
       if (homeFilter === 'shared') return r.role === 'Viewer' || r.role === 'Contributor';
       return true;
-    });
+    }).sort((a,b)=>new Date(b.updated_at||b.published_at||0).getTime()-new Date(a.updated_at||a.published_at||0).getTime()||a.name.localeCompare(b.name));
   }, [reports, search, homeFilter, favorites]);
 
   // Workspaces list filtered for Drawer

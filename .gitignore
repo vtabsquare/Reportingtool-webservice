@@ -15,8 +15,8 @@ dist-web/
 
 # Environment files — NEVER commit these
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 desktop.env
 web.env
 
@@ -39,7 +39,12 @@ data/*.duckdb
 __pycache__/
 *.pyc
 *.png
+.pytest_cache/
 
-
+# Local data files
 data/*.parquet
 data/columnar/
+
+# Python virtual environments
+.venv/
+venv/

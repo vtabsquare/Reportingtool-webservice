@@ -15,6 +15,61 @@ class PaginatedReportError(ValueError):
     pass
 
 
+def _row_value(row: dict[str, Any], field: str) -> Any:
+    if field in row:
+        return row[field]
+    leaf = str(field or "").split(".")[-1]
+    if leaf in row:
+        return row[leaf]
+    key = next((name for name in row if name == field or str(name).endswith(f".{leaf}")), None)
+    return row.get(key) if key is not None else None
+
+
+def _format_value(value: Any, format_name: str | None) -> str:
+    if value is None:
+        return ""
+    fmt = str(format_name or "")
+    if not fmt or fmt == "text":
+        return str(value)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = None
+    if fmt == "integer" and number is not None:
+        return f"{number:,.0f}"
+    if (fmt == "number" or fmt.startswith("decimal:")) and number is not None:
+        digits = int(fmt.split(":", 1)[1]) if fmt.startswith("decimal:") else 2
+        return f"{number:,.{digits}f}".rstrip("0").rstrip(".") if fmt == "number" else f"{number:,.{digits}f}"
+    if (fmt == "currency" or fmt.startswith("currency:")) and number is not None:
+        currency = fmt.split(":", 1)[1] if ":" in fmt else "USD"
+        symbols = {"USD": "$", "INR": "₹", "EUR": "€", "GBP": "£"}
+        return f"{symbols.get(currency, currency + ' ')}{number:,.2f}"
+    if (fmt == "percent" or fmt.startswith("percent:")) and number is not None:
+        digits = int(fmt.split(":", 1)[1]) if ":" in fmt else 2
+        return f"{number * 100:,.{digits}f}%"
+    if fmt.startswith("percent-number:") and number is not None:
+        digits = int(fmt.split(":", 1)[1])
+        return f"{number:,.{digits}f}%"
+    if fmt.startswith("date:"):
+        try:
+            parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            style = fmt.split(":", 1)[1]
+            if style == "iso":
+                return parsed.strftime("%Y-%m-%d")
+            if style == "datetime":
+                return parsed.strftime("%x %H:%M")
+            if style == "long":
+                return parsed.strftime("%B %d, %Y")
+            if style == "medium":
+                return parsed.strftime("%b %d, %Y")
+            return parsed.strftime("%x")
+        except (TypeError, ValueError):
+            return str(value)
+    if fmt == "boolean:yesno":
+        return "Yes" if bool(value) else "No"
+    return str(value)
+
+
 def _definition(project: dict[str, Any], definition_id: str) -> dict[str, Any]:
     reports = project.get("paginatedReports") or []
     item = next((report for report in reports if str(report.get("id")) == str(definition_id)), None)
@@ -298,10 +353,10 @@ def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_
             item_y = min(max(y, item_y), y + height - item_height)
             kind = item.get("type") or "text"
             color = colors.HexColor(item.get("color") or "#111827")
-            if item.get("background"):
+            if item.get("background") and item.get("background") != "transparent":
                 pdf.setFillColor(colors.HexColor(item["background"]));pdf.rect(x, item_y, width, item_height, stroke=0, fill=1)
             if kind == "line":
-                pdf.setStrokeColor(color);pdf.setLineWidth(float(item.get("borderWidth") or 1));pdf.setDash([] if item.get("lineStyle") == "solid" else [4, 2] if item.get("lineStyle") == "dashed" else [1, 2]);pdf.line(x, item_y + item_height / 2, x + width, item_y + item_height / 2);pdf.setDash()
+                pdf.setStrokeColor(color);pdf.setLineWidth(float(item.get("lineWidth") or item.get("borderWidth") or 1));pdf.setDash([] if item.get("lineStyle") == "solid" else [4, 2] if item.get("lineStyle") == "dashed" else [1, 2]);pdf.line(x, item_y + item_height / 2, x + width, item_y + item_height / 2);pdf.setDash()
             elif kind == "shape":
                 pdf.setStrokeColor(colors.HexColor(item.get("borderColor") or item.get("color") or "#111827"));pdf.setLineWidth(float(item.get("borderWidth") or 1));pdf.rect(x, item_y, width, max(1, item_height), stroke=1, fill=0)
             elif kind == "image":
@@ -311,7 +366,13 @@ def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_
             elif kind == "text":
                 text = _expression(item.get("dynamicToken") or item.get("value"), definition=definition, parameters=parameter_values, filters=filters, page_number=pdf._pageNumber, total_pages=len(pdf._saved_page_states), record_count=len(rows), first_row=first_row)
                 size = float(item.get("fontSize") or 9);pdf.setFont(pdf_font(item), size);pdf.setFillColor(color)
-                baseline = item_y + max(2, (item_height - size) / 2)
+                vertical = item.get("verticalAlign") or "top"
+                if vertical == "bottom":
+                    baseline = item_y + max(2, float(item.get("padding") or 2))
+                elif vertical == "middle":
+                    baseline = item_y + max(2, (item_height - size) / 2)
+                else:
+                    baseline = item_y + max(2, item_height - size - float(item.get("padding") or 2))
                 align = item.get("align") or "left"
                 if align == "right":pdf.drawRightString(x + width, baseline, text)
                 elif align == "center":pdf.drawCentredString(x + width / 2, baseline, text)
@@ -397,7 +458,7 @@ def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_
 
     data = [[_make_cell(column.get("label") or column.get("field") or "", header_styles[index]) for index, column in enumerate(columns)]]
     for row in rows:
-        data.append([_make_cell(row.get(column.get("field")), body_styles[index]) for index, column in enumerate(columns)])
+        data.append([_make_cell(_format_value(_row_value(row, str(column.get("field") or "")), column.get("format")), body_styles[index]) for index, column in enumerate(columns)])
 
     max_width = max(100.0, page_size[0] - left - right - table_x)
     widths = _compute_column_widths(columns, rows, max_width, scale_factor=scale_factor)

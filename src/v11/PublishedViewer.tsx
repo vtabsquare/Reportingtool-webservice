@@ -41,6 +41,7 @@ async function fetchReportFromSupabase(reportId:string):Promise<any>{
     }
   } catch(e) {}
 
+
   // Fallback to backend public endpoint (for embedded visitors without a Supabase session)
   const res = await api<any>(`/public/reports/${reportId}`);
   return {...res, project: parseProjectJson(res.project || res.project_json)};
@@ -213,7 +214,8 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
  const background=publishedColor(bg,transparency);
  const titleBackgroundOn=f.titleBackgroundEnabled!==false,titleBg=f.titleBackground||'#fff',titleTransparency=titleBackgroundOn?Math.max(0,Math.min(100,f.titleBackgroundTransparency||0)):100,titleBackground=publishedColor(titleBg,titleTransparency);
  const titleRadius=titleBackgroundOn?`${f.cornerRadii?.topLeft??f.cornerRadius??0}px ${f.cornerRadii?.topRight??f.cornerRadius??0}px 0 0`:'0';
-  const shadowOpacity=Math.max(0,Math.min(100,f.shadowOpacity??18)),shadow=f.shadow?`${f.shadowOffsetX??0}px ${f.shadowOffset??8}px ${f.shadowBlur??24}px ${publishedColor(f.shadowColor||'#0f172a',100-shadowOpacity)}`:'none';
+  const shadowOpacity=Math.max(0,Math.min(100,f.shadowOpacity??18)),shadow=f.shadow?`${f.shadowOffsetX??0}px ${f.shadowOffset??8}px ${f.shadowBlur??24}px color-mix(in srgb, ${f.shadowColor||'#0f172a'} ${shadowOpacity}%, transparent)`:'none';
+
   const responsiveSizeClass=f.responsive===false?' visualFixed':(v.w<=260||v.h<=130?' visualCompact':(v.w>=540?' visualWide':' visualStandard'));
   const titleTextStyle:any={fontFamily:f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.titleFontSize||12,color:f.titleColor||(dark?'#fff':'#242424'),fontWeight:f.titleBold===false?400:(f.titleFontWeight||700),fontStyle:f.titleFontStyle||'normal',textDecoration:f.titleUnderline?'underline':'none',whiteSpace:f.titleWrap===false?'nowrap':'normal',textAlign:f.titleAlignment||'left',lineHeight:1.25,paddingBottom:'2px',boxSizing:'border-box'};
   const subtitleTextStyle:any={fontFamily:f.subtitleFontFamily||f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.subtitleFontSize||10,color:f.subtitleColor||'#616161',fontWeight:f.subtitleBold?(f.subtitleFontWeight||700):400,fontStyle:f.subtitleFontStyle||'normal',textDecoration:f.subtitleUnderline?'underline':'none',whiteSpace:f.subtitleWrap===false?'nowrap':'normal',textAlign:f.subtitleAlignment||f.titleAlignment||'left'};
@@ -571,6 +573,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
        {onBack && (
          <button onClick={onBack} className="pbi-btn-back" title="Back to workspace">
+
            <ArrowLeft size={14} /> Back
          </button>
        )}
