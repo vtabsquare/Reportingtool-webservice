@@ -644,7 +644,7 @@ def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
     sb = _admin_client()
 
     ws = sb.table('workspaces') \
-        .select('id, name, created_at, created_by, is_personal') \
+        .select('id, name, created_at, created_by, is_personal, description') \
         .eq('id', workspace_id) \
         .execute()
     if not ws.data:

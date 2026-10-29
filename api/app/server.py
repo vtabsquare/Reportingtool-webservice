@@ -12,6 +12,9 @@ import hmac
 import urllib.request
 import urllib.error
 import urllib.parse
+import io
+import copy
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from collections import defaultdict, deque
@@ -150,7 +153,7 @@ class PublishedSnapshotQueryReq(QueryReq):
 class AuthoringSnapshotQueryReq(QueryReq):
     project:dict
 class PaginatedPdfReq(BaseModel):
-    project:dict|None=None; definitionId:str; filters:list[dict]=[]; parameters:dict={}; roleId:str|None=None
+    project:dict|None=None; definitionId:str; filters:list[dict]=[]; parameters:dict={}; roleId:str|None=None; filename:str|None=None
 class TransformReq(BaseModel):source:str;steps:list[dict];limit:int=200
 class JoinProfileReq(BaseModel):source:str;steps:list[dict];otherTable:str;keys:list[dict]
 class MeasureReq(BaseModel):name:str='';expression:str;project:dict|None=None
@@ -363,6 +366,40 @@ def _enforce_viewer_block(authorization: str | None, report_id: str):
             raise
         except Exception as e:
             print(f"Error in _enforce_viewer_block: {e}", flush=True)
+
+def _enforce_report_ui_permission(authorization: str | None, report_id: str, permission: str):
+    """Enforce the same per-user command policy used by the Services ribbon."""
+    token = _service_access_token(authorization)
+    try:
+        user_id = str(service_authenticate(token).get('id') or '')
+        from .supabase_store import _admin_client
+        sb = _admin_client()
+        report_rows = sb.table('published_reports').select('workspace_id,owner_id').eq('id', report_id).limit(1).execute().data or []
+        if not report_rows:
+            raise HTTPException(404, 'Published report not found')
+        report_row = report_rows[0]
+        if str(report_row.get('owner_id') or '') == user_id:
+            return
+        workspace_id = report_row.get('workspace_id')
+        if not workspace_id:
+            return
+        workspace_rows = sb.table('workspaces').select('description,owner_id,created_by').eq('id', workspace_id).limit(1).execute().data or []
+        if not workspace_rows:
+            return
+        workspace = workspace_rows[0]
+        if str(workspace.get('owner_id') or workspace.get('created_by') or '') == user_id:
+            return
+        try:
+            description = json.loads(workspace.get('description') or '{}')
+        except Exception:
+            description = {}
+        configured = (description.get('member_ui_permissions') or {}).get(user_id) or {}
+        if configured.get('all_commands', True) is False or configured.get(permission, True) is False:
+            raise HTTPException(403, 'This command is disabled for your workspace role.')
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(403, 'Unable to verify this report command permission.') from error
 
 def _workspace_user(authorization:str|None):
     if not (_workspace_auth_required() or _authoring_auth_required()): return {'id':'local','displayName':'Local Author','memberships':[{'role':'Admin'}]}
@@ -1765,13 +1802,18 @@ def _automation_error(error:Exception):
 def service_list_subscriptions(authorization:str|None=Header(default=None)):
     from .automation_service import list_subscriptions
     try:return list_subscriptions(_supabase_user_id_from_token(authorization))
+    except HTTPException:raise
     except Exception as error:_automation_error(error)
 
 
 @app.post('/api/v1/service/subscriptions')
 def service_create_subscription(payload:dict,authorization:str|None=Header(default=None)):
     from .automation_service import save_subscription
-    try:return save_subscription(payload,_supabase_user_id_from_token(authorization))
+    try:
+        report_id=str(payload.get('report_id') or '')
+        if report_id:_enforce_report_ui_permission(authorization,report_id,'can_subscribe')
+        return save_subscription(payload,_supabase_user_id_from_token(authorization))
+    except HTTPException:raise
     except Exception as error:_automation_error(error)
 
 
@@ -1881,7 +1923,11 @@ def service_list_alerts(authorization:str|None=Header(default=None)):
 @app.post('/api/v1/service/alerts')
 def service_create_alert(payload:dict,authorization:str|None=Header(default=None)):
     from .automation_service import save_alert
-    try:return save_alert(payload,_supabase_user_id_from_token(authorization))
+    try:
+        report_id=str(payload.get('report_id') or '')
+        if report_id:_enforce_report_ui_permission(authorization,report_id,'can_alert')
+        return save_alert(payload,_supabase_user_id_from_token(authorization))
+    except HTTPException:raise
     except Exception as error:_automation_error(error)
 
 
@@ -2137,16 +2183,18 @@ def admin_save_settings(payload:dict):
 
 @app.get('/api/v1/published/{report_id}/export/{fmt}')
 def export_published(report_id:str,fmt:str,authorization:str|None=Header(default=None)):
+    _enforce_report_ui_permission(authorization, report_id, 'can_pdf' if fmt.lower()=='pdf' else 'can_ppt')
     _enforce_viewer_block(authorization, report_id)
     item=store.get_published(report_id)
     project=(item or {}).get('project') or _get_cloud_project(report_id)
     if not project:raise HTTPException(404,'Published report not found')
     report_name=(item or {}).get('name') or (project.get('report') or {}).get('name') or project.get('name') or 'VTAB Report'
-    safe=''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in report_name) or 'VTAB_Report'
+    safe=''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in report_name).strip('_') or 'VTAB_Report'
+    stamp=datetime.now().astimezone().strftime('%Y-%m-%d_%H-%M-%S')
     if fmt.lower()=='pdf':
-        data=report_pdf(project);return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{safe}.pdf"'})
+        data=report_pdf(project);return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{safe}_{stamp}.pdf"'})
     if fmt.lower() in ('ppt','pptx'):
-        data=report_pptx(project);return Response(data,media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation',headers={'Content-Disposition':f'attachment; filename="{safe}.pptx"'})
+        data=report_pptx(project);return Response(data,media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation',headers={'Content-Disposition':f'attachment; filename="{safe}_{stamp}.pptx"'})
     raise HTTPException(400,'Supported export formats are PDF and PPTX.')
 
 
@@ -2154,6 +2202,7 @@ def export_published(report_id:str,fmt:str,authorization:str|None=Header(default
 def export_published_rendered(report_id:str,fmt:str,payload:dict,authorization:str|None=Header(default=None)):
     """Export the browser-rendered dashboard so every report page and chart is retained."""
     if not (isinstance(payload, dict) and payload.get("isPaginated")):
+        _enforce_report_ui_permission(authorization, report_id, 'can_pdf' if fmt.lower()=='pdf' else 'can_ppt')
         _enforce_viewer_block(authorization, report_id)
     item=store.get_published(report_id)
     project=(item or {}).get('project') or _get_cloud_project(report_id) or (payload.get('project') if isinstance(payload,dict) else None)
@@ -2171,13 +2220,17 @@ def export_published_rendered(report_id:str,fmt:str,payload:dict,authorization:s
             raise HTTPException(400,'Rendered report pages must use valid base64 images (PNG, JPEG, WebP).')
         total_size+=len(image)
     if total_size>100*1024*1024:raise HTTPException(413,'The rendered report export is larger than 100 MB.')
+    requested_filename=payload.get('filename') if isinstance(payload,dict) and payload.get('filename') else None
     report_name=(item or {}).get('name') or (project.get('report') or {}).get('name') or project.get('name') or 'VTAB Report'
-    safe=''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in report_name) or 'VTAB_Report'
+    safe=''.join(ch if ch.isalnum() or ch in '-_' else '_' for ch in report_name).strip('_') or 'VTAB_Report'
+    stamp=datetime.now().astimezone().strftime('%Y-%m-%d_%H-%M-%S')
+    ext='pdf' if fmt.lower()=='pdf' else 'pptx'
+    out_filename=requested_filename or f"{safe}_{stamp}.{ext}"
     try:
         if fmt.lower()=='pdf':
-            data=report_pdf(project,pages);return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{safe}.pdf"'})
+            data=report_pdf(project,pages);return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{out_filename}"'})
         if fmt.lower() in ('ppt','pptx'):
-            data=report_pptx(project,pages);return Response(data,media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation',headers={'Content-Disposition':f'attachment; filename="{safe}.pptx"'})
+            data=report_pptx(project,pages);return Response(data,media_type='application/vnd.openxmlformats-officedocument.presentationml.presentation',headers={'Content-Disposition':f'attachment; filename="{out_filename}"'})
     except ValueError as error:raise HTTPException(400,str(error))
     except RuntimeError as error:raise HTTPException(503,str(error))
     raise HTTPException(400,'Supported export formats are PDF and PPTX.')
@@ -2185,6 +2238,7 @@ def export_published_rendered(report_id:str,fmt:str,payload:dict,authorization:s
 
 @app.post('/api/v1/published/{report_id}/paginated/pdf')
 def export_published_paginated(report_id:str,payload:PaginatedPdfReq,authorization:str|None=Header(default=None)):
+    _enforce_report_ui_permission(authorization, report_id, 'can_pdf')
     _enforce_viewer_block(authorization, report_id)
     from .rls_runtime import resolve_published_rls
     item=store.get_published(report_id)
@@ -2194,7 +2248,7 @@ def export_published_paginated(report_id:str,payload:PaginatedPdfReq,authorizati
         token=_service_access_token(authorization)
         resolved=resolve_published_rls(report_id,p,token)
         p = hydrate_snapshot_sources(p, token, skip_auth_check=True)
-        data,filename,_count=render_paginated_pdf(p,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'])
+        data,filename,_count=render_paginated_pdf(p,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'],requested_filename=payload.filename)
         return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{filename}"'})
     except PaginatedReportError as error:raise HTTPException(400,str(error))
 
@@ -2208,7 +2262,7 @@ def export_published_paginated_snapshot(payload:PaginatedPdfReq,authorization:st
         report_id=str((payload.project.get('report') or {}).get('id') or payload.project.get('id') or '')
         resolved=resolve_published_rls(report_id,payload.project,token)
         hydrated=hydrate_snapshot_sources(payload.project,token,skip_auth_check=True)
-        data,filename,_count=render_paginated_pdf(hydrated,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'])
+        data,filename,_count=render_paginated_pdf(hydrated,payload.definitionId,filter_context=payload.filters,parameters=payload.parameters,rls_rules=resolved['rules'],requested_filename=payload.filename)
         return Response(data,media_type='application/pdf',headers={'Content-Disposition':f'attachment; filename="{filename}"'})
     except PermissionError as error:raise HTTPException(403,str(error))
     except (PaginatedReportError,ServiceValidationError) as error:raise HTTPException(400,str(error))
@@ -2216,6 +2270,7 @@ def export_published_paginated_snapshot(payload:PaginatedPdfReq,authorization:st
 
 @app.post('/api/v1/published/{report_id}/share-email')
 def share_published_email(report_id:str,payload:dict,authorization:str|None=Header(default=None)):
+    _enforce_report_ui_permission(authorization, report_id, 'can_share')
     _workspace_user(authorization);item=store.get_published(report_id)
     p = item['project'] if item else _get_cloud_project(report_id)
     if not p:raise HTTPException(404,'Published report not found')
@@ -2227,13 +2282,53 @@ def share_published_email(report_id:str,payload:dict,authorization:str|None=Head
     cfg=store.get_setting('workspace_email',{}) or {};base=(cfg.get('workspaceBaseUrl') or '').rstrip('/')
     report_url=(base+f'/?viewer={report_id}') if base else payload.get('reportUrl')
     attachment=None;attachment_name=None;attachment_type=None;fmt=(payload.get('attach') or '').lower()
-    if fmt=='pdf':attachment=report_pdf(p);attachment_name=(report_name+'.pdf');attachment_type='pdf'
-    elif fmt in ('ppt','pptx'):attachment=report_pptx(p);attachment_name=(report_name+'.pptx');attachment_type='pptx'
+    if fmt=='pdf':
+        _enforce_report_ui_permission(authorization, report_id, 'can_pdf')
+        attachment=report_pdf(p);attachment_name=(report_name+'.pdf');attachment_type='pdf'
+    elif fmt in ('ppt','pptx'):
+        _enforce_report_ui_permission(authorization, report_id, 'can_ppt')
+        attachment=report_pptx(p);attachment_name=(report_name+'.pptx');attachment_type='pptx'
     smtp={'host':cfg.get('smtpHost'),'port':cfg.get('smtpPort'),'username':cfg.get('smtpUsername'),'password':cfg.get('smtpPassword'),'fromEmail':cfg.get('smtpFrom'),'ssl':cfg.get('smtpSsl',False),'startTls':cfg.get('smtpStartTls',True)}
     try:
         result=send_report_email(smtp_cfg=smtp,to=recipients,subject=payload.get('subject') or ('VTAB Report: '+report_name),body=payload.get('message') or 'A VTAB Workspace report has been shared with you.',report_url=report_url,attachment_name=attachment_name,attachment=attachment,attachment_type=attachment_type)
         store.log('report.share.email',{'id':report_id,'to':recipients,'attach':fmt});return result
     except Exception as e:raise HTTPException(400,str(e))
+
+@app.get('/api/v1/published/{report_id}/download-vtrx')
+def download_published_vtrx(report_id:str,authorization:str|None=Header(default=None)):
+    """Download an editable, checksum-validated native VTAB project."""
+    _enforce_report_ui_permission(authorization, report_id, 'can_download')
+    _enforce_viewer_block(authorization, report_id)
+    token=_service_access_token(authorization)
+    item=store.get_published(report_id)
+    project_snapshot=(item or {}).get('project') or _get_cloud_project(report_id)
+    if not project_snapshot:raise HTTPException(404,'Published report not found')
+    try:
+        hydrated=hydrate_snapshot_sources(project_snapshot,token,skip_auth_check=True)
+        portable=copy.deepcopy(project_snapshot)
+        files=[];payloads=[]
+        project_bytes=json.dumps(portable,ensure_ascii=False,indent=2).encode('utf-8')
+        files.append({'path':'application/project.json','sha256':hashlib.sha256(project_bytes).hexdigest(),'bytes':len(project_bytes)})
+        payloads.append(('application/project.json',project_bytes))
+        tables=[]
+        for semantic_name,table in ((hydrated.get('model') or {}).get('tables') or {}).items():
+            if not isinstance(table,dict):continue
+            physical=str(table.get('physical') or semantic_name)
+            source_path=Path(str(table.get('sourceUrl') or ''))
+            if not source_path.is_file():continue
+            arc=f'data/{physical}.parquet';raw=source_path.read_bytes()
+            payloads.append((arc,raw));files.append({'path':arc,'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)})
+            tables.append({'name':physical,'kind':'managed','rows':table.get('rows'),'bytes':len(raw),'file':arc})
+        manifest={'schema':'vtab-portable-package','packageVersion':'1.0','productVersion':PRODUCT_VERSION,'format':'.vtrx','kind':'native-project','createdAtEpoch':int(time.time()),'project':{'id':portable.get('id'),'name':portable.get('name'),'reportName':(portable.get('report') or {}).get('name')},'tables':tables,'files':files,'security':{'credentialsIncluded':False,'checksums':'SHA-256','pathTraversalProtection':True}}
+        stream=io.BytesIO()
+        with zipfile.ZipFile(stream,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
+            archive.writestr('manifest.json',json.dumps(manifest,ensure_ascii=False,indent=2).encode('utf-8'))
+            for name,raw in payloads:archive.writestr(name,raw)
+        report_name=(portable.get('report') or {}).get('name') or portable.get('name') or 'VTAB_Report'
+        safe=''.join(char if char.isalnum() or char in '-_' else '_' for char in report_name) or 'VTAB_Report'
+        return Response(stream.getvalue(),media_type='application/vnd.vtab.vtrx',headers={'Content-Disposition':f'attachment; filename="{safe}.vtrx"'})
+    except HTTPException:raise
+    except Exception as error:raise HTTPException(502,f'Could not create the VTRX download: {error}')
 
 @app.get('/api/v1/packages/formats')
 def package_formats():

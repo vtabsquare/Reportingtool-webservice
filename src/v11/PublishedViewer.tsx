@@ -10,7 +10,9 @@ import{resolveActionButtonLabel,resolveActionCommands,visualIsHidden}from'../but
 import{resolveConditionalFormat}from'../conditionalFormatting';
 import{sortVisualRows}from'../sortingEngine';
 import type{Visual,VisualFilter}from'../types';
-import html2canvas from'html2canvas';
+import html2canvas from'html2canvas-pro';
+import{DEFAULT_REPORT_UI_PERMISSIONS,type ReportUiPermissions}from'../uiPermissions';
+import'../reportUiPermissions.css';
 
 // In WORKSPACE_ONLY (web portal) mode, report metadata comes from Supabase and
 // visual queries go to the deployed Reporting Service API. The API downloads
@@ -24,27 +26,21 @@ function parseProjectJson(value:any):any{
 }
 
 async function fetchReportFromSupabase(reportId:string):Promise<any>{
-  try {
-    const{supabase}=await import('../supabase');
-    if(supabase){
-      const sess=(await supabase.auth.getSession()).data?.session;
-      if(sess){
-        const{data,error}=await supabase
-          .from('published_reports')
-          .select('id,name,published_at,updated_at,project_json,workspace_id')
-          .eq('id',reportId)
-          .single();
-        if(!error && data){
-          return{...data,project:parseProjectJson(data.project_json)};
-        }
-      }
-    }
-  } catch(e) {}
+  const{supabase}=await import('../supabase');
+  if(!supabase)throw new Error('Supabase not configured');
+  
+  const{data,error}=await supabase
+    .from('published_reports')
+    .select('id,name,published_at,updated_at,project_json,workspace_id')
+    .eq('id',reportId)
+    .single();
+  if(error)throw error;
 
-
-  // Fallback to backend public endpoint (for embedded visitors without a Supabase session)
-  const res = await api<any>(`/public/reports/${reportId}`);
-  return {...res, project: parseProjectJson(res.project || res.project_json)};
+  // Supabase RLS is the single source of truth. If this row was returned, the
+  // signed-in owner, direct grantee, workspace member, or service account is
+  // authorized. A second client-side grants check would incorrectly reject
+  // workspace access that is valid under RLS.
+  return{...data,project:parseProjectJson(data.project_json)};
 }
 
 type VisualQueryResult={rows:any[];error?:string;conditionalValues?:Record<string,any>;conditionalError?:string};
@@ -132,13 +128,20 @@ function legacyCanvasColor(value:string){
    return`rgba(${clamp(rgb[0])},${clamp(rgb[1])},${clamp(rgb[2])},${alpha})`;
  });
 }
+function normalizeToCanvasSafeColor(value:string){
+ if(!value||typeof value!=='string')return value;
+ if(!/(?:oklab|oklch|lab|lch|color-mix|color)\s*\(/i.test(value))return value;
+ try{const canvas=document.createElement('canvas');canvas.width=1;canvas.height=1;const context=canvas.getContext('2d');if(context){context.fillStyle='#000000';context.fillStyle=value;const resolved=context.fillStyle;if(resolved&&!/(?:oklab|oklch|lab|lch|color-mix|color)\s*\(/i.test(resolved))return resolved}}catch{}
+ const converted=legacyCanvasColor(value);
+ return /(?:oklab|oklch|lab|lch|color-mix|color)\s*\(/i.test(converted)?'rgba(0,0,0,0)':converted;
+}
 function makeCloneColorsCanvasSafe(documentClone:Document,root:HTMLElement){
  const view=documentClone.defaultView;if(!view)return;
  for(const node of [root,...Array.from(root.querySelectorAll<HTMLElement|SVGElement>('*'))]){
    const computed=view.getComputedStyle(node);
    for(const property of Array.from(computed)){
-     const value=computed.getPropertyValue(property);if(!/color\(/i.test(value))continue;
-     node.style.setProperty(property,legacyCanvasColor(value),'important');
+     const value=computed.getPropertyValue(property);if(!/(?:color|oklab|oklch|lab|lch|color-mix)\s*\(/i.test(value))continue;
+     node.style.setProperty(property,normalizeToCanvasSafeColor(value),'important');
    }
  }
 }
@@ -215,7 +218,6 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
  const titleBackgroundOn=f.titleBackgroundEnabled!==false,titleBg=f.titleBackground||'#fff',titleTransparency=titleBackgroundOn?Math.max(0,Math.min(100,f.titleBackgroundTransparency||0)):100,titleBackground=publishedColor(titleBg,titleTransparency);
  const titleRadius=titleBackgroundOn?`${f.cornerRadii?.topLeft??f.cornerRadius??0}px ${f.cornerRadii?.topRight??f.cornerRadius??0}px 0 0`:'0';
   const shadowOpacity=Math.max(0,Math.min(100,f.shadowOpacity??18)),shadow=f.shadow?`${f.shadowOffsetX??0}px ${f.shadowOffset??8}px ${f.shadowBlur??24}px color-mix(in srgb, ${f.shadowColor||'#0f172a'} ${shadowOpacity}%, transparent)`:'none';
-
   const responsiveSizeClass=f.responsive===false?' visualFixed':(v.w<=260||v.h<=130?' visualCompact':(v.w>=540?' visualWide':' visualStandard'));
   const titleTextStyle:any={fontFamily:f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.titleFontSize||12,color:f.titleColor||(dark?'#fff':'#242424'),fontWeight:f.titleBold===false?400:(f.titleFontWeight||700),fontStyle:f.titleFontStyle||'normal',textDecoration:f.titleUnderline?'underline':'none',whiteSpace:f.titleWrap===false?'nowrap':'normal',textAlign:f.titleAlignment||'left',lineHeight:1.25,paddingBottom:'2px',boxSizing:'border-box'};
   const subtitleTextStyle:any={fontFamily:f.subtitleFontFamily||f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.subtitleFontSize||10,color:f.subtitleColor||'#616161',fontWeight:f.subtitleBold?(f.subtitleFontWeight||700):400,fontStyle:f.subtitleFontStyle||'normal',textDecoration:f.subtitleUnderline?'underline':'none',whiteSpace:f.subtitleWrap===false?'nowrap':'normal',textAlign:f.subtitleAlignment||f.titleAlignment||'left'};
@@ -370,11 +372,14 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
   </div>;
   return <>{card}{focus&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>setFocus(false)}><div className="visualFocusPanel viewerFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>FOCUS MODE</small><b>{v.title}</b></div><button onClick={()=>setFocus(false)}>Close</button></div><div className="visualFocusBody">{content}</div></div></div>,document.body)}</>;
 }
-export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId,userRole,onBack,onManageAccess}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string,userRole?:string,onBack?:()=>void,onManageAccess?:()=>void}){
+export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId,userRole,onBack,onManageAccess,workspacePermissions}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string,userRole?:string,onBack?:()=>void,onManageAccess?:()=>void,workspacePermissions?:Partial<ReportUiPermissions>}){
  const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(false),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'>('fitPage'),[scale,setScale]=useState(1),[interactionFilterMap,setInteractionFilterMap]=useState<Record<string,VisualFilter>>({}),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
  const[publishedMode,setPublishedMode]=useState<'interactive'|'paginated'>(initialPaginatedId?'paginated':'interactive');
  const[activeRibbonTab,setActiveRibbonTab]=useState<'Home'|'File'|'View'>('Home');
+ const permissions=useMemo(()=>({...DEFAULT_REPORT_UI_PERMISSIONS,...(workspacePermissions||{})}),[workspacePermissions]);
+ const allowed=(key:keyof ReportUiPermissions)=>permissions.all_commands!==false&&permissions[key]!==false;
  const[fileDropdownOpen,setFileDropdownOpen]=useState(false);
+ const fileMenuRef=useRef<HTMLDivElement|null>(null);
  const[exportSubmenuOpen,setExportSubmenuOpen]=useState(false);
  const[embedSubmenuOpen,setEmbedSubmenuOpen]=useState(false);
  const[embedModal,setEmbedModal]=useState<'portal'|'web'|'sharepoint'|'developer'|null>(null);
@@ -387,6 +392,15 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  const[pagesPanelCollapsed,setPagesPanelCollapsed]=useState(false);
  const[isFavorite,setIsFavorite]=useState<boolean>(()=>{try{const favs=JSON.parse(localStorage.getItem('vtab_pbi_favorites')||'[]');return Array.isArray(favs)&&favs.includes(reportId)}catch{return false}});
  const toggleFavorite=()=>{try{const favs=JSON.parse(localStorage.getItem('vtab_pbi_favorites')||'[]');const next=favs.includes(reportId)?favs.filter((x:string)=>x!==reportId):[...favs,reportId];localStorage.setItem('vtab_pbi_favorites',JSON.stringify(next));setIsFavorite(next.includes(reportId))}catch{}};
+ useEffect(()=>{
+  if(!fileDropdownOpen)return;
+  const close=()=>{setFileDropdownOpen(false);setExportSubmenuOpen(false);setEmbedSubmenuOpen(false)};
+  const onPointerDown=(event:PointerEvent)=>{if(fileMenuRef.current&&!fileMenuRef.current.contains(event.target as Node))close()};
+  const onKeyDown=(event:KeyboardEvent)=>{if(event.key==='Escape')close()};
+  document.addEventListener('pointerdown',onPointerDown);
+  document.addEventListener('keydown',onKeyDown);
+  return()=>{document.removeEventListener('pointerdown',onPointerDown);document.removeEventListener('keydown',onKeyDown)};
+ },[fileDropdownOpen]);
  const toggleFullScreen=async()=>{
   const next=!full;
   setFull(next);
@@ -486,6 +500,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  if(!item)return <div className="viewerLoading">Opening published report…</div>;
  if(!page)return <div className="viewerLoading">This published report has no pages.</div>;
  const exportFile=async(fmt:'pdf'|'pptx')=>{
+   if(!allowed(fmt==='pdf'?'can_pdf':'can_ppt'))return;
    if (isViewer) { alert('Viewers are strictly prohibited from downloading or exporting reports.'); return; }
   if(exporting)return;
   if(publishedMode==='paginated'){
@@ -512,15 +527,20 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     const narratives=Array.from(reportPage.querySelectorAll<HTMLElement>('[data-export-narrative]')).map(node=>{try{return JSON.parse(node.dataset.exportNarrative||'{}')}catch{return null}}).filter((value:any)=>value&&value.title&&Array.isArray(value.points)&&value.points.length).slice(0,6);
     rendered.push({name:pageDefinition.name||`Page ${index+1}`,image:await captureViewerPage(reportPage,pageWidth,pageHeight),insights,narratives});
    }
-   const safe=(report?.name||'VTAB_Report').replace(/[^A-Za-z0-9_-]+/g,'_'),extension=fmt==='pdf'?'pdf':'pptx';
-   const exportProject={name:report?.name||project?.name||'VTAB Report',report:{name:report?.name||project?.report?.name||project?.name||'VTAB Report'}};
+   const now=new Date(),pad=(n:number)=>String(n).padStart(2,'0');
+   const stamp=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+   const reportTitle=report?.name||item?.name||project?.report?.name||project?.name||'VTAB Report';
+   const safe=reportTitle.replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,'')||'VTAB_Report';
+   const extension=fmt==='pdf'?'pdf':'pptx';
+   const exportFilename=`${safe}_${stamp}.${extension}`;
+   const exportProject={name:reportTitle,report:{name:reportTitle}};
    try{
-    await apiDownloadPost(`/published/${reportId}/export-rendered/${fmt}`,`${safe}.${extension}`,{pages:rendered,project:exportProject});
+    await apiDownloadPost(`/published/${reportId}/export-rendered/${fmt}`,exportFilename,{pages:rendered,project:exportProject,filename:exportFilename});
    }catch(renderedError:any){
     // Browser capture can fail on a browser-specific CSS/canvas feature. The
     // service-side exporter remains a reliable fallback and preserves access
     // checks. Surface an error only when both export paths fail.
-    try{await apiDownload(`/published/${reportId}/export/${fmt}`,`${safe}.${extension}`)}
+    try{await apiDownload(`/published/${reportId}/export/${fmt}`,exportFilename)}
     catch(fallbackError:any){throw new Error(`Rendered export failed: ${renderedError?.message||renderedError}. Service export also failed: ${fallbackError?.message||fallbackError}`)}
    }
   }catch(error:any){alert(error?.message||String(error))}finally{setPageIndex(originalPage);setExporting('')}
@@ -542,22 +562,10 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
 
 
   const downloadThisFile = async () => {
-    if (!canExport || isViewer) { alert('Viewers are strictly prohibited from downloading reports.'); return; }
+    if (!canExport || isViewer || !allowed('can_download')) { return; }
     try {
       const safe = (report?.name || 'VTAB_Report').replace(/[^a-zA-Z0-9_-]+/g, '_');
-      try {
-        await apiDownload(`/packages/export/complete`, `${safe}.vtabpkg`);
-      } catch {
-        const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${safe}.vtabapp`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      }
+      await apiDownload(`/published/${reportId}/download-vtrx`, `${safe}.vtrx`);
     } catch (e: any) {
       alert(e.message || String(e));
     }
@@ -571,9 +579,8 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    {!full && (
    <div className="pbi-report-topbar">
      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-       {onBack && (
-         <button onClick={onBack} className="pbi-btn-back" title="Back to workspace">
-
+       {(onBack || embedded) && (
+         <button onClick={onBack || (() => { location.href = '/?workspace=1'; })} className="pbi-btn-back" title="Back to workspace">
            <ArrowLeft size={14} /> Back
          </button>
        )}
@@ -591,11 +598,11 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
          <ShieldCheck size={14} /> Governed
        </span>
        {onManageAccess ? (
-         <button onClick={onManageAccess} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d6257', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+         <button disabled={!allowed('can_share')} onClick={onManageAccess} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d6257', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
            <Share2 size={14} /> Share
          </button>
        ) : (
-         <button onClick={shareEmail} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d6257', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+         <button disabled={!allowed('can_share')} onClick={shareEmail} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d6257', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
            <Share2 size={14} /> Share
          </button>
        )}
@@ -606,10 +613,11 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    {/* Power BI Fabric Ribbon Tabs: File | Home | View */}
    {!full && (
    <div className="pbi-report-ribbon-tabs">
-     <div style={{ position: 'relative' }}>
+     <div ref={fileMenuRef} style={{ position: 'relative' }}>
        <button 
          className={`pbi-ribbon-tab-btn ${fileDropdownOpen ? 'active' : ''}`}
-         onClick={() => setFileDropdownOpen(!fileDropdownOpen)}
+         disabled={!allowed('can_file')}
+         onClick={() => allowed('can_file')&&setFileDropdownOpen(!fileDropdownOpen)}
        >
          File <ChevronDown size={12} style={{ marginLeft: 2 }} />
        </button>
@@ -620,7 +628,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
            </button>
            {canExport && (
              <>
-               <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); void downloadThisFile(); }}>
+               <button className="pbi-menu-item" disabled={!allowed('can_download')} onClick={() => { setFileDropdownOpen(false); void downloadThisFile(); }}>
                  <div className="pbi-menu-item-left"><Download size={15} /> Download this file</div>
                </button>
                <div style={{ position: 'relative' }} onMouseEnter={() => { setExportSubmenuOpen(true); setEmbedSubmenuOpen(false); }}>
@@ -631,11 +639,11 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
                  {exportSubmenuOpen && (
                    <div className="pbi-submenu">
                       {publishedMode !== 'paginated' && (
-                        <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pptx'); }}>
+                        <button className="pbi-menu-item" disabled={!allowed('can_ppt')} onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pptx'); }}>
                           <div className="pbi-menu-item-left"><Presentation size={15} /> PowerPoint</div>
                         </button>
                       )}
-                     <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pdf'); }}>
+                     <button className="pbi-menu-item" disabled={!allowed('can_pdf')} onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pdf'); }}>
                        <div className="pbi-menu-item-left"><FileDown size={15} /> PDF</div>
                      </button>
                    </div>
@@ -678,7 +686,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
                {isFavorite ? 'Remove from favorites' : 'Add to favorites'}
              </div>
            </button>
-           <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); if (onManageAccess) onManageAccess(); else shareEmail(); }}>
+           <button className="pbi-menu-item" disabled={!allowed('can_share')} onClick={() => { setFileDropdownOpen(false); if (onManageAccess) onManageAccess(); else shareEmail(); }}>
              <div className="pbi-menu-item-left"><Users size={15} /> Manage access</div>
            </button>
            <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setSettingsModalOpen(true); }}>
@@ -690,12 +698,14 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
 
      <button 
        className={`pbi-ribbon-tab-btn ${activeRibbonTab === 'Home' ? 'active' : ''}`}
+       disabled={!allowed('can_home')}
        onClick={() => { setActiveRibbonTab('Home'); setFileDropdownOpen(false); }}
      >
        Home
      </button>
      <button 
        className={`pbi-ribbon-tab-btn ${activeRibbonTab === 'View' ? 'active' : ''}`}
+       disabled={!allowed('can_view')}
        onClick={() => { setActiveRibbonTab('View'); setFileDropdownOpen(false); }}
      >
        View
@@ -708,27 +718,27 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
      <div className="pbi-ribbon-command-bar">
        {canExport && (
          <>
-           <button className="pbi-cmd-btn" onClick={() => exportFile('pdf')} disabled={!!exporting}>
+           <button className="pbi-cmd-btn" onClick={() => exportFile('pdf')} disabled={!!exporting||!allowed('can_pdf')}>
              <FileDown size={15} color="#dc2626" /> PDF
            </button>
            {publishedMode !== 'paginated' && (
-             <button className="pbi-cmd-btn" onClick={() => exportFile('pptx')} disabled={!!exporting}>
+             <button className="pbi-cmd-btn" onClick={() => exportFile('pptx')} disabled={!!exporting||!allowed('can_ppt')}>
                <Presentation size={15} color="#ea580c" /> PPT
              </button>
            )}
            <div className="pbi-cmd-divider" />
          </>
        )}
-       <button className="pbi-cmd-btn" onClick={onManageAccess || shareEmail}>
+       <button className="pbi-cmd-btn" disabled={!allowed('can_share')} onClick={onManageAccess || shareEmail}>
          <Share2 size={15} color="#0f6cbd" /> Share
        </button>
-       <button className="pbi-cmd-btn" onClick={load}>
+       <button className="pbi-cmd-btn" disabled={!allowed('can_refresh')} onClick={load}>
          <RefreshCcw size={15} color="#16a34a" /> Refresh
        </button>
-       <button className="pbi-cmd-btn" onClick={()=>setAutomationMode('subscription')}>
+       <button className="pbi-cmd-btn" disabled={!allowed('can_subscribe')} onClick={()=>setAutomationMode('subscription')}>
          <Mail size={15} color="#0f6cbd" /> Subscribe
        </button>
-       <button className="pbi-cmd-btn" onClick={()=>setAutomationMode('alert')}>
+       <button className="pbi-cmd-btn" disabled={!allowed('can_alert')} onClick={()=>setAutomationMode('alert')}>
          <BellRing size={15} color="#b45309" /> Set alert
        </button>
        <div className="pbi-cmd-divider" />
@@ -737,8 +747,11 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
          target="_blank"
          rel="noopener noreferrer"
          className="pbi-cmd-btn"
+         aria-disabled={!allowed('can_home')}
+         tabIndex={allowed('can_home')?0:-1}
+         onClick={event=>{if(!allowed('can_home'))event.preventDefault()}}
          title="Open Admin Portal in new tab"
-         style={{ textDecoration: 'none' }}
+         style={{ textDecoration: 'none',pointerEvents:allowed('can_home')?'auto':'none',opacity:allowed('can_home')?1:.45 }}
        >
          <ShieldCheck size={15} color="#0f6cbd" /> Admin Portal
        </a>

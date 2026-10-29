@@ -9,6 +9,7 @@ import SemanticModelService from "./SemanticModelService";
 import NotificationCenter from "./NotificationCenter";
 import NotificationSettingsDialog from "./NotificationSettingsDialog";
 import HelpSupportView from "./HelpSupportView";
+import { resolveReportUiPermissions } from '../uiPermissions';
 import { 
   Home, Plus, Compass, Layers, User, Search, Settings, HelpCircle, 
   X, ChevronDown, Star, Share2, RefreshCw, Trash2, 
@@ -18,7 +19,7 @@ import {
 } from 'lucide-react';
 
 type Report = { id: string; itemKey?: string; itemType?: string; paginatedId?: string; name: string; published_at: string; updated_at?: string; pages?: number | null; role: string; sourceType?: string; project?: any; workspace_id?: string; workspace_name?: string; workspace_is_personal?: boolean };
-type Workspace = { id: string; name: string; created_at: string; role: string; member_count: number; report_count: number; is_personal?: boolean; access_scope?: 'workspace' | 'report'; can_manage_workspace?: boolean };
+type Workspace = { id: string; name: string; created_at: string; role: string; member_count: number; report_count: number; description?: string; is_personal?: boolean; access_scope?: 'workspace' | 'report'; can_manage_workspace?: boolean };
 type WorkspaceDetail = Workspace & { members: any[]; reports: any[] };
 
 const workspaceTarget = () => {
@@ -163,7 +164,10 @@ export default function CloudWorkspace({ session }: { session: any }) {
           void loadWorkspace(initial.id);
         }
       }
-      // Let target resolution load report from workspace, RLS, or public access
+      const target = workspaceTarget();
+      if (target.reportId && !r.some((x: any) => x.id === target.reportId)) {
+        setTargetDenied("This report is not shared with the signed-in account.");
+      }
       void loadRegisteredUsers();
     } catch (e: any) { setErr(e.message || String(e)); } finally { setLoading(false); }
   };
@@ -181,40 +185,19 @@ export default function CloudWorkspace({ session }: { session: any }) {
       if (target.share && canShare) setSharing(report);
       return;
     }
-    const loadTarget = async () => {
-      if (supabase) {
-        try {
-          const { data } = await supabase.from('published_reports').select('id, name, published_at, project_json')
-            .eq('id', target.reportId).maybeSingle();
-          if (data && data.project_json) {
-            const parsed = parseProjectJson(data.project_json);
-            const r: Report = {
-              id: data.id, name: data.name, published_at: data.published_at, role: 'Viewer',
-              pages: parsed?.report?.pages?.length || 1,
-              project: parsed
-            };
-            setTargetDenied(''); setViewing(r);
-            if (target.share) setSharing(r);
-            return;
-          }
-        } catch {}
-      }
-      try {
-        const pub = await api<any>(`/public/reports/${target.reportId}`);
-        if (pub && (pub.project || pub.project_json)) {
-          const parsed = parseProjectJson(pub.project || pub.project_json);
-          const r: Report = {
-            id: pub.id, name: pub.name, published_at: pub.published_at, role: 'Viewer',
-            pages: parsed?.report?.pages?.length || 1,
-            project: parsed
-          };
-          setTargetDenied(''); setViewing(r);
-          return;
-        }
-      } catch {}
-      if (!loading) setTargetDenied('This report is not shared with the signed-in account.');
-    };
-    void loadTarget();
+    if (!supabase) return;
+    supabase.from('published_reports').select('id, name, published_at, project_json')
+      .eq('id', target.reportId).eq('owner_id', session?.user?.id).maybeSingle()
+      .then(({ data }) => {
+        if (!data) { if (!loading) setTargetDenied('This report is not shared with the signed-in account.'); return; }
+        const r: Report = {
+          id: data.id, name: data.name, published_at: data.published_at, role: 'Owner',
+          pages: parseProjectJson(data.project_json)?.report?.pages?.length || 1,
+          project: parseProjectJson(data.project_json)
+        };
+        setTargetDenied(''); setViewing(r);
+        if (target.share) setSharing(r);
+      });
   }, [loading, reports, viewing]);
 
   // Click outside listener for menus
@@ -383,18 +366,20 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
   // ─── VIEWER MODE ─────────────────────────────────────────────────────────────
   if (viewing) {
+    const userUiPermissions=resolveReportUiPermissions((activeWorkspace as any)?.description,session?.user?.id);
     return (
       <div className="pbi-app-shell">
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <PublishedViewer 
             reportId={viewing.id} 
             userRole={viewing.role} 
-            initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project, role: viewing.role }} 
+            initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project, role: viewing.role, workspace_id: viewing.workspace_id || activeWorkspace?.id }} 
             embedded 
             cloudMode 
             initialPaginatedId={viewing.paginatedId}
+            workspacePermissions={userUiPermissions}
             onBack={() => { setViewing(null); setSharing(null); history.replaceState(null, '', location.pathname + '?workspace=1'); }}
-            onManageAccess={(viewing.role === "Co-Owner" || viewing.role === "Owner" || viewing.role === "Admin") && !isPersonalReport(viewing) ? () => setSharing(viewing) : undefined}
+            onManageAccess={userUiPermissions.can_share && (viewing.role === "Co-Owner" || viewing.role === "Owner" || viewing.role === "Admin") && !isPersonalReport(viewing) ? () => setSharing(viewing) : undefined}
           />
         </div>
 
@@ -996,18 +981,6 @@ export default function CloudWorkspace({ session }: { session: any }) {
                                   style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: '#242424' }}
                                 >
                                   <BarChart2 size={15} color="#d97706" /> Open report
-                                </button>
-
-                                <button 
-                                  onClick={() => {
-                                    setMenuReportId(null);
-                                    const embedUrl = `${window.location.origin}/?report=${encodeURIComponent(r.id)}&embed=1`;
-                                    navigator.clipboard.writeText(embedUrl);
-                                    alert(`Embed link copied to clipboard!\n\n${embedUrl}`);
-                                  }}
-                                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: '#242424' }}
-                                >
-                                  <ExternalLink size={15} color="#2563eb" /> Copy embed link
                                 </button>
 
                                 {canManage && !isPersonalReport(r) && (

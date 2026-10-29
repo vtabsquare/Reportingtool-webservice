@@ -1,4 +1,4 @@
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import{useEffect,useMemo,useState}from'react';
 import{CheckCircle2,Download,LoaderCircle,Play,RefreshCw}from'lucide-react';
 import{api,apiDownloadPost}from'../api';
@@ -7,7 +7,29 @@ type ParameterOption={value:any;label:string};
 const mm=(value:any,scale:number)=>Math.max(0,Number(value)||0)*scale;
 const leaf=(field:string)=>String(field||'').split('.').pop()||String(field||'');
 const rowValue=(row:any,field:string)=>row?.[field]??row?.[leaf(field)]??row?.[Object.keys(row||{}).find(key=>key.endsWith(`.${leaf(field)}`))||''];
-const filename=(report:any)=>String(report?.rendering?.fileNameTemplate||report?.name||'Paginated_Report').replace(/\{\{[^}]+\}\}/g,'Report').replace(/[^A-Za-z0-9_.-]+/g,'_').replace(/\.pdf$/i,'')+'.pdf';
+const getExportTimestamp=(now=new Date())=>{const pad=(n:number)=>String(n).padStart(2,'0');return `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`};
+const resolvePaginatedFilename=(report:any,extension:'pdf'|'pptx'='pdf')=>{
+  const template=String(report?.rendering?.fileNameTemplate||'').trim();
+  const reportName=String(report?.name||'Paginated_Report').replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,'')||'Paginated_Report';
+  const stamp=getExportTimestamp();
+  const dateStr=stamp.slice(0,10);
+  const timeStr=stamp.slice(11);
+  if(template&&!/^\{\{Report\.Name\}\}(\.pdf)?$/i.test(template)&&!/^\{\{Report\.Name\}\}_\{\{Report\.ExecutionDate\}\}(\.pdf)?$/i.test(template)&&!/^\{\{Report\.Name\}\}_\{\{Report\.ExecutionDate\}\}_\{\{Report\.ExecutionTimestamp\}\}(\.pdf)?$/i.test(template)){
+    const resolved=template
+      .replace(/\{\{\s*Report\.Name\s*\}\}/gi,reportName)
+      .replace(/\{\{\s*Report\.ExecutionDate\s*\}\}/gi,dateStr)
+      .replace(/\{\{\s*Report\.ExecutionTimestamp\s*\}\}/gi,timeStr)
+      .replace(/\{\{\s*Report\.ExecutionTime\s*\}\}/gi,`${dateStr}_${timeStr}`)
+      .replace(/\{\{\s*Report\.Timestamp\s*\}\}/gi,timeStr)
+      .replace(/\{\{[^}]+\}\}/g,'')
+      .replace(/[^A-Za-z0-9_.-]+/g,'_')
+      .replace(/\.(pdf|pptx)$/i,'')
+      .replace(/^_+|_+$/g,'');
+    if(resolved)return `${resolved}.${extension}`;
+  }
+  return `${reportName}_${stamp}.${extension}`;
+};
+const filename=(report:any)=>resolvePaginatedFilename(report,'pdf');
 const staticOptions=(parameter:any):ParameterOption[]=>parameter?.availableValues?.staticValues?.length?parameter.availableValues.staticValues:(parameter?.values||[]).map((value:any)=>({value,label:String(value)}));
 const rawParameterValue=(parameter:any,values:Record<string,any>)=>Object.prototype.hasOwnProperty.call(values,parameter.name)?values[parameter.name]:parameter.defaultValue;
 const optionKey=(value:any)=>JSON.stringify(value);
@@ -17,7 +39,7 @@ const dependentParameterIds=(report:any,parentId:string)=>{const found=new Set<s
 const formatValue=(value:any,format?:string)=>{if(value===null||value===undefined)return'';if(!format||format==='text')return String(value);const number=typeof value==='number'?value:Number(value);if(format==='integer'&&Number.isFinite(number))return new Intl.NumberFormat(undefined,{maximumFractionDigits:0}).format(number);if((format==='number'||format.startsWith('decimal:'))&&Number.isFinite(number)){const digits=format.startsWith('decimal:')?Number(format.split(':')[1]):2;return new Intl.NumberFormat(undefined,{minimumFractionDigits:format==='number'?0:digits,maximumFractionDigits:digits}).format(number)}if((format==='currency'||format.startsWith('currency:'))&&Number.isFinite(number)){const currency=format.includes(':')?format.split(':')[1]:'USD';return new Intl.NumberFormat(undefined,{style:'currency',currency,maximumFractionDigits:2}).format(number)}if((format==='percent'||format.startsWith('percent:'))&&Number.isFinite(number)){const digits=format.includes(':')?Number(format.split(':')[1]):2;return new Intl.NumberFormat(undefined,{style:'percent',minimumFractionDigits:digits,maximumFractionDigits:digits}).format(number)}if(format.startsWith('percent-number:')&&Number.isFinite(number)){const digits=Number(format.split(':')[1]);return`${new Intl.NumberFormat(undefined,{minimumFractionDigits:digits,maximumFractionDigits:digits}).format(number)}%`}if(format.startsWith('date:')){const date=value instanceof Date?value:new Date(value);if(!Number.isNaN(date.getTime())){const style=format.split(':')[1];if(style==='iso')return date.toISOString().slice(0,10);if(style==='datetime')return new Intl.DateTimeFormat(undefined,{dateStyle:'short',timeStyle:'short'}).format(date);return new Intl.DateTimeFormat(undefined,{dateStyle:style==='long'?'long':style==='medium'?'medium':'short'}).format(date)}}if(format==='boolean:yesno')return value?'Yes':'No';return String(value)};
 const parameterLabel=(parameter:any,values:Record<string,any>,available:Record<string,ParameterOption[]>)=>{const raw=rawParameterValue(parameter,values);if(isEmpty(raw))return'All';const items=Array.isArray(raw)?raw:[raw],options=available[parameter.id]||staticOptions(parameter);return items.filter(value=>!isEmpty(value)).map(value=>options.find(option=>optionKey(option.value)===optionKey(value))?.label??String(value)).join(', ')||'All'};
 const queryFilter=(parameter:any,value:any)=>({field:parameter.queryField||parameter.availableValues?.valueField,operator:parameter.filterOperator||(parameter.allowMultiple||parameter.type==='multi'?'in':'equals'),value});
-const expression=(source:any,report:any,parameters:Record<string,any>,available:Record<string,ParameterOption[]>,rows:any[],page='1',total='…')=>String(source??'').replace(/\{\{\s*([^}]+?)\s*\}\}/g,(_match,key:string)=>{const now=new Date(),builtins:Record<string,string>={'Report.Name':report?.name||'Paginated Report','Report.ExecutionDate':now.toISOString().slice(0,10),'Report.ExecutionTime':now.toLocaleString(),'Report.PageNumber':page,'Report.TotalPages':total,'Report.RenderFormat':'PDF','Dataset.RecordCount':String(rows.length)};if(Object.prototype.hasOwnProperty.call(builtins,key))return builtins[key];const parameterMatch=key.match(/^Parameters?\.([^.]+)(?:\.(Value|Label))?$/);if(parameterMatch){const parameter=(report?.parameters||[]).find((item:any)=>item.name===parameterMatch[1]);if(!parameter)return'';const raw=rawParameterValue(parameter,parameters);return parameterMatch[2]==='Label'?parameterLabel(parameter,parameters,available):Array.isArray(raw)?raw.join(', '):String(raw??'')}if(key.startsWith('Dataset.First.'))return String(rowValue(rows[0],key.slice('Dataset.First.'.length))??'');if(key.startsWith('Filter.'))return'—';return''});
+const expression=(source:any,report:any,parameters:Record<string,any>,available:Record<string,ParameterOption[]>,rows:any[],page='1',total='…')=>String(source??'').replace(/\{\{\s*([^}]+?)\s*\}\}/g,(_match,key:string)=>{const now=new Date(),builtins:Record<string,string>={'Report.Name':report?.name||'Paginated Report','Report.ExecutionDate':now.toISOString().slice(0,10),'Report.ExecutionTimestamp':`${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}`,'Report.Timestamp':`${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}-${String(now.getSeconds()).padStart(2,'0')}`,'Report.ExecutionTime':now.toLocaleString(),'Report.PageNumber':page,'Report.TotalPages':total,'Report.RenderFormat':'PDF','Dataset.RecordCount':String(rows.length)};if(Object.prototype.hasOwnProperty.call(builtins,key))return builtins[key];const parameterMatch=key.match(/^Parameters?\.([^.]+)(?:\.(Value|Label))?$/);if(parameterMatch){const parameter=(report?.parameters||[]).find((item:any)=>item.name===parameterMatch[1]);if(!parameter)return'';const raw=rawParameterValue(parameter,parameters);return parameterMatch[2]==='Label'?parameterLabel(parameter,parameters,available):Array.isArray(raw)?raw.join(', '):String(raw??'')}if(key.startsWith('Dataset.First.'))return String(rowValue(rows[0],key.slice('Dataset.First.'.length))??'');if(key.startsWith('Filter.'))return'—';return''});
 const fontWeight=(bold:any)=>bold?'700':'400';
 
 function BandItems({items,report,parameters,available,rows,scale}:{items:any[];report:any;parameters:Record<string,any>;available:Record<string,ParameterOption[]>;rows:any[];scale:number}){
@@ -55,42 +77,20 @@ export default function PaginatedReportViewer({reportId,project,filters,cloudMod
   useEffect(()=>{const timer=setTimeout(()=>void loadAvailableValues(),120);return()=>clearTimeout(timer)},[active?.id,dependencyKey]);
   const run=async()=>{if(!active||missingRequired)return;setRunning(true);setError('');try{const columns=active.table?.columns||[],measuresRegistry=project?.model?.measures||{},dimensions=columns.map((column:any)=>column.field).filter((field:string)=>!Object.prototype.hasOwnProperty.call(measuresRegistry,field)),measures=columns.map((column:any)=>column.field).filter((field:string)=>Object.prototype.hasOwnProperty.call(measuresRegistry,field)),result=await query({dimensions,measures,filters:[...filters,...parameterFilters()],sort:active.table?.sort||[],limit:500,roleId:project.security?.activeRoleId});setRows(result.rows||[]);setHasRun(true)}catch(reason:any){setError(reason?.message||String(reason))}finally{setRunning(false)}};
   const generate=async()=>{
-    if(isViewer){setError('Viewers are strictly prohibited from downloading or exporting reports.');return;}if(!active||busy||missingRequired)return;setBusy(true);setError('');setComplete(false);try{const payload={definitionId:active.id,filters,parameters,roleId:project.security?.activeRoleId};await apiDownloadPost(`/published/${reportId}/paginated/pdf`,filename(active),payload);setComplete(true)}catch(reason:any){setError(reason?.message||String(reason))}finally{setBusy(false)}};
+    if(!active||busy)return;if(missingRequired){setError('Please fill in all required parameters before exporting.');return;}setBusy(true);setError('');setComplete(false);setLastExportType('pdf');try{const exportName=resolvePaginatedFilename(active,'pdf');const payload={definitionId:active.id,filters,parameters,roleId:project.security?.activeRoleId,filename:exportName};await apiDownloadPost(`/published/${reportId}/paginated/pdf`,exportName,payload);setComplete(true)}catch(reason:any){setError(reason?.message||String(reason))}finally{setBusy(false);window.dispatchEvent(new CustomEvent('vtab-export-paginated-done'))}};
+  const generatePptx=async()=>{
+    if(!active||busy)return;if(missingRequired){setError('Please fill in all required parameters before exporting.');return;}setBusy(true);setError('');setComplete(false);setLastExportType('pptx');try{const paper=document.querySelector<HTMLElement>('.paginatedServicePaper');if(!paper)throw new Error('Paginated report paper is not rendered.');const canvas=await html2canvas(paper,{backgroundColor:'#ffffff',scale:2,useCORS:true,logging:false});const image=canvas.toDataURL('image/png');const exportName=resolvePaginatedFilename(active,'pptx');const exportProject={name:active.name||'Paginated Report',report:{name:active.name||'Paginated Report'}};await apiDownloadPost(`/published/${reportId}/export-rendered/pptx`,exportName,{pages:[{name:active.name||'Paginated Report',image}],project:exportProject,isPaginated:true,filename:exportName});setComplete(true)}catch(reason:any){setError(reason?.message||String(reason))}finally{setBusy(false);window.dispatchEvent(new CustomEvent('vtab-export-paginated-done'))}};
+  useEffect(()=>{
+    const handleExport=async(e:any)=>{if(isViewer)return;const fmt=String(e.detail?.fmt||'pdf').toLowerCase();if(fmt==='pptx'||fmt==='ppt'){return;}await generate()};
+    window.addEventListener('vtab-export-paginated',handleExport);
+    return()=>window.removeEventListener('vtab-export-paginated',handleExport);
+  },[active?.id,filters,parameters,missingRequired,busy,project,reportId,isViewer]);
+  const setParameter=(parameter:any,value:any)=>{const dependents=dependentParameterIds(active,parameter.id);setParameters(current=>{const next:Record<string,any>={...current,[parameter.name]:value};for(const dependentId of dependents){const child=(active?.parameters||[]).find((item:any)=>item.id===dependentId);if(child)next[child.name]=child.allowMultiple||child.type==='multi'?[]:''}return next});if(dependents.size)setAvailable(current=>{const next={...current};dependents.forEach(id=>delete next[id]);return next});setHasRun(false)};
   const clearParameters=()=>{const reset:Record<string,any>={};for(const parameter of active?.parameters||[])reset[parameter.name]=parameter.allowMultiple||parameter.type==='multi'?[]:'';setParameters(reset);setAvailable({});setRows([]);setHasRun(false);setComplete(false);setError('')};
-  const setParameter = (parameter: any, value: any) => {
-  const dependents = dependentParameterIds(active, parameter.id);
-
-  setParameters(current => {
-    const next = { ...current, [parameter.name]: value };
-
-    for (const dependentId of dependents) {
-      const child = (active?.parameters || []).find(
-        (item: any) => item.id === dependentId
-      );
-
-      if (child) {
-        next[child.name] =
-          child.allowMultiple || child.type === 'multi' ? [] : '';
-      }
-    }
-
-    return next;
-  });
-
-  if (dependents.size) {
-    setAvailable(current => {
-      const next = { ...current };
-      dependents.forEach(id => delete next[id]);
-      return next;
-    });
-  }
-
-  setHasRun(false);
-};
   if(!active)return <div className="paginatedServiceEmpty">No paginated report was included in this publication.</div>;
-  return <div className="paginatedService paginatedServiceModern"><main><div className="paginatedServiceHeading"><div>{reports.length>1?<label className="paginatedReportSelector"><span>Paginated report</span><select value={active.id} onChange={event=>setActiveId(event.target.value)}>{reports.map((report:any)=><option key={report.id} value={report.id}>{report.name}</option>)}</select></label>:<><small>PUBLISHED PAGINATED REPORT</small><h2>{active.name}</h2></>}</div>{isViewer ? <button disabled title="Viewers are not permitted to export reports" style={{ opacity: 0.38, cursor: 'not-allowed', filter: 'grayscale(1)', pointerEvents: 'none' }}><Download size={17}/> Download PDF</button> : <button onClick={generate} disabled={busy||missingRequired}>{busy?<LoaderCircle className="spin" size={17}/>:<Download size={17}/>} {busy?'Generating PDF…':'Download PDF'}</button>}</div>
+  return <div className="paginatedService paginatedServiceModern"><main><div className="paginatedServiceHeading"><div>{reports.length>1?<label className="paginatedReportSelector"><span>Paginated report</span><select value={active.id} onChange={event=>setActiveId(event.target.value)}>{reports.map((report:any)=><option key={report.id} value={report.id}>{report.name}</option>)}</select></label>:<><small>PUBLISHED PAGINATED REPORT</small><h2>{active.name}</h2></>}</div>{!isViewer&&<button onClick={generate} disabled={busy||missingRequired}>{busy?<LoaderCircle className="spin" size={17}/>:<Download size={17}/>} {busy?(lastExportType==='pptx'?'Generating PowerPoint…':'Generating PDF…'):'Download PDF'}</button>}</div>
     <section className="paginatedParameterBar"><div className="paginatedParameterBarTitle"><b>Report parameters</b><small>Select values and run the report.</small></div><div className="paginatedParameterFields">{!visibleParameters.length?<span className="paginatedNoParameters">No visible parameters</span>:visibleParameters.map((parameter:any)=>{const options=available[parameter.id]||staticOptions(parameter),multiple=parameter.allowMultiple||parameter.type==='multi',value=rawParameterValue(parameter,parameters),mode=parameter.availableValues?.mode||(parameter.values?.length?'static':'none');return <label key={parameter.id}><span>{parameter.prompt||parameter.label||parameter.name}{parameter.required?' *':''}</span>{mode!=='none'?<select multiple={multiple} disabled={optionBusy} value={multiple?(Array.isArray(value)?value.map(optionKey):[]):isEmpty(value)?'':optionKey(value)} onChange={event=>setParameter(parameter,multiple?Array.from(event.target.selectedOptions).map(option=>JSON.parse(option.value)):event.target.value?JSON.parse(event.target.value):'')}>{!multiple&&<option value="">{optionBusy?'Loading values…':'All'}</option>}{options.map(option=><option key={optionKey(option.value)} value={optionKey(option.value)}>{option.label}</option>)}</select>:parameter.dataType==='boolean'||parameter.type==='boolean'?<select value={String(value??'')} onChange={event=>setParameter(parameter,event.target.value===''?'':event.target.value==='true')}><option value="">All</option><option value="true">True</option><option value="false">False</option></select>:<input type={parameter.dataType==='date'||parameter.type==='date'?'date':parameter.dataType==='integer'||parameter.dataType==='decimal'||parameter.type==='number'?'number':'text'} value={String(value??'')} onChange={event=>setParameter(parameter,event.target.value)}/>}</label>})}</div><div className="paginatedParameterActions"><button type="button" className="paginatedClearParameters" onClick={clearParameters}>Clear filters</button><button className="paginatedRefreshValues" title="Refresh parameter values" onClick={()=>void loadAvailableValues()} disabled={optionBusy}><RefreshCw size={15}/></button><button className="paginatedRunButton" onClick={()=>void run()} disabled={running||missingRequired}>{running?<LoaderCircle className="spin" size={15}/>:<Play size={15}/>} {running?'Running…':'Run report'}</button></div></section>
-    {error&&<div className="paginatedServiceError">{error}</div>}{complete&&<div className="paginatedServiceSuccess"><CheckCircle2 size={15}/>PDF generated successfully.</div>}{hasRun&&<div className="paginatedRunSummary"><CheckCircle2 size={14}/>{rows.length} row{rows.length===1?'':'s'} loaded using the selected parameter values.</div>}
+    {error&&<div className="paginatedServiceError">{error}</div>}{complete&&<div className="paginatedServiceSuccess"><CheckCircle2 size={15}/>{lastExportType==='pptx'?'PowerPoint generated successfully.':'PDF generated successfully.'}</div>}{hasRun&&<div className="paginatedRunSummary"><CheckCircle2 size={14}/>{rows.length} row{rows.length===1?'':'s'} loaded using the selected parameter values.</div>}
     <section className="paginatedServicePreview"><ReportPaper report={active} parameters={parameters} available={available} rows={rows}/></section>
   </main></div>;
 }

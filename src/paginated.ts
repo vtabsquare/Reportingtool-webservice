@@ -139,7 +139,7 @@ export function createPaginatedReport(name='Paginated Report'):PaginatedReportDe
     footer:{visible:true,repeat:true,items:[{id:crypto.randomUUID(),type:'text',value:'Page {{Report.PageNumber}} of {{Report.TotalPages}}',align:'right',fontSize:9,color:'#475569',widthPercent:100}]},
     bodyItems:[],contentLayout:{tableXmm:0,tableYmm:0},
     table:{name:'Detail table',columns:[],repeatHeader:true,headerHeightMm:9,rowHeightMm:8,wrapText:true,headerBackground:'#e8eef7',headerColor:'#111827',headerFontFamily:'Segoe UI',headerFontSize:9,headerBold:true,headerItalic:false,bodyColor:'#1f2937',bodyFontFamily:'Segoe UI',bodyBold:false,bodyItalic:false,alternateRows:true,alternateBackground:'#f8fafc',borderColor:'#cbd5e1',fontSize:9,sort:[],groupPageBreak:'none',repeatGroupHeader:false,keepGroupTogether:true,showTotals:false},
-    filters:[],parameters:[],pagination:{mode:'automatic',rowsPerPage:25},rendering:{fileNameTemplate:'{{Report.Name}}_{{Report.ExecutionDate}}.pdf',showEmptyReport:true},updatedAt:new Date().toISOString(),
+    filters:[],parameters:[],pagination:{mode:'automatic',rowsPerPage:25},rendering:{fileNameTemplate:'{{Report.Name}}_{{Report.ExecutionDate}}_{{Report.ExecutionTimestamp}}.pdf',showEmptyReport:true},updatedAt:new Date().toISOString(),
   };
 }
 

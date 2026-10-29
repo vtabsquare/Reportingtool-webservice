@@ -160,8 +160,18 @@ def enqueue_email(
         # A competing worker/request may have inserted the same logical message.
         existing = sb.table("email_delivery_jobs").select("*").eq("idempotency_key", idempotency_key).limit(1).execute().data or []
         if existing:
+            try:
+                from .email_worker import trigger_email_worker
+                trigger_email_worker()
+            except Exception:
+                pass
             return existing[0]
         raise _database_error(error) from error
+    try:
+        from .email_worker import trigger_email_worker
+        trigger_email_worker()
+    except Exception:
+        pass
     return result[0]
 
 

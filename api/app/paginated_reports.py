@@ -100,6 +100,8 @@ def _expression(text: Any, *, definition: dict[str, Any], parameters: dict[str, 
         "Report.Name": definition.get("name") or "Paginated Report",
         "Report.ExecutionTime": now.astimezone().strftime("%Y-%m-%d %H:%M:%S"),
         "Report.ExecutionDate": now.astimezone().strftime("%Y-%m-%d"),
+        "Report.ExecutionTimestamp": now.astimezone().strftime("%H-%M-%S"),
+        "Report.Timestamp": now.astimezone().strftime("%H-%M-%S"),
         "Report.PageNumber": page_number,
         "Report.TotalPages": total_pages,
         "Report.RenderFormat": "PDF",
@@ -236,14 +238,19 @@ def _compute_column_widths(
 
 
 def _safe_filename(template: str, *, definition: dict[str, Any], parameters: dict[str, Any], filters: list[dict[str, Any]]) -> str:
-    name = _expression(template or "{{Report.Name}}.pdf", definition=definition, parameters=parameters, filters=filters)
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", name).strip(" .")
+    default_template = "{{Report.Name}}_{{Report.ExecutionDate}}_{{Report.ExecutionTimestamp}}.pdf"
+    clean_template = (template or "").strip()
+    if not clean_template or clean_template in ("{{Report.Name}}.pdf", "{{Report.Name}}_{{Report.ExecutionDate}}.pdf", "Paginated_Report.pdf"):
+        clean_template = default_template
+    name = _expression(clean_template, definition=definition, parameters=parameters, filters=filters)
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f\s]+', "_", name).strip(" ._")
     if not name.lower().endswith(".pdf"):
         name += ".pdf"
-    return name[:180] or "Paginated_Report.pdf"
+    now_stamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S")
+    return name[:180] or f"Paginated_Report_{now_stamp}.pdf"
 
 
-def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_context: list[dict[str, Any]] | None = None, parameters: dict[str, Any] | None = None, role_id: str | None = None, rls_rules: list[dict[str, Any]] | None = None) -> tuple[bytes, str, int]:
+def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_context: list[dict[str, Any]] | None = None, parameters: dict[str, Any] | None = None, role_id: str | None = None, rls_rules: list[dict[str, Any]] | None = None, requested_filename: str | None = None) -> tuple[bytes, str, int]:
     try:
         from reportlab.lib import colors
         from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -366,17 +373,26 @@ def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_
             elif kind == "text":
                 text = _expression(item.get("dynamicToken") or item.get("value"), definition=definition, parameters=parameter_values, filters=filters, page_number=pdf._pageNumber, total_pages=len(pdf._saved_page_states), record_count=len(rows), first_row=first_row)
                 size = float(item.get("fontSize") or 9);pdf.setFont(pdf_font(item), size);pdf.setFillColor(color)
+                raw_lines = str(text or "").split("\n")
+                lines = [re.sub(r'[\r\t\ufeff\u200b\u200c\u200d\x00-\x08\x0b\x0c\x0e-\x1f]', '', line).strip() for line in raw_lines]
+                while lines and not lines[0]:lines.pop(0)
+                while lines and not lines[-1]:lines.pop()
+                lines = lines or [""]
+                line_spacing = size * 1.2
+                total_text_height = len(lines) * size + (len(lines) - 1) * (line_spacing - size)
                 vertical = item.get("verticalAlign") or "top"
                 if vertical == "bottom":
-                    baseline = item_y + max(2, float(item.get("padding") or 2))
+                    start_baseline = item_y + max(2, float(item.get("padding") or 2)) + (len(lines) - 1) * line_spacing
                 elif vertical == "middle":
-                    baseline = item_y + max(2, (item_height - size) / 2)
+                    start_baseline = item_y + max(2, (item_height - total_text_height) / 2) + (len(lines) - 1) * line_spacing
                 else:
-                    baseline = item_y + max(2, item_height - size - float(item.get("padding") or 2))
+                    start_baseline = item_y + max(2, item_height - size - float(item.get("padding") or 2))
                 align = item.get("align") or "left"
-                if align == "right":pdf.drawRightString(x + width, baseline, text)
-                elif align == "center":pdf.drawCentredString(x + width / 2, baseline, text)
-                else:pdf.drawString(x, baseline, text)
+                for line_index, line_value in enumerate(lines):
+                    baseline = start_baseline - line_index * line_spacing
+                    if align == "right":pdf.drawRightString(x + width, baseline, line_value)
+                    elif align == "center":pdf.drawCentredString(x + width / 2, baseline, line_value)
+                    else:pdf.drawString(x, baseline, line_value)
             if not positioned:
                 cursor += width
 
@@ -512,5 +528,6 @@ def render_paginated_pdf(project: dict[str, Any], definition_id: str, *, filter_
         document.build(story, canvasmaker=NumberedCanvas)
     except Exception as error:
         raise PaginatedReportError(f"PDF layout or rendering failed: {error}") from error
-    filename = _safe_filename((definition.get("rendering") or {}).get("fileNameTemplate") or "{{Report.Name}}.pdf", definition=definition, parameters=parameter_values, filters=filters)
+    template_to_use = requested_filename or (definition.get("rendering") or {}).get("fileNameTemplate") or ""
+    filename = _safe_filename(template_to_use, definition=definition, parameters=parameter_values, filters=filters)
     return buffer.getvalue(), filename, len(rows)

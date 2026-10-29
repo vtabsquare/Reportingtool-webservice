@@ -3,6 +3,7 @@ import {useEffect,useRef,useState,type InputHTMLAttributes} from 'react';
 type Props=Omit<InputHTMLAttributes<HTMLInputElement>,'value'|'defaultValue'|'onChange'|'onBlur'> & {
   value:string|undefined|null;
   onCommit:(value:string)=>void;
+  onBlur?:InputHTMLAttributes<HTMLInputElement>['onBlur'];
 };
 
 /**
