@@ -103,11 +103,15 @@ def _client_key(request):
 async def security_headers(request, call_next):
     response=await call_next(request)
     response.headers.setdefault('X-Content-Type-Options','nosniff')
-    response.headers.setdefault('X-Frame-Options','DENY')
     response.headers.setdefault('Referrer-Policy','no-referrer')
     response.headers.setdefault('Permissions-Policy','camera=(), microphone=(), geolocation=(), payment=()')
-    response.headers.setdefault('Cache-Control','no-store' if request.url.path.startswith('/api/v1/auth') else 'no-cache')
-    response.headers.setdefault('Content-Security-Policy',"default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+    if request.url.path.startswith('/api/'):
+        response.headers.setdefault('X-Frame-Options','DENY')
+        response.headers.setdefault('Cache-Control','no-store' if request.url.path.startswith('/api/v1/auth') else 'no-cache')
+        response.headers.setdefault('Content-Security-Policy',"default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+    else:
+        response.headers.setdefault('X-Frame-Options','SAMEORIGIN')
+        response.headers.setdefault('Content-Security-Policy',"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https: wss: blob: data:; worker-src 'self' blob:; frame-ancestors 'self'")
     return response
 
 
