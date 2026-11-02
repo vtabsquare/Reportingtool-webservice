@@ -137,6 +137,42 @@ export default function CloudWorkspace({ session }: { session: any }) {
   const [menuReportId, setMenuReportId] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<{update_available?:boolean;available_version?:string;release_notes?:string;applying?:boolean;last_apply_status?:string;current_version?:string}|null>(null);
+
+  useEffect(() => {
+    const checkUpdate = async () => {
+      try {
+        const d = await api<any>('/update/status');
+        setUpdateStatus(d);
+      } catch {}
+    };
+    checkUpdate();
+    const interval = setInterval(checkUpdate, 300000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const applyServicesUpdate = async () => {
+    if (!confirm(`Apply update to version ${updateStatus?.available_version || 'latest'}? The server will pull from GitHub and rebuild.`)) return;
+    try {
+      await api('/update/apply', { method: 'POST' });
+      alert('Update started — monitoring build…');
+      const poll = setInterval(async () => {
+        try {
+          const d = await api<any>('/update/status');
+          setUpdateStatus(d);
+          if (d.last_apply_status === 'succeeded' || d.last_apply_status === 'failed') {
+            clearInterval(poll);
+            if (d.last_apply_status === 'succeeded') {
+              alert('Update installed successfully! Reloading...');
+              setTimeout(() => location.reload(), 1500);
+            } else {
+              alert('Update failed: check server logs');
+            }
+          }
+        } catch { clearInterval(poll); }
+      }, 4000);
+    } catch (e: any) { alert(e.message); }
+  };
 
   // Add Member modal state
   const [addMemberOpen, setAddMemberOpen] = useState(false);
@@ -399,6 +435,41 @@ export default function CloudWorkspace({ session }: { session: any }) {
   // ─── MAIN POWER BI APP SHELL ──────────────────────────────────────────────────
   return (
     <div className="pbi-app-shell">
+      {updateStatus?.update_available && (
+        <div style={{
+          background: 'linear-gradient(90deg, #064e3b, #047857)',
+          color: '#ecfdf5',
+          padding: '6px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: '13px',
+          fontWeight: 500,
+          borderBottom: '1px solid #10b981',
+          zIndex: 1000,
+        }}>
+          <span>🔔 <strong>Update available:</strong> Reporting Services v{updateStatus.available_version}{updateStatus.applying ? ' — Building on server…' : ''}</span>
+          {!updateStatus.applying ? (
+            <button
+              onClick={applyServicesUpdate}
+              style={{
+                background: '#10b981',
+                color: '#fff',
+                border: 'none',
+                padding: '4px 12px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '12px'
+              }}
+            >
+              Update Now
+            </button>
+          ) : (
+            <span style={{ opacity: 0.85, fontSize: '12px' }}>{updateStatus.last_apply_status || 'In progress…'}</span>
+          )}
+        </div>
+      )}
       {/* GLOBAL TOPBAR */}
       <header className="pbi-topbar">
         <button className="pbi-waffle-btn" title="App launcher" onClick={() => setViewMode('home')}>

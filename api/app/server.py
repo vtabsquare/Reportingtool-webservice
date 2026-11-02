@@ -56,6 +56,7 @@ from .reporting_service import (
     update_semantic_model as service_update_semantic_model,
 )
 from .version import PRODUCT_VERSION
+from .update_agent import start_update_agent, get_update_status, get_last_apply_result
 
 # Metadata initialization is deliberately non-destructive. Never unlink studio_meta.db
 # on Windows: an active SQLite handle causes WinError 32 and deleting metadata can lose
@@ -68,6 +69,8 @@ except Exception as exc:
 # Home/project metadata must be able to load even if DuckDB is unavailable, locked,
 # or needs recovery. Data/Transform/Model endpoints initialize it lazily.
 store=Store(); app=FastAPI(title='VTAB Reporting Studio API',version=PRODUCT_VERSION)
+if os.environ.get('VTAB_MANAGER_URL') and os.environ.get('VTAB_CLIENT_ID') and os.environ.get('VTAB_AGENT_TOKEN'):
+    start_update_agent()
 app.include_router(data_bridge_router)
 # Compress larger API responses (report definitions, visual rows and export
 # metadata) before they cross the public network. Static assets should also be
@@ -569,7 +572,22 @@ def register_confirm(req:RegisterConfirmReq):
 
 @app.get('/api/v1/health')
 def health():
-    return {'status':'ok','product':'VTAB Reporting Studio','version':PRODUCT_VERSION,'demoDatabase':DEMO.exists(),'metadataDatabase':META.exists(),'analyticalEngine':'DuckDB + Parquet ZSTD','analytics':analytics_status()}
+    return {'status':'ok','product':'VTAB Reporting Studio','version':PRODUCT_VERSION,'demoDatabase':DEMO.exists(),'metadataDatabase':META.exists(),'analyticalEngine':'DuckDB + Parquet ZSTD','analytics':analytics_status(),'update':get_update_status()}
+
+@app.get('/api/v1/update/status')
+def update_status():
+    return get_update_status()
+
+@app.post('/api/v1/update/apply')
+async def apply_update(request: Request):
+    import threading
+    from .update_agent import trigger_apply
+    token = (request.headers.get('x-vtab-agent-token') or '').strip()
+    expected = os.environ.get('VTAB_AGENT_TOKEN', '')
+    if expected and not secrets.compare_digest(token, expected):
+        raise HTTPException(403, 'Invalid agent token')
+    threading.Thread(target=trigger_apply, daemon=True).start()
+    return {'ok': True, 'message': 'Update triggered in background. Poll /api/v1/update/status for progress.'}
 
 @app.get('/api/v1/analytics/health')
 def analytics_health():
@@ -3229,3 +3247,19 @@ def public_query_batch(report_id: str, req: PublishedBatchQueryReq):
 @app.post('/api/v1/public/reports/{report_id}/query')
 def public_query(report_id: str, req: QueryReq):
     return published_query(report_id, req, authorization=None)
+
+
+# Mount static React SPA frontend for cloud deployments
+from fastapi.staticfiles import StaticFiles
+
+_DIST_WEB = Path(__file__).resolve().parent.parent.parent / "dist-web"
+if (_DIST_WEB / "index.html").is_file():
+    if (_DIST_WEB / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_DIST_WEB / "assets")), name="spa_assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa_frontend(full_path: str):
+        target = (_DIST_WEB / full_path).resolve()
+        if full_path and target.is_file() and str(target).startswith(str(_DIST_WEB.resolve())):
+            return FileResponse(target)
+        return FileResponse(_DIST_WEB / "index.html")
