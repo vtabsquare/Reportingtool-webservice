@@ -3266,4 +3266,11 @@ if (_DIST_WEB / "index.html").is_file():
         target = (_DIST_WEB / full_path).resolve()
         if full_path and target.is_file() and str(target).startswith(str(_DIST_WEB.resolve())):
             return FileResponse(target)
-        return FileResponse(_DIST_WEB / "index.html")
+        index_file = _DIST_WEB / "index.html"
+        html = index_file.read_text(encoding="utf-8")
+        supabase_url = os.environ.get("VITE_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or "https://asjscibujiikthxmpxgg.supabase.co"
+        supabase_anon_key = os.environ.get("VITE_SUPABASE_ANON_KEY") or os.environ.get("SUPABASE_ANON_KEY") or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFzanNjaWJ1amlpa3RoeG1weGdnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4OTg5MDIsImV4cCI6MjEwMzQ3NDkwMn0._ruAu1DRXerWX5kCUYOyaOFmNclIB0TZoZXTiMotQMM"
+        if supabase_url and supabase_anon_key:
+            injection = f'<script>window.__VTAB_CONFIG__={{"supabaseUrl":{json.dumps(supabase_url)},"supabaseAnonKey":{json.dumps(supabase_anon_key)}}};</script>'
+            html = f"{injection}\n{html}"
+        return Response(content=html, media_type="text/html")
