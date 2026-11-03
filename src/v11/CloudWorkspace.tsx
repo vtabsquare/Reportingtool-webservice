@@ -481,6 +481,17 @@ export default function CloudWorkspace({ session }: { session: any }) {
             <PowerBiLogo />
           </div>
           <span className="pbi-brand-title">VTAB</span>
+          <span style={{
+            background: '#0284c7',
+            color: '#ffffff',
+            fontSize: '11px',
+            fontWeight: 700,
+            padding: '2px 7px',
+            borderRadius: '4px',
+            marginLeft: '6px',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em'
+          }}>Test</span>
         </div>
 
         <span className="pbi-breadcrumb-separator">/</span>
