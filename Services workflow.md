@@ -264,6 +264,25 @@ if is_render:
 
 ---
 
+### 2.5. Pixelated Build Animation Screen (`PixelBuildScreen.tsx`)
+To provide an engaging, retro arcade/cyber experience during cloud builds without freezing or exposing half-deployed intermediate states, we created `PixelBuildScreen.tsx`.
+
+#### Key Features:
+- **CRT Cyber Terminal Visuals**: Retro scanline shader overlay, neon green/cyan glow typography (`#10b981`, `#38bdf8`), dark arcade monitor frame, and monospace matrix styling.
+- **Animated 8-Bit Pixel Rocket**: Pixelated SVG spacecraft with animated pulsating flame boosters and thrusters assembling the update.
+- **Segmented Chunky Pixel Progress Bar**: 30-block pixel gauge with smooth progressive milestones (`0%` $\rightarrow$ `94%` during build, jumping to `100%` on live health verification).
+- **Real-Time Telemetry Feed**: Live step logs reporting Render API dispatch, TypeScript Vite compilation, DuckDB analytics mounting, and FastAPI container launch.
+- **Live Health Polling & Victory Level-Up**:
+  - Automatically polls `/api/v1/update/status` and `/api/v1/health` in the background every 3 seconds.
+  - Gracefully accommodates Render's intermediate container restarts and port binding.
+  - When the build is verified live, triggers a **`★ LEVEL UP: UPDATE COMPLETE! ★`** celebration and reloads the fresh workspace.
+- **State Persistence & Non-Destructive**:
+  - State is preserved in `localStorage ('vtab_building_update')`, so refreshing the browser mid-build maintains the screen until the build is live.
+  - Includes a `[MINIMIZE]` toggle to an unobtrusive floating pixel widget (`👾 CLOUD BUILD IN PROGRESS`) if users wish to view the background.
+  - Completely non-intrusive: users who do not trigger updates experience zero change to existing report authoring, viewing, or authentication.
+
+---
+
 ## 3. Environment Variables Reference
 
 | Variable | Required In | Purpose | Example |

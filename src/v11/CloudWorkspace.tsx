@@ -9,6 +9,7 @@ import SemanticModelService from "./SemanticModelService";
 import NotificationCenter from "./NotificationCenter";
 import NotificationSettingsDialog from "./NotificationSettingsDialog";
 import HelpSupportView from "./HelpSupportView";
+import { PixelBuildScreen } from "./PixelBuildScreen";
 import { resolveReportUiPermissions } from '../uiPermissions';
 import { 
   Home, Plus, Compass, Layers, User, Search, Settings, HelpCircle, 
@@ -138,6 +139,13 @@ export default function CloudWorkspace({ session }: { session: any }) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<{update_available?:boolean;available_version?:string;release_notes?:string;applying?:boolean;last_apply_status?:string;current_version?:string}|null>(null);
+  const [isBuildingUpdate, setIsBuildingUpdate] = useState<boolean>(() => {
+    try {
+      return Boolean(localStorage.getItem('vtab_building_update'));
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     const checkUpdate = async () => {
@@ -152,26 +160,21 @@ export default function CloudWorkspace({ session }: { session: any }) {
   }, []);
 
   const applyServicesUpdate = async () => {
-    if (!confirm(`Apply update to version ${updateStatus?.available_version || 'latest'}? The server will pull from GitHub and rebuild.`)) return;
+    const targetVer = updateStatus?.available_version || 'latest';
+    if (!confirm(`Apply update to version ${targetVer}? The cloud container will be rebuilt on Render.`)) return;
     try {
+      try {
+        localStorage.setItem('vtab_building_update', targetVer);
+      } catch {}
+      setIsBuildingUpdate(true);
       await api('/update/apply', { method: 'POST' });
-      alert('Update started — monitoring build…');
-      const poll = setInterval(async () => {
-        try {
-          const d = await api<any>('/update/status');
-          setUpdateStatus(d);
-          if (d.last_apply_status === 'succeeded' || d.last_apply_status === 'failed') {
-            clearInterval(poll);
-            if (d.last_apply_status === 'succeeded') {
-              alert('Update installed successfully! Reloading...');
-              setTimeout(() => location.reload(), 1500);
-            } else {
-              alert(`Update failed: ${d.last_apply_message || 'check server logs'}`);
-            }
-          }
-        } catch { clearInterval(poll); }
-      }, 4000);
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) {
+      alert(`Update trigger failed: ${e.message}`);
+      try {
+        localStorage.removeItem('vtab_building_update');
+      } catch {}
+      setIsBuildingUpdate(false);
+    }
   };
 
   // Add Member modal state
@@ -435,6 +438,18 @@ export default function CloudWorkspace({ session }: { session: any }) {
   // ─── MAIN POWER BI APP SHELL ──────────────────────────────────────────────────
   return (
     <div className="pbi-app-shell">
+      {isBuildingUpdate && (
+        <PixelBuildScreen
+          targetVersion={updateStatus?.available_version || (typeof localStorage !== 'undefined' ? localStorage.getItem('vtab_building_update') || '' : '') || 'latest'}
+          onComplete={() => {
+            try {
+              localStorage.removeItem('vtab_building_update');
+            } catch {}
+            setIsBuildingUpdate(false);
+            window.location.reload();
+          }}
+        />
+      )}
       {updateStatus?.update_available && (
         <div style={{
           background: 'linear-gradient(90deg, #064e3b, #047857)',
