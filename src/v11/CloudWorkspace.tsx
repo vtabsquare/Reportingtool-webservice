@@ -155,7 +155,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
       } catch {}
     };
     checkUpdate();
-    const interval = setInterval(checkUpdate, 300000);
+    const interval = setInterval(checkUpdate, 5000);
     return () => clearInterval(interval);
   }, []);
 
