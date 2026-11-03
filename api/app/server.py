@@ -593,6 +593,44 @@ async def apply_update(request: Request):
     threading.Thread(target=trigger_apply, daemon=True).start()
     return {'ok': True, 'message': 'Update triggered in background. Poll /api/v1/update/status for progress.'}
 
+
+@app.post('/api/v1/update/webhook')
+@app.post('/api/v1/webhook/update')
+async def update_webhook(request: Request):
+    """Receive an update notification webhook from VTAB Reporting Manager or deployment pipeline."""
+    from .update_agent import handle_update_webhook
+    token = (request.headers.get('x-vtab-agent-token') or request.headers.get('x-vtab-webhook-secret') or '').strip()
+    expected_agent = os.environ.get('VTAB_AGENT_TOKEN', '').strip()
+    expected_secret = os.environ.get('VTAB_WEBHOOK_SECRET', '').strip()
+    expected_client = os.environ.get('VTAB_CLIENT_ID', '').strip()
+    client_id_header = (request.headers.get('x-vtab-client-id') or '').strip()
+
+    if expected_agent or expected_secret or expected_client:
+        authorized = False
+        if expected_agent and token and secrets.compare_digest(token, expected_agent):
+            authorized = True
+        elif expected_secret and token and secrets.compare_digest(token, expected_secret):
+            authorized = True
+        elif expected_client and client_id_header and secrets.compare_digest(client_id_header, expected_client):
+            authorized = True
+        if not authorized:
+            raise HTTPException(403, 'Invalid agent token or client authorization header.')
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, 'Webhook payload must be valid JSON.')
+    result = handle_update_webhook(payload)
+    if not result.get('ok'):
+        raise HTTPException(400, result.get('error', 'Webhook processing failed.'))
+    return result
+
+
+@app.get('/api/v1/update/history')
+def update_history():
+    """Return historical update and webhook events recorded in persistent database storage."""
+    return {'history': store.list_update_history(50)}
+
 @app.get('/api/v1/analytics/health')
 def analytics_health():
     try:
