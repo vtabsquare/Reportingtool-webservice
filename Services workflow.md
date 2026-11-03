@@ -249,25 +249,10 @@ if is_render:
    )}
    ```
 
-3. **Header Branding Badge**:
-   Added a blue `TEST` badge next to `VTAB / Home` to provide immediate visual confirmation of deployed UI bundles:
-   ```tsx
-   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-     <span style={{ fontWeight: 800, fontSize: 16 }}>VTAB</span>
-     <span style={{
-       background: '#0284c7',
-       color: '#fff',
-       fontSize: 10,
-       fontWeight: 800,
-       padding: '2px 6px',
-       borderRadius: 4
-     }}>
-       TEST
-     </span>
-     <span style={{ color: '#94a3b8' }}>/</span>
-     <span style={{ color: '#475569' }}>Home</span>
-   </div>
-   ```
+3. **Header Branding**:
+   The temporary `TEST` badge was verified in production and cleanly removed in commit `45a6c6b`.
+4. **Deployed Commit Reporting**:
+   `update_agent.py` exports `_current_commit()` reading `RENDER_GIT_COMMIT` (injected automatically by Render cloud runners) or `git rev-parse HEAD`. This allows the VTAB Manager to detect that an offered commit is live and automatically transition the deployment to **Completed**.
 
 ---
 
