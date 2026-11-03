@@ -586,10 +586,22 @@ def update_status():
 async def apply_update(request: Request):
     import threading
     from .update_agent import trigger_apply
-    token = (request.headers.get('x-vtab-agent-token') or '').strip()
-    expected = os.environ.get('VTAB_AGENT_TOKEN', '')
-    if expected and not secrets.compare_digest(token, expected):
-        raise HTTPException(403, 'Invalid agent token')
+    token = (request.headers.get('x-vtab-agent-token') or request.headers.get('x-vtab-webhook-secret') or '').strip()
+    expected = os.environ.get('VTAB_AGENT_TOKEN', '').strip()
+
+    # 1. Server-to-server authorization via agent token
+    is_agent_authorized = bool(expected and token and secrets.compare_digest(token, expected))
+
+    # 2. Browser user authorization via session / Supabase JWT
+    is_user_authorized = hasattr(request.state, 'vtab_user') and request.state.vtab_user is not None
+    if not is_user_authorized:
+        auth_hdr = (request.headers.get('authorization') or '').replace('Bearer ', '', 1).strip()
+        if auth_hdr and (auth_hdr.startswith('eyJ') or store.session_user(auth_hdr)):
+            is_user_authorized = True
+
+    if not is_agent_authorized and not is_user_authorized:
+        raise HTTPException(403, 'Invalid agent token or unauthenticated session. Please sign in as an administrator.')
+
     threading.Thread(target=trigger_apply, daemon=True).start()
     return {'ok': True, 'message': 'Update triggered in background. Poll /api/v1/update/status for progress.'}
 
