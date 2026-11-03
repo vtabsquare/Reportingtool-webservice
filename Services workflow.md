@@ -19,6 +19,7 @@ Reporting Services can run in two primary runtime environments:
 ```mermaid
 sequenceDiagram
     autonumber
+    actor Operator as Manager Operator
     actor Admin as Workspace Administrator
     participant Browser as Frontend (CloudWorkspace.tsx)
     participant Server as FastAPI Server (server.py)
@@ -26,6 +27,8 @@ sequenceDiagram
     participant Render as Render REST API (api.render.com)
     participant Manager as VTAB Manager (:8840)
 
+    Operator->>Manager: Offer release to client (Status: Pending approval)
+    Operator->>Manager: Clicks [Approve] in Deployments table
     Manager->>Server: POST /api/v1/update/webhook (Offer commit-xyz)
     Server->>Agent: handle_update_webhook()
     Agent-->>Server: Offer cached & persisted in Store
@@ -46,6 +49,10 @@ sequenceDiagram
     Server-->>Browser: {last_apply_status: 'succeeded'}
     Browser-->>Admin: Alert: 'Update installed successfully! Reloading...'
     Note over Browser: Page reloads with latest code & UI
+    Note over Render: Container rebuilds & restarts with new commit
+    Manager->>Server: GET /api/v1/health & /api/v1/update/status
+    Server-->>Manager: {commit_sha: 'commit-xyz', status: 'ok'}
+    Manager-->>Manager: Status auto-transitions from Offered to Completed
 ```
 
 ---
@@ -251,8 +258,9 @@ if is_render:
 
 3. **Header Branding**:
    The temporary `TEST` badge was verified in production and cleanly removed in commit `45a6c6b`.
-4. **Deployed Commit Reporting**:
-   `update_agent.py` exports `_current_commit()` reading `RENDER_GIT_COMMIT` (injected automatically by Render cloud runners) or `git rev-parse HEAD`. This allows the VTAB Manager to detect that an offered commit is live and automatically transition the deployment to **Completed**.
+4. **Deployed Commit Reporting & Approval Protection**:
+   - `update_agent.py` exports `_current_commit()` reading `RENDER_GIT_COMMIT` (injected automatically by Render cloud runners) or `git rev-parse HEAD`. This allows the VTAB Manager to detect that an offered commit is live and automatically transition the deployment from **Offered** to **Completed**.
+   - Deployments remain protected behind an explicit **Approval Gate** in the Manager control plane (`Pending approval` state) until an operator explicitly approves rollout before webhooks are dispatched to Services.
 
 ---
 
