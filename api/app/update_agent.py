@@ -143,6 +143,20 @@ def _project_root() -> Path:
 
 
 
+def _current_commit() -> str:
+    commit = (os.environ.get('RENDER_GIT_COMMIT') or '').strip()
+    if commit:
+        return commit
+    try:
+        import subprocess
+        res = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=_project_root(), capture_output=True, text=True, timeout=2)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    except Exception:
+        pass
+    return ''
+
+
 def _current_version() -> str:
 
     try:
@@ -389,6 +403,7 @@ def get_update_status() -> dict:
         if not res.get('current_version'):
 
             res['current_version'] = _current_version()
+        res['commit_sha'] = _current_commit()
 
         apply_res = dict(_last_apply_result)
         phase = apply_res.get('phase')
