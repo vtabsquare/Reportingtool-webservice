@@ -248,7 +248,10 @@ def _manager_request(method: str, path: str, payload: dict | None = None, timeou
 
     """Make an authenticated request to the VTAB Manager and return parsed JSON."""
 
-    url = _manager_url() + path
+    mgr = _manager_url()
+    if not mgr:
+        return {}
+    url = mgr + path
 
     body = json.dumps(payload).encode('utf-8') if payload is not None else None
 
@@ -332,6 +335,12 @@ def get_update_status() -> dict:
 
             res['current_version'] = _current_version()
 
+        apply_res = dict(_last_apply_result)
+        phase = apply_res.get('phase')
+        success = apply_res.get('success')
+        res['applying'] = phase in ('preflight', 'git_pull', 'pip_install', 'npm_build', 'validating')
+        res['last_apply_status'] = 'succeeded' if phase == 'succeeded' or success else ('failed' if success is False else phase)
+        res['last_apply_message'] = apply_res.get('message') or ''
         return res
 
 
