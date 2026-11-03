@@ -16,6 +16,11 @@ Environment variables (never hardcoded):
 
     VTAB_SIMULATE_BUILD         Set to '1' in test environments to simulate build without git.
 
+    RENDER_API_KEY              Render API key -- when set together with RENDER_SERVICE_ID,
+                                clicking 'Update Now' triggers a Render deploy automatically.
+
+    RENDER_SERVICE_ID           The Render service ID (e.g. srv-xxxxxxxxxxxx) to redeploy.
+
 
 
 This module is importable even when the env vars are absent; it logs a warning
@@ -313,6 +318,45 @@ def _report_deployment(deployment_id: str, status: str, message: str = '') -> No
 
         logger.warning('Failed to report deployment %s status=%s: %s', deployment_id, status, exc)
 
+
+def _trigger_render_deploy() -> dict:
+    """Trigger a Render service redeploy via the Render REST API.
+
+    Requires RENDER_API_KEY and RENDER_SERVICE_ID environment variables.
+    Returns a dict with keys 'ok' (bool) and optionally 'error' or 'deploy_id'.
+    """
+    api_key = os.environ.get('RENDER_API_KEY', '').strip()
+    service_id = os.environ.get('RENDER_SERVICE_ID', '').strip()
+
+    if not api_key or not service_id:
+        logger.info('RENDER_API_KEY or RENDER_SERVICE_ID not set -- skipping Render deploy trigger.')
+        return {'ok': False, 'error': 'RENDER_API_KEY or RENDER_SERVICE_ID not configured'}
+
+    url = f'https://api.render.com/v1/services/{service_id}/deploys'
+    payload = json.dumps({'clearCache': 'do_not_clear'}).encode('utf-8')
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        method='POST',
+        headers={
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode('utf-8'))
+            deploy_id = body.get('id') or (body.get('deploy') or {}).get('id')
+            logger.info('Render deploy triggered: service=%s deploy_id=%s', service_id, deploy_id)
+            return {'ok': True, 'deploy_id': deploy_id}
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode('utf-8', 'ignore')
+        logger.warning('Render API error %s: %s', exc.code, detail[:300])
+        return {'ok': False, 'error': f'HTTP {exc.code}: {detail[:200]}'}
+    except Exception as exc:
+        logger.warning('Failed to trigger Render deploy: %s', exc)
+        return {'ok': False, 'error': str(exc)}
 
 
 # ---------------------------------------------------------------------------
@@ -647,6 +691,28 @@ def trigger_apply() -> None:
 
             _report_deployment(deployment_id, 'preflight', 'Starting update')
 
+
+
+        # Trigger Render deploy if configured (cloud-hosted deployments)
+        render_result = _trigger_render_deploy()
+        if render_result.get('ok'):
+            logger.info('Render deploy triggered automatically (deploy_id=%s)', render_result.get('deploy_id'))
+            _set_result('deploying', True, 'Render deploy triggered — building in cloud...')
+            _persist_update_event('render_deploy_triggered', deployment_id, ver, 'deploying', render_result)
+            if deployment_id:
+                _report_deployment(deployment_id, 'deploying', 'Render deploy triggered — building in cloud')
+            # Mark offer as consumed; Render handles the actual build & restart.
+            with _STATE_LOCK:
+                _pending_deployment = None
+                _update_status['update_available'] = False
+                _update_status['deployment_id'] = None
+                _update_status['current_version'] = ver
+            _persist_state('current_offer', None)
+            _set_result('succeeded', True, 'Render deploy triggered — your app will reload once the build completes (~2 min)')
+            _persist_update_event('apply_succeeded', deployment_id, ver, 'succeeded', {'render_deploy': render_result})
+            if deployment_id:
+                _report_deployment(deployment_id, 'succeeded', 'Render deploy triggered successfully')
+            return
 
 
         # Check for simulated test mode
