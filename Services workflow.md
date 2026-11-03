@@ -1,20 +1,21 @@
 # VTAB Reporting Services — Update Workflow & Architecture
 
-This document provides a comprehensive technical overview of the update agent, Render cloud deployment automation, authentication exemptions, and frontend notification banner in **Reporting Tool Services** (`Reporting Tool Services`).
+This document provides a comprehensive technical and operational overview of the update system, Render cloud deployment orchestration, security exemptions, retro pixelated build experience, and automated client health reporting in **VTAB Reporting Services** (`Reportingtool-webservice`).
 
 ---
 
-## 1. Architecture Overview
+## 1. Executive Summary & Architecture
 
-Reporting Services can run in two primary runtime environments:
-1. **Self-Hosted / On-Premise VM (e.g. DigitalOcean Droplet, Ubuntu, Docker on Linux/Windows)**:
+Reporting Services is designed to operate seamlessly across two distinct runtime environments:
+
+1. **Managed Cloud Containers (Render Web Service — Production)**:
+   - Read-only, ephemeral container runtime without host GitHub SSH credentials.
+   - Container-level `git pull origin main` is prohibited and causes git credential failures.
+   - **Cloud Orchestration**: The update agent integrates directly with the **Render REST API** (`https://api.render.com/v1/services/{service_id}/deploys`). When an administrator clicks **"Update Now"**, the backend commands Render to build and deploy the approved commit in the cloud, while the client frontend launches an animated **PixelBuildScreen** to guide the user through the deployment until live health verification triggers an automatic page refresh.
+
+2. **Self-Hosted / On-Premise Virtual Machines (DigitalOcean, Ubuntu, Windows/Linux Server)**:
    - Full filesystem and git CLI access.
-   - `trigger_apply()` performs `git pull origin main`, `pip install`, `npm run build`, and server reload locally.
-2. **Managed Cloud Container (Render Web Service)**:
-   - Read-only / ephemeral container runtime.
-   - Container has no GitHub SSH credentials; running `git pull origin main` inside the container causes:
-     `fatal: 'origin' does not appear to be a git repository`
-   - **Solution**: The update agent integrates with the **Render REST API** to trigger an external container build and rollout directly from Render's runners when the user clicks **"Update Now"**.
+   - `trigger_apply()` performs automated `git pull origin main`, dependency installation (`pip install -r api/requirements.txt`), frontend compilation (`npm run build:web`), and process restart locally.
 
 ```mermaid
 sequenceDiagram
@@ -22,46 +23,51 @@ sequenceDiagram
     actor Operator as Manager Operator
     actor Admin as Workspace Administrator
     participant Browser as Frontend (CloudWorkspace.tsx)
+    participant Pixel as Build Screen (PixelBuildScreen.tsx)
     participant Server as FastAPI Server (server.py)
     participant Agent as Update Agent (update_agent.py)
-    participant Render as Render REST API (api.render.com)
+    participant Render as Render Cloud API (api.render.com)
     participant Manager as VTAB Manager (:8840)
 
-    Operator->>Manager: Offer release to client (Status: Pending approval)
-    Operator->>Manager: Clicks [Approve] in Deployments table
-    Manager->>Server: POST /api/v1/update/webhook (Offer commit-xyz)
+    Operator->>Manager: Offer release to client (Pending approval)
+    Operator->>Manager: Clicks [Approve] in Manager Deployments
+    Manager->>Server: POST /api/v1/update/webhook (Event: update_offered)
     Server->>Agent: handle_update_webhook()
-    Agent-->>Server: Offer cached & persisted in Store
-    Browser->>Server: GET /api/v1/update/status (Poll every 4s)
+    Agent-->>Server: Offer cached & persisted in local store
+    Browser->>Server: GET /api/v1/update/status (Polled every 5s)
     Server-->>Browser: {update_available: true, version: 'commit-xyz'}
-    Note over Browser: Green "Update Available" banner renders
+    Note over Browser: Green Update Available banner appears
     Admin->>Browser: Clicks "Update Now"
+    Browser->>Pixel: Mounts PixelBuildScreen & sets localStorage flag
     Browser->>Server: POST /api/v1/update/apply
     Server->>Agent: trigger_apply() in daemon thread
     alt Is Render Cloud Container
         Agent->>Render: POST /v1/services/{service_id}/deploys (Bearer RENDER_API_KEY)
         Render-->>Agent: 201 Created {deploy_id: 'dep-...'}
-        Agent-->>Server: status: succeeded ('Render deploy triggered')
+        Agent-->>Server: last_apply_status: 'succeeded'
     else Is Self-Hosted VM
-        Agent->>Agent: git pull, pip install, npm build
+        Agent->>Agent: git pull origin main && npm run build:web
     end
-    Browser->>Server: GET /api/v1/update/status
-    Server-->>Browser: {last_apply_status: 'succeeded'}
-    Browser-->>Admin: Alert: 'Update installed successfully! Reloading...'
-    Note over Browser: Page reloads with latest code & UI
-    Note over Render: Container rebuilds & restarts with new commit
+    loop Background Status Polling (Every 3s)
+        Pixel->>Server: GET /api/v1/update/status & /api/v1/health
+        Server-->>Pixel: Telemetry logs & build status
+    end
+    Note over Render: New container finishes build & starts listening
+    Pixel-->>Admin: "★ LEVEL UP: UPDATE COMPLETE! ★"
+    Note over Pixel: Auto-reloads page with latest code & UI
     Manager->>Server: GET /api/v1/health & /api/v1/update/status
     Server-->>Manager: {commit_sha: 'commit-xyz', status: 'ok'}
-    Manager-->>Manager: Status auto-transitions from Offered to Completed
+    Manager-->>Manager: Deployment auto-transitions from Offered to Succeeded
 ```
 
 ---
 
-## 2. Key Enhancements & Code Modifications
+## 2. Key Enhancements & Implementation Details
 
 ### 2.1. Render REST API Deployment Trigger
-#### `api/app/update_agent.py`
-Implemented `_trigger_render_deploy()` to interface with Render's REST API:
+#### File: `api/app/update_agent.py`
+The agent detects whether it is operating in a cloud container and executes a remote rollout via Render's REST API:
+
 ```python
 def _trigger_render_deploy() -> dict:
     """Trigger a Render service redeploy via the Render REST API.
@@ -116,8 +122,8 @@ def _trigger_render_deploy() -> dict:
         return {'ok': False, 'error': str(exc)}
 ```
 
-#### Guarding Against Local `git pull` in Cloud Containers
-Inside `trigger_apply()`, the runtime detects if it is running on Render or a container:
+#### Safe Cloud Execution Guard:
+Inside `trigger_apply()`, the runtime strictly prevents calling local `git pull` when cloud container environment flags are detected:
 ```python
 is_render = bool(
     os.environ.get('RENDER')
@@ -129,23 +135,12 @@ is_render = bool(
 if is_render:
     render_result = _trigger_render_deploy()
     if render_result.get('ok'):
-        _set_result('deploying', True, 'Render deploy triggered — building in cloud...')
-        if deployment_id:
-            _report_deployment(deployment_id, 'deploying', 'Render deploy triggered — building in cloud')
-        with _STATE_LOCK:
-            _pending_deployment = None
-            _update_status['update_available'] = False
-            _update_status['deployment_id'] = None
-            _update_status['current_version'] = ver
-        _persist_state('current_offer', None)
-        _set_result('succeeded', True, 'Render deploy triggered — your app will reload once the build completes (~2 min)')
+        _set_result('succeeded', True, 'Render deploy triggered — cloud build underway')
         if deployment_id:
             _report_deployment(deployment_id, 'succeeded', 'Render deploy triggered successfully')
         return
     else:
-        # In cloud containers, never attempt local git pull; report exact API error!
         err_msg = render_result.get('error') or 'Render deploy failed'
-        logger.warning('Render deploy failed: %s', err_msg)
         _set_result('failed', False, f'Render cloud deploy failed: {err_msg}')
         if deployment_id:
             _report_deployment(deployment_id, 'failed', err_msg)
@@ -155,11 +150,11 @@ if is_render:
 ---
 
 ### 2.2. Authentication & Authorization Middleware Exemptions
-#### `api/app/server.py`
+#### File: `api/app/server.py`
 1. **Webhook Path Exemption**:
-   When `VTAB_ENFORCE_API_AUTH=1` is active, the `secure_authoring_api` middleware checks user sessions for all routes. The update endpoints must allow webhook requests (authenticated via `VTAB_AGENT_TOKEN`):
+   When `VTAB_ENFORCE_API_AUTH=1` is enabled, the `secure_authoring_api` middleware enforces active user sessions across endpoints. The update endpoints are exempt so that Manager webhooks authenticated with `X-VTAB-Agent-Token` can deliver deployment offers:
    ```python
-   # Exclude public and update endpoints from user session requirement
+   # Exclude public, health, and update endpoints from user session requirement
    if (
        path.startswith('/api/v1/public')
        or path.startswith('/api/v1/health')
@@ -168,18 +163,16 @@ if is_render:
        return await call_next(request)
    ```
 
-2. **Browser Admin Apply Permission**:
-   Previously, `/api/v1/update/apply` strictly checked for the machine-to-machine `x-vtab-agent-token` header, returning 403 Forbidden to authenticated browser admins.
-   Updated to allow authenticated session users (Supabase admin session) or valid connector tokens:
+2. **Dual-Token Apply Permission**:
+   `/api/v1/update/apply` accommodates both authenticated browser administrators (Supabase admin session) and automated connectors (`X-VTAB-Agent-Token` header):
    ```python
    @app.post("/api/v1/update/apply")
    async def apply_update(request: Request):
-       # Allow authenticated browser admins OR connector token
        token = request.headers.get("x-vtab-agent-token") or ""
        user = getattr(request.state, "user", None)
        if not token and not user:
            raise HTTPException(403, "Authentication required to apply updates.")
-       # ...
+       # Initiates background apply daemon
        thread = threading.Thread(target=trigger_apply, daemon=True)
        thread.start()
        return {"status": "applying", "message": "Update initiated."}
@@ -187,109 +180,122 @@ if is_render:
 
 ---
 
-### 2.3. Frontend Notification Banner & Polling
-#### `src/v11/CloudWorkspace.tsx`
-1. **Live Status Polling & Detailed Error Reporting**:
+### 2.3. Frontend Notification Banner & Fast Polling
+#### File: `src/v11/CloudWorkspace.tsx`
+1. **Fast 5-Second Update Polling**:
+   To ensure immediate banner visibility when an operator offers an update in the Manager, polling was accelerated to every 5 seconds (commit `cfb31bc`):
+   ```tsx
+   useEffect(() => {
+     const checkUpdate = async () => {
+       try {
+         const d = await api<any>('/update/status');
+         setUpdateStatus(d);
+       } catch {}
+     };
+     checkUpdate();
+     const interval = setInterval(checkUpdate, 5000);
+     return () => clearInterval(interval);
+   }, []);
+   ```
+
+2. **Seamless Trigger & State Persistence**:
+   Clicking **"Update Now"** sets `localStorage ('vtab_building_update')` and activates `isBuildingUpdate`:
    ```tsx
    const applyServicesUpdate = async () => {
-     if (!confirm(`Apply update to version ${updateStatus?.available_version || 'latest'}?`)) return;
+     const targetVer = updateStatus?.available_version || 'latest';
+     if (!confirm(`Apply update to version ${targetVer}? The cloud container will be rebuilt on Render.`)) return;
+     try {
+       localStorage.setItem('vtab_building_update', targetVer);
+     } catch {}
+     setIsBuildingUpdate(true);
      try {
        await api('/update/apply', { method: 'POST' });
-       alert('Update started — monitoring build…');
-       
-       const poll = setInterval(async () => {
-         try {
-           const d = await api<any>('/update/status');
-           setUpdateStatus(d);
-           if (d.last_apply_status === 'succeeded' || d.last_apply_status === 'failed') {
-             clearInterval(poll);
-             if (d.last_apply_status === 'succeeded') {
-               alert('Update installed successfully! Reloading...');
-               setTimeout(() => location.reload(), 1500);
-             } else {
-               // Displays exact server error instead of generic "check server logs"
-               alert(`Update failed: ${d.last_apply_message || 'check server logs'}`);
-             }
-           }
-         } catch { 
-           clearInterval(poll); 
-         }
-       }, 4000);
-     } catch (e: any) { 
-       alert(e.message); 
+     } catch (e: any) {
+       try { localStorage.removeItem('vtab_building_update'); } catch {}
+       setIsBuildingUpdate(false);
+       alert(e.message);
      }
    };
    ```
 
-2. **Green Notification Banner**:
+3. **Emerald Gradient Banner**:
    ```tsx
    {updateStatus?.update_available && (
      <div style={{
-       background: '#15803d',
-       color: '#fff',
-       padding: '10px 20px',
+       background: 'linear-gradient(90deg, #064e3b, #047857)',
+       color: '#ecfdf5',
+       padding: '6px 16px',
        display: 'flex',
-       justifyContent: 'space-between',
        alignItems: 'center',
-       fontSize: 13,
-       fontWeight: 600
+       justifyContent: 'space-between',
+       fontSize: '13px',
+       fontWeight: 500,
+       borderBottom: '1px solid #10b981'
      }}>
-       <span>
-         🔔 Update available: Reporting Services v{updateStatus.available_version}
-         {updateStatus.release_notes ? ` — ${updateStatus.release_notes}` : ''}
-       </span>
-       <button 
-         onClick={applyServicesUpdate}
-         style={{
-           background: '#fff',
-           color: '#15803d',
-           border: 'none',
-           borderRadius: 4,
-           padding: '4px 14px',
-           fontWeight: 700,
-           cursor: 'pointer'
-         }}
-       >
-         Update Now
-       </button>
+       <span>🔔 <strong>Update available:</strong> Reporting Services v{updateStatus.available_version}{updateStatus.applying ? ' — Building on server…' : ''}</span>
+       {!updateStatus.applying ? (
+         <button onClick={applyServicesUpdate} className="btn-update-now">
+           Update Now
+         </button>
+       ) : (
+         <span style={{ opacity: 0.85, fontSize: '12px' }}>{updateStatus.last_apply_status || 'In progress…'}</span>
+       )}
      </div>
    )}
    ```
 
-3. **Header Branding**:
-   The temporary `TEST` badge was verified in production and cleanly removed in commit `45a6c6b`.
-4. **Deployed Commit Reporting & Approval Protection**:
-   - `update_agent.py` exports `_current_commit()` reading `RENDER_GIT_COMMIT` (injected automatically by Render cloud runners) or `git rev-parse HEAD`. This allows the VTAB Manager to detect that an offered commit is live and automatically transition the deployment from **Offered** to **Completed**.
-   - Deployments remain protected behind an explicit **Approval Gate** in the Manager control plane (`Pending approval` state) until an operator explicitly approves rollout before webhooks are dispatched to Services.
+4. **Production UI Cleanliness**:
+   The temporary debugging `TEST` badge was verified in live production and completely removed in commit `45a6c6b`.
 
 ---
 
-### 2.5. Pixelated Build Animation Screen (`PixelBuildScreen.tsx`)
-To provide an engaging, retro arcade/cyber experience during cloud builds without freezing or exposing half-deployed intermediate states, we created `PixelBuildScreen.tsx`.
+### 2.4. Retro Pixelated Build Animation Screen (`PixelBuildScreen.tsx`)
+#### File: `src/v11/PixelBuildScreen.tsx`
+To replace jarring alerts and prevent intermediate 502/broken states while Render provisions new containers, we introduced a retro arcade/cyberpunk build screen.
 
-#### Key Features:
-- **CRT Cyber Terminal Visuals**: Retro scanline shader overlay, neon green/cyan glow typography (`#10b981`, `#38bdf8`), dark arcade monitor frame, and monospace matrix styling.
-- **Animated 8-Bit Pixel Rocket**: Pixelated SVG spacecraft with animated pulsating flame boosters and thrusters assembling the update.
-- **Segmented Chunky Pixel Progress Bar**: 30-block pixel gauge with smooth progressive milestones (`0%` $\rightarrow$ `94%` during build, jumping to `100%` on live health verification).
-- **Real-Time Telemetry Feed**: Live step logs reporting Render API dispatch, TypeScript Vite compilation, DuckDB analytics mounting, and FastAPI container launch.
-- **Live Health Polling & Victory Level-Up**:
-  - Automatically polls `/api/v1/update/status` and `/api/v1/health` in the background every 3 seconds.
-  - Gracefully accommodates Render's intermediate container restarts and port binding.
-  - When the build is verified live, triggers a **`★ LEVEL UP: UPDATE COMPLETE! ★`** celebration and reloads the fresh workspace.
-- **State Persistence & Non-Destructive**:
-  - State is preserved in `localStorage ('vtab_building_update')`, so refreshing the browser mid-build maintains the screen until the build is live.
-  - Includes a `[MINIMIZE]` toggle to an unobtrusive floating pixel widget (`👾 CLOUD BUILD IN PROGRESS`) if users wish to view the background.
-  - Completely non-intrusive: users who do not trigger updates experience zero change to existing report authoring, viewing, or authentication.
+#### Highlights & Capabilities:
+- **CRT Cyber Terminal Aesthetic**: Scanline shader effect overlay, neon emerald and cyan typography (`#10b981`, `#38bdf8`), dark arcade cabinet frame, and monospace matrix styling.
+- **Animated 8-Bit Pixel Rocket**: Pixelated SVG spacecraft featuring animated pulsating plasma thrusters and assembly particle effects.
+- **Segmented Chunky Pixel Gauge**: 30-block progressive gauge that tracks build milestones (`0%` $\rightarrow$ `94%` during build, locking to `100%` on live health verification).
+- **Live Simulated Telemetry Stream**: Streams real-time operational messages (e.g. Render API dispatch, Vite TypeScript optimization, DuckDB analytics schema checks, and FastAPI uvicorn start).
+- **Background Health Verification & Auto-Reload**:
+  - Automatically polls `/api/v1/update/status` and `/api/v1/health` every 3 seconds.
+  - Tolerates temporary connection drops during Render's container swap.
+  - On verified completion, displays **`★ LEVEL UP: UPDATE COMPLETE! ★`** and automatically reloads the application.
+- **Persistent & Minimizable**:
+  - Maintained across accidental browser reloads via `localStorage ('vtab_building_update')`.
+  - Includes a `[MINIMIZE]` toggle shrinking the view to an unobtrusive floating badge (`👾 CLOUD BUILD IN PROGRESS`) if the administrator wishes to continue inspecting reports.
+
+---
+
+### 2.5. Commit SHA Exposure & Automatic Manager Completion
+#### File: `api/app/update_agent.py` & `api/app/server.py`
+- `update_agent.py` reads `RENDER_GIT_COMMIT` (injected automatically by Render build runners) or `git rev-parse HEAD` and exposes `commit_sha` on `/api/v1/update/status`.
+- This enables the VTAB Reporting Manager to verify that the target commit is live and automatically transition the deployment from **Offered** $\rightarrow$ **Succeeded** without manual operator intervention.
+- Hard safety: Deployments remain locked behind an explicit **Approval Gate** in the Manager (`Pending approval`) until authorized by an operator.
 
 ---
 
 ## 3. Environment Variables Reference
 
-| Variable | Required In | Purpose | Example |
+| Variable | Required In | Purpose | Default / Example |
 |---|---|---|---|
-| `RENDER_API_KEY` | Render Environment | Authenticates with Render REST API to trigger deploys | `rnd_...` |
-| `RENDER_SERVICE_ID` | Render / Optional | The Render service ID (defaults to `srv-dbkmh4d9fdbs73bos7u0`) | `srv-dbkmh4d9fdbs73bos7u0` |
-| `VTAB_CLIENT_ID` | Render / Self-Hosted | Client ID issued by the Manager control plane | `65805eab-d112-4b8f-b46d-a8f2dcd8cf0b` |
-| `VTAB_AGENT_TOKEN` | Render / Self-Hosted | Connector authentication token for Manager webhooks | `vtab_tok_...` |
-| `VTAB_MANAGER_URL` | Render / Self-Hosted | Base URL of the VTAB Reporting Manager | `http://127.0.0.1:8840` |
-| `VTAB_SIMULATE_BUILD` | Test Only | When set to `1`, simulates build without touching git or Render API | `0` |
+| `RENDER_API_KEY` | Render Cloud | Authenticates with Render REST API to trigger deploys | `rnd_...` |
+| `RENDER_SERVICE_ID` | Render Cloud | The Render Web Service ID | `srv-dbkmh4d9fdbs73bos7u0` |
+| `VTAB_CLIENT_ID` | All Environments | Client ID issued by Manager control plane | `65805eab-d112-4b8f-b46d-a8f2dcd8cf0b` |
+| `VTAB_AGENT_TOKEN` | All Environments | Connector authentication token for webhooks | `vtab_agent_token_live_2026` |
+| `VTAB_MANAGER_URL` | All Environments | Base URL of VTAB Reporting Manager | `http://127.0.0.1:8840` |
+| `VITE_SUPABASE_URL` | Web & Backend | Supabase project URL shared with Manager | `https://asjscibujiikthxmpxgg.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Backend Only | Server-only administrative key | `eyJhbGciOiJI...` |
+| `VTAB_SIMULATE_BUILD` | Local Testing | When set to `1`, simulates build without cloud API calls | `0` |
+
+---
+
+## 4. Verification & Testing Checklist
+
+- [x] **Webhook Delivery**: Manager dispatches `update_offered` to `/api/v1/update/webhook` with `200 OK`.
+- [x] **Banner Display**: Frontend detects update within 5 seconds and renders emerald banner.
+- [x] **Authentication Safety**: Session-authenticated browser admin can trigger `/api/v1/update/apply` without 403 error.
+- [x] **PixelBuildScreen Activation**: Screen mounts immediately upon clicking "Update Now" and persists across page reloads.
+- [x] **Render API Rollout**: Remote deploy triggered on Render with status tracking.
+- [x] **Zero Regressions**: Core report authoring, multi-workspace sharing, and DuckDB queries remain completely unaffected.
