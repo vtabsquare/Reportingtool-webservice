@@ -166,7 +166,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
               alert('Update installed successfully! Reloading...');
               setTimeout(() => location.reload(), 1500);
             } else {
-              alert('Update failed: check server logs');
+              alert(`Update failed: ${d.last_apply_message || 'check server logs'}`);
             }
           }
         } catch { clearInterval(poll); }

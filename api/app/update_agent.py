@@ -322,15 +322,26 @@ def _report_deployment(deployment_id: str, status: str, message: str = '') -> No
 def _trigger_render_deploy() -> dict:
     """Trigger a Render service redeploy via the Render REST API.
 
-    Requires RENDER_API_KEY and RENDER_SERVICE_ID environment variables.
+    Requires RENDER_API_KEY. Uses RENDER_SERVICE_ID or defaults to production service ID.
     Returns a dict with keys 'ok' (bool) and optionally 'error' or 'deploy_id'.
     """
-    api_key = os.environ.get('RENDER_API_KEY', '').strip()
-    service_id = os.environ.get('RENDER_SERVICE_ID', '').strip()
+    api_key = (
+        os.environ.get('RENDER_API_KEY') 
+        or os.environ.get('RENDER_TOKEN') 
+        or os.environ.get('RENDER_API_TOKEN') 
+        or ''
+    ).strip()
+    service_id = (
+        os.environ.get('RENDER_SERVICE_ID') 
+        or os.environ.get('VTAB_RENDER_SERVICE_ID') 
+        or 'srv-dbkmh4d9fdbs73bos7u0'
+    ).strip()
 
-    if not api_key or not service_id:
-        logger.info('RENDER_API_KEY or RENDER_SERVICE_ID not set -- skipping Render deploy trigger.')
-        return {'ok': False, 'error': 'RENDER_API_KEY or RENDER_SERVICE_ID not configured'}
+    if not api_key:
+        logger.warning('RENDER_API_KEY not set in environment variables.')
+        return {'ok': False, 'error': 'RENDER_API_KEY is not set in Render environment variables'}
+    if not service_id:
+        return {'ok': False, 'error': 'RENDER_SERVICE_ID is not configured'}
 
     url = f'https://api.render.com/v1/services/{service_id}/deploys'
     payload = json.dumps({'clearCache': 'do_not_clear'}).encode('utf-8')
@@ -693,26 +704,40 @@ def trigger_apply() -> None:
 
 
 
-        # Trigger Render deploy if configured (cloud-hosted deployments)
-        render_result = _trigger_render_deploy()
-        if render_result.get('ok'):
-            logger.info('Render deploy triggered automatically (deploy_id=%s)', render_result.get('deploy_id'))
-            _set_result('deploying', True, 'Render deploy triggered — building in cloud...')
-            _persist_update_event('render_deploy_triggered', deployment_id, ver, 'deploying', render_result)
-            if deployment_id:
-                _report_deployment(deployment_id, 'deploying', 'Render deploy triggered — building in cloud')
-            # Mark offer as consumed; Render handles the actual build & restart.
-            with _STATE_LOCK:
-                _pending_deployment = None
-                _update_status['update_available'] = False
-                _update_status['deployment_id'] = None
-                _update_status['current_version'] = ver
-            _persist_state('current_offer', None)
-            _set_result('succeeded', True, 'Render deploy triggered — your app will reload once the build completes (~2 min)')
-            _persist_update_event('apply_succeeded', deployment_id, ver, 'succeeded', {'render_deploy': render_result})
-            if deployment_id:
-                _report_deployment(deployment_id, 'succeeded', 'Render deploy triggered successfully')
-            return
+        # Trigger Render deploy if running on Render or configured
+        is_render = bool(
+            os.environ.get('RENDER')
+            or os.environ.get('RENDER_INSTANCE_ID')
+            or os.environ.get('RENDER_SERVICE_ID')
+            or os.environ.get('RENDER_API_KEY')
+        )
+        if is_render:
+            render_result = _trigger_render_deploy()
+            if render_result.get('ok'):
+                logger.info('Render deploy triggered automatically (deploy_id=%s)', render_result.get('deploy_id'))
+                _set_result('deploying', True, 'Render deploy triggered — building in cloud...')
+                _persist_update_event('render_deploy_triggered', deployment_id, ver, 'deploying', render_result)
+                if deployment_id:
+                    _report_deployment(deployment_id, 'deploying', 'Render deploy triggered — building in cloud')
+                with _STATE_LOCK:
+                    _pending_deployment = None
+                    _update_status['update_available'] = False
+                    _update_status['deployment_id'] = None
+                    _update_status['current_version'] = ver
+                _persist_state('current_offer', None)
+                _set_result('succeeded', True, 'Render deploy triggered — your app will reload once the build completes (~2 min)')
+                _persist_update_event('apply_succeeded', deployment_id, ver, 'succeeded', {'render_deploy': render_result})
+                if deployment_id:
+                    _report_deployment(deployment_id, 'succeeded', 'Render deploy triggered successfully')
+                return
+            else:
+                err_msg = render_result.get('error') or 'Render deploy failed'
+                logger.warning('Render deploy failed: %s', err_msg)
+                _set_result('failed', False, f'Render cloud deploy failed: {err_msg}')
+                _persist_update_event('apply_failed', deployment_id, ver, 'failed', {'error': err_msg})
+                if deployment_id:
+                    _report_deployment(deployment_id, 'failed', err_msg)
+                return
 
 
         # Check for simulated test mode
