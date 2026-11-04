@@ -78,8 +78,12 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
         const res = await api<any>('/update/status');
         if (unmounted) return;
 
-        // If the backend reports succeeded or applying finished and version matches
-        if (res.last_apply_status === 'succeeded' || (secondsElapsed > 25 && res.update_available === false && !res.applying)) {
+        // If the backend reports completed, succeeded, or update finished
+        if (
+          res.status === 'completed' ||
+          res.last_apply_status === 'succeeded' ||
+          (!res.update_available && !['queued', 'applying', 'deploying', 'building', 'restarting'].includes(res.status))
+        ) {
           triggerSuccess();
           return;
         }

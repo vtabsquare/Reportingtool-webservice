@@ -612,6 +612,12 @@ def update_cancel(payload:dict|None=None,authorization:str|None=Header(default=N
     try:return update_agent.cancel(str((payload or {}).get('reason') or 'Update offer cancelled by an administrator.'))
     except RuntimeError as exc:raise HTTPException(409,str(exc)) from exc
 
+@app.post('/api/v1/update/complete')
+def update_complete(payload:dict|None=None,authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
+    _authorize_update_request(authorization,x_vtab_agent_token)
+    p = payload or {}
+    return update_agent.complete(p.get('commit_sha') or p.get('commitSha'), p.get('version'))
+
 @app.post('/api/v1/update/offer')
 @app.post('/api/v1/update/webhook')
 @app.post('/api/v1/webhook/update')

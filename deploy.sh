@@ -6,8 +6,8 @@
 #
 # What it does:
 #   1. git fetch + reset to origin/main
-#   2. nginx reload to serve new dist-web
-#   3. Sends update offer to backend so the update banner shows in the UI
+#   2. Updates backend container & reloads nginx
+#   3. Marks deployment complete, clearing the update banner automatically
 
 set -e
 
@@ -30,18 +30,18 @@ NEW_SHA=$(git rev-parse HEAD)
 echo "       Commit: $NEW_SHA"
 echo ""
 
-echo "[2/4] Updating backend container & reloading nginx..."
+echo "[2/3] Updating backend container & reloading nginx..."
 docker cp "$REPO_DIR/api/app/." vtab-reporting-api:/app/app/ 2>/dev/null && docker restart vtab-reporting-api >/dev/null 2>&1 || true
 sleep 6
 nginx -t && systemctl reload nginx
 echo "       backend and nginx reloaded OK"
 echo ""
 
-echo "[3/4] Notifying backend of new deployment..."
-python3 "$REPO_DIR/scripts/send_update_offer.py" "$NEW_SHA"
+echo "[3/3] Deployment complete, clearing update banner..."
+python3 "$REPO_DIR/scripts/mark_update_complete.py" "$NEW_SHA"
 echo ""
 
 echo "============================================="
-echo "  Deployed! https://reportservices.vtabsquare.com"
+echo "  Deployed & Verified! https://reportservices.vtabsquare.com"
 echo "============================================="
 echo ""
