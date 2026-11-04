@@ -121,50 +121,65 @@ class UpdateAgent:
             self._save()
 
     def _check_github_update(self) -> None:
+        """Verify if an offered update has already been applied, clearing the banner.
+
+        NOTE: Update offers MUST only originate from the VTAB Reporting Manager application
+        via /offer or /webhook. Pushing commits to GitHub does NOT automatically pop up an update banner.
+        """
         now = time.time()
-        if now - self._last_github_check < 45:
+        if now - self._last_github_check < 15:
             return
         self._last_github_check = now
         if self.state.get("status") in {"queued", "applying", "deploying", "building", "restarting"}:
             return
         try:
-            repo_slug = _env("VTAB_GITHUB_REPO", default="vtabsquare/Reportingtool-webservice")
-            url = f"https://api.github.com/repos/{repo_slug}/commits/main"
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "VTAB-Update-Agent", "Accept": "application/vnd.github.v3+json"},
-            )
-            gh_token = _env("VTAB_GITHUB_TOKEN", "GITHUB_TOKEN")
-            if gh_token:
-                req.add_header("Authorization", f"Bearer {gh_token}")
-            with urllib.request.urlopen(req, timeout=5) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            remote_sha = str(payload.get("sha") or "").strip().lower()
-            commit_info = payload.get("commit", {})
-            message = str(commit_info.get("message") or "").split("\n")[0].strip()[:200]
-            if not remote_sha or len(remote_sha) < 7:
-                return
-
             current = self._current_commit().lower()
-            if current and current != "unknown" and remote_sha.startswith(current[:7]):
-                with self.lock:
-                    if self.state.get("update_available") and str(self.state.get("target_commit_sha") or "").lower().startswith(current[:7]):
-                        self.state.update(update_available=False, status="idle")
-                        self._save()
-                return
+            target = str(self.state.get("target_commit_sha") or "").strip().lower()
 
-            if current and current != "unknown" and not remote_sha.startswith(current[:7]):
-                with self.lock:
-                    if not self.state.get("update_available") or str(self.state.get("target_commit_sha") or "") != remote_sha:
-                        self.state.update(
-                            available_version=_env("VTAB_RELEASE_VERSION", default="6.1.10"),
-                            target_commit_sha=remote_sha,
-                            release_notes=message or f"Release commit {remote_sha[:8]} ready on main branch.",
-                            update_available=True,
-                            status="available",
-                            requested_at=_now(),
-                        )
-                        self._save()
+            # If an update was previously offered and the server has now reached that commit, mark completed:
+            if current and current != "unknown" and target:
+                if target.startswith(current[:7]) or current.startswith(target[:7]):
+                    with self.lock:
+                        if self.state.get("update_available"):
+                            self.state.update(
+                                update_available=False,
+                                status="completed",
+                                completed_at=_now(),
+                                progress=100,
+                                last_error=None,
+                            )
+                            self._save()
+                    return
+
+            # Explicit opt-in only: auto-offering from GitHub commits is disabled by default
+            if _env("VTAB_AUTO_OFFER_GITHUB", default="false").lower() in ("true", "1", "yes"):
+                repo_slug = _env("VTAB_GITHUB_REPO", default="vtabsquare/Reportingtool-webservice")
+                url = f"https://api.github.com/repos/{repo_slug}/commits/main"
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": "VTAB-Update-Agent", "Accept": "application/vnd.github.v3+json"},
+                )
+                gh_token = _env("VTAB_GITHUB_TOKEN", "GITHUB_TOKEN")
+                if gh_token:
+                    req.add_header("Authorization", f"Bearer {gh_token}")
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                remote_sha = str(payload.get("sha") or "").strip().lower()
+                commit_info = payload.get("commit", {})
+                raw_msg = str(commit_info.get("message") or "")
+                message = raw_msg.splitlines()[0].strip()[:200] if raw_msg else ""
+                if remote_sha and len(remote_sha) >= 7 and current and current != "unknown" and not remote_sha.startswith(current[:7]):
+                    with self.lock:
+                        if not self.state.get("update_available") or str(self.state.get("target_commit_sha") or "") != remote_sha:
+                            self.state.update(
+                                available_version=_env("VTAB_RELEASE_VERSION", default="6.1.10"),
+                                target_commit_sha=remote_sha,
+                                release_notes=message or f"Release commit {remote_sha[:8]} ready on main branch.",
+                                update_available=True,
+                                status="available",
+                                requested_at=_now(),
+                            )
+                            self._save()
         except Exception:
             pass
 
