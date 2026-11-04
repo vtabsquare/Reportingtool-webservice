@@ -30,12 +30,13 @@ NEW_SHA=$(git rev-parse HEAD)
 echo "       Commit: $NEW_SHA"
 echo ""
 
-echo "[2/3] Reloading nginx..."
+echo "[2/4] Updating backend container & reloading nginx..."
+docker cp "$REPO_DIR/api/app/." vtab-reporting-api:/app/app/ 2>/dev/null && docker restart vtab-reporting-api >/dev/null 2>&1 || true
 nginx -t && systemctl reload nginx
-echo "       nginx reloaded OK"
+echo "       backend and nginx reloaded OK"
 echo ""
 
-echo "[3/3] Notifying backend of new deployment..."
+echo "[3/4] Notifying backend of new deployment..."
 python3 "$REPO_DIR/scripts/send_update_offer.py" "$NEW_SHA"
 echo ""
 
