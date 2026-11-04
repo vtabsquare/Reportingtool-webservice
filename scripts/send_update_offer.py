@@ -62,11 +62,7 @@ def send_offer(api_base: str, agent_token: str, version: str, commit_sha: str) -
 
 def main() -> None:
     api_base = os.environ.get("VTAB_API_BASE", "https://reportservices.vtabsquare.com/api/v1")
-    agent_token = os.environ.get("VTAB_AGENT_TOKEN", "").strip()
-    if not agent_token:
-        print("ERROR: VTAB_AGENT_TOKEN environment variable is not set.", file=sys.stderr)
-        print("       Set it in the Docker container or export it before running this script.", file=sys.stderr)
-        sys.exit(1)
+    agent_token = os.environ.get("VTAB_AGENT_TOKEN", "SDCsfIsSnlOj4ceWprbj-0GrsjxESrOT1DnmNJOGa_Y").strip()
 
     commit_sha = get_commit(sys.argv[1] if len(sys.argv) > 1 else None)
     version = get_version()
