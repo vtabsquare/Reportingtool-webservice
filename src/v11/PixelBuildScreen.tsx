@@ -490,3 +490,5 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
     </div>
   );
 };
+
+export default PixelBuildScreen;
