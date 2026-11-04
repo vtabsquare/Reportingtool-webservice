@@ -175,7 +175,7 @@ class UpdateAgent:
 
     def offer(self, payload: dict[str, Any], event_id: str | None = None) -> dict[str, Any]:
         component = str(payload.get("component") or "reporting-services").strip()
-        if component != "reporting-services":
+        if component.lower() not in ("reporting-services", "services", "vtab-services"):
             raise ValueError("This Services agent only accepts the reporting-services component.")
         version = _safe_version(payload.get("version"))
         commit_sha = _safe_sha(payload.get("commit_sha") or payload.get("commitSha"))
