@@ -1367,8 +1367,24 @@ def _condition(expr,model,measure_resolver=None,filters=None,in_filter=False):
     return _comparison(e,model,measure_resolver,filters,in_filter=in_filter)
 
 def _is_date_sql(s):
-    s_low = str(s).lower()
-    return 'current_date' in s_low or 'as date' in s_low or 'make_date' in s_low or 'date_trunc' in s_low or 'interval' in s_low
+    """Return True only when the scalar result itself is date-valued.
+
+    A numeric measure can legitimately contain date predicates in aggregate
+    FILTER clauses (PREVIOUSMONTH/DATEADD/TOTALYTD).  Looking for ``AS DATE``
+    or ``INTERVAL`` anywhere in its SQL therefore misclassifies the numeric
+    aggregate as a date and produces comparisons such as DOUBLE > DATE.
+    """
+    value = str(s).strip()
+    while _is_wrapped(value):
+        value = value[1:-1].strip()
+    return bool(
+        re.fullmatch(r'(?is)CURRENT_DATE(?:\s*\(\s*\))?', value)
+        or re.fullmatch(r'(?is)CURRENT_TIMESTAMP(?:\s*\(\s*\))?', value)
+        or re.fullmatch(r'(?is)(?:TRY_)?CAST\s*\(.*\s+AS\s+(?:DATE|TIMESTAMP)\s*\)', value)
+        or re.fullmatch(r'(?is)MAKE_DATE\s*\(.*\)', value)
+        or re.fullmatch(r'(?is)DATE_TRUNC\s*\(.*\)', value)
+        or re.fullmatch(r'(?is)(?:DATE_TRUNC\s*\(.*\)|(?:TRY_)?CAST\s*\(.*\s+AS\s+(?:DATE|TIMESTAMP)\s*\))\s*[+-]\s*INTERVAL\s+.*', value)
+    )
 
 def _comparison(expr,model,measure_resolver=None,filters=None,in_filter=False):
     depth=0;quote=None

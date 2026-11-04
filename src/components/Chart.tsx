@@ -6,6 +6,7 @@ import {resolveTableFieldValueColor} from '../conditionalFormatting';
 import {compareFieldValues} from '../sortingEngine';
 import {stableCategoryColor} from '../categoryColors';
 import MatrixVisual from './MatrixVisual';
+import {ButtonIcon} from '../buttonIcons';
 
 const legendCategoryKey=(value:unknown)=>value===null||value===undefined||String(value).trim()===''?'(Blank)':String(value);
 
@@ -358,7 +359,7 @@ function PremiumMatrix({rows,visual,formats,conditionalValues={}}:{rows:any[];vi
   </div>;
 }
 
-function Chart({ visual, rows, model={}, onPointClick, conditionalValues={} }: { visual: Visual; rows: any[];model?:any; onPointClick?:(field:string,value:any)=>void;conditionalValues?:Record<string,any> }) {
+function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpiEditMode=false, onKpiLayoutChange }: { visual: Visual; rows: any[];model?:any; onPointClick?:(field:string,value:any)=>void;conditionalValues?:Record<string,any>;kpiEditMode?:boolean;onKpiLayoutChange?:(field:string,position:{x:number;y:number})=>void }) {
   if(visual.type==='map')return <Suspense fallback={<div className="visualEmpty">Loading map renderer…</div>}><MapVisual visual={visual} rows={rows} onPointClick={onPointClick}/></Suspense>;
   const axis = visual.bindings.axis?.[visual.drillLevel || 0] || visual.bindings.axis?.slice(-1)[0];
   const valueField = visual.bindings.values?.[0];
@@ -512,29 +513,168 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={} }: {
   if(legendPosition==='top')Object.assign(legend,{top:isTiny?1:3,bottom:'auto'});
   else Object.assign(legend,{bottom:isTiny?1:3,top:'auto'});
 
+  if (visual.type === 'kpi' && visual.format.kpiVersion===3 && visual.format.kpiLayoutMode==='custom') {
+    type KpiCustomElement={key:string;field:string;role:'primary'|'comparison'|'variance'|'arrow'|'detail';primary?:boolean};
+    const elements:KpiCustomElement[]=[
+      ...(visual.bindings.values||[]).map((field,index)=>({key:`primary:${index}:${field}`,field,role:'primary' as const,primary:index===0})),
+      ...(visual.bindings.target||[]).map((field,index)=>({key:`comparison:${index}:${field}`,field,role:'comparison' as const})),
+      ...(visual.bindings.variance||[]).map((field,index)=>({key:`variance:${index}:${field}`,field,role:'variance' as const})),
+      ...(visual.bindings.indicator||[]).map((field,index)=>({key:`arrow:${index}:${field}`,field,role:'arrow' as const})),
+      ...(visual.bindings.tooltips||[]).map((field,index)=>({key:`detail:${index}:${field}`,field,role:'detail' as const})),
+    ];
+    const currentRow=rows[rows.length-1]||{};
+    const customScale=Math.max(.5,Math.min(1,Math.min(visualW/420,visualH/240)));
+    const customFont=(preferred:number,minimum:number)=>Math.max(minimum,Math.round(preferred*customScale));
+    const cleanLabel=(field:string)=>visual.format.fieldDisplayNames?.[field]||field.replace(/^(field:|numericField:|hierarchy:|measure:)/,'').replace(/^.*\./,'').replace(/::.*$/,'').replace(/_/g,' ');
+    const blank=(raw:any)=>raw===undefined||raw===null||raw===''||Number.isNaN(raw);
+    const blankText=visual.format.kpiBlankDisplay==='zero'?'0':visual.format.kpiBlankDisplay==='blank'?'':'—';
+    const display=(field:string)=>blank(currentRow[field])?blankText:formatForField(currentRow[field],field,formats);
+    const positions=visual.format.kpiLayoutPositions||{};
+    const defaultPosition=(index:number)=>({x:index===0?3:52+((index-1)%2)*23,y:index===0?28:24+Math.floor((index-1)/2)*24});
+    const beginMove=(event:React.PointerEvent,key:string,index:number)=>{
+      if(!kpiEditMode||!onKpiLayoutChange)return;
+      event.preventDefault();event.stopPropagation();
+      const container=(event.currentTarget as HTMLElement).parentElement;if(!container)return;
+      const rect=container.getBoundingClientRect(),start=positions[key]||defaultPosition(index),sx=event.clientX,sy=event.clientY;
+      const move=(next:PointerEvent)=>onKpiLayoutChange(key,{x:Math.max(0,Math.min(82,start.x+(next.clientX-sx)/Math.max(1,rect.width)*100)),y:Math.max(10,Math.min(82,start.y+(next.clientY-sy)/Math.max(1,rect.height)*100))});
+      const stop=()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',stop)};
+      window.addEventListener('pointermove',move);window.addEventListener('pointerup',stop,{once:true});
+    };
+    const axisValues=axis?rows.map(row=>row?.[axis]).filter(value=>value!==undefined&&value!==null):[];
+    const dateRange=axisValues.length>1?`${String(axisValues[0])} – ${String(axisValues[axisValues.length-1])}`:'';
+    const primary=(visual.bindings.values||[])[0];
+    const series=primary?rows.map(row=>Number(row?.[primary])).filter(Number.isFinite).slice(-18):[];
+    const min=Math.min(...series,0),max=Math.max(...series,1),range=max-min||1;
+    const points=series.map((value,index)=>`${series.length===1?50:index/(series.length-1)*100},${35-(value-min)/range*28}`).join(' ');
+    const kpiAccent=visual.format.kpiAccentColor||accent;
+    const tile=(item:KpiCustomElement,index:number)=>{
+      const {field,key,primary:isPrimary}=item;
+      const conditional:any=tableConditionalStyle(visual,field,currentRow[field],conditionalValues);
+      const textColor=conditional.__textColor||conditional['--cell-text']||visual.format.labelColor||'#0f172a';
+      const background=conditional['--cell-bg']||visual.format.kpiSurfaceColor||'#ffffff';
+      const position=positions[key]||defaultPosition(index);
+      return <div key={key} className={'unifiedKpiMetric'+(isPrimary?' primary':'')+(kpiEditMode?' editable':'')} onPointerDown={event=>beginMove(event,key,index)} data-kpi-role={item.role} style={{position:'absolute',left:`${position.x}%`,top:`${position.y}%`,width:isPrimary?'44%':'21%',minHeight:isPrimary?customFont(88,50):customFont(58,38),background,color:textColor,border:`1px solid ${kpiEditMode?kpiAccent:'#e2e8f0'}`,borderRadius:customFont(10,6),padding:isPrimary?`${customFont(14,7)}px ${customFont(16,8)}px`:`${customFont(10,5)}px ${customFont(12,6)}px`,boxSizing:'border-box',cursor:kpiEditMode?'move':'default',boxShadow:'0 6px 18px rgba(15,23,42,.08)',fontFamily,overflow:'hidden'}}><small style={{display:'block',fontSize:customFont(10,7),opacity:.72,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cleanLabel(field)}</small><b style={{display:'block',fontSize:isPrimary?customFont(visual.format.fontSize||38,16):customFont(Math.max(14,(visual.format.fontSize||38)*.45),10),fontWeight:visual.format.calloutBold===false?400:700,fontStyle:visual.format.calloutItalic?'italic':'normal',marginTop:customFont(5,2),overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{display(field)}</b>{kpiEditMode&&<span className="kpiDragHint">Drag</span>}</div>;
+    };
+    const icon=visual.format.kpiShowIcon===false?null:<span className="premiumKpiIcon" style={{background:`${kpiAccent}18`,color:kpiAccent}}><ButtonIcon name={visual.format.kpiIcon||'chart'} size={18}/></span>;
+    return <div className={'unifiedKpiCanvas'+(kpiEditMode?' editing':'')} style={{position:'relative',height:'100%',minHeight:190,overflow:'hidden',background:visual.format.kpiSurfaceColor||'#ffffff','--kpi-accent':kpiAccent} as any}><div className="advancedKpiHeader" style={{background:visual.format.kpiHeaderColor||'#60a5fa'}}><span className="advancedKpiHeaderIdentity">{icon}<b>{visual.title||cleanLabel(primary||'KPI')}</b></span>{visual.format.kpiShowDateRange!==false&&dateRange&&<small>{dateRange}</small>}</div>{elements.map(tile)}{visual.format.kpiShowTrend!==false&&series.length>1&&<div className="premiumSparkline" style={{position:'absolute',left:'3%',right:'3%',bottom:4,height:44}}><svg viewBox="0 0 100 38" preserveAspectRatio="none">{visual.format.kpiTrendStyle!=='line'&&<polyline points={`0,38 ${points} 100,38`} fill={`${kpiAccent}18`} stroke="none"/>}<polyline points={points} fill="none" stroke={kpiAccent} strokeWidth="2.6" vectorEffect="non-scaling-stroke"/></svg></div>}{!elements.length&&<div className="visualEmpty">Add a primary KPI value.</div>}</div>;
+  }
+
   if (visual.type === 'kpi') {
-    const seriesValues=rows.map(r=>Number(r?.[valueField||''])).filter(Number.isFinite);
-    const current=seriesValues.length?seriesValues[seriesValues.length-1]:Number(rows?.[0]?.[valueField||'']);
-    const explicitTarget=targetField?Number(rows?.[rows.length-1]?.[targetField]):Number.NaN;
-    const previous=seriesValues.length>1?seriesValues[seriesValues.length-2]:Number.NaN;
-    const compare=Number.isFinite(explicitTarget)?explicitTarget:previous;
+    const template=visual.format.kpiTemplate||'trendCard';
+    const kpiScale=Math.max(.5,Math.min(1,Math.min(visualW/420,visualH/240)));
+    const kpiFont=(preferred:number,minimum:number)=>Math.max(minimum,Math.round(preferred*kpiScale));
+    const kpiCompact=visualW<340||visualH<185;
+    const kpiCardClass='premiumKpiCard'+(kpiCompact?' compact':'');
+    const primary=valueField||'';
+    const targetFields=visual.bindings.target||[];
+    const varianceFields=visual.bindings.variance||[];
+    const indicatorFields=visual.bindings.indicator||[];
+    const colorFields=visual.bindings.color||[];
+    const varianceField=varianceFields[0];
+    const indicatorField=indicatorFields[0];
+    const axisValue=(row:any)=>axis?row?.[axis]:undefined;
+    const dateNumber=(value:any)=>{const parsed=value instanceof Date?value.getTime():new Date(value).getTime();return Number.isFinite(parsed)?parsed:Number.NaN};
+    const ordered=[...rows].sort((a,b)=>{if(!axis)return 0;const ad=dateNumber(axisValue(a)),bd=dateNumber(axisValue(b));if(Number.isFinite(ad)&&Number.isFinite(bd))return ad-bd;const an=Number(axisValue(a)),bn=Number(axisValue(b));return Number.isFinite(an)&&Number.isFinite(bn)?an-bn:0});
+    const validRows=ordered.filter(row=>Number.isFinite(Number(row?.[primary])));
+    const currentRow=(template==='categoryInsight'?[...validRows].sort((a,b)=>Number(b?.[primary])-Number(a?.[primary]))[0]:validRows[validRows.length-1])||ordered[ordered.length-1]||{};
+    const current=Number(currentRow?.[primary]);
+    const currentIndex=Math.max(0,ordered.indexOf(currentRow));
+    const comparisonMode=visual.format.kpiComparisonMode||'target';
+    const findPreviousIndex=()=>{
+      if(currentIndex<=0)return -1;
+      if(!axis||comparisonMode==='previousPoint'||comparisonMode==='target')return currentIndex-1;
+      const currentDate=new Date(axisValue(currentRow));if(Number.isNaN(currentDate.getTime()))return currentIndex-1;
+      const monthDistance=comparisonMode==='previousMonth'?1:comparisonMode==='previousQuarter'?3:comparisonMode==='previousYear'?12:1;
+      const wantedYear=currentDate.getFullYear()-Math.floor((currentDate.getMonth()-monthDistance<0?12:0)/12);
+      const wantedMonth=(currentDate.getMonth()-monthDistance+1200)%12;
+      for(let i=currentIndex-1;i>=0;i--){const candidate=new Date(axisValue(ordered[i]));if(!Number.isNaN(candidate.getTime())&&candidate.getFullYear()===wantedYear&&candidate.getMonth()===wantedMonth)return i}
+      return currentIndex-1;
+    };
+    const explicitTarget=targetField?Number(currentRow?.[targetField]):Number.NaN;
+    const previousRow=ordered[findPreviousIndex()]||{};
+    const previous=Number(previousRow?.[primary]);
+    const compare=comparisonMode==='target'?explicitTarget:previous;
     const diff=Number.isFinite(current)&&Number.isFinite(compare)?current-compare:Number.NaN;
     const pct=Number.isFinite(diff)&&compare!==0?diff/Math.abs(compare)*100:Number.NaN;
+    const varianceMode=visual.format.kpiVarianceMode||'measure';
+    const arrowMode=visual.format.kpiArrowMode||'measure';
+    const parseIndicator=(value:any)=>{if(value===undefined||value===null||value==='')return 0;const numeric=Number(value);if(Number.isFinite(numeric))return numeric>0?1:numeric<0?-1:0;const text=String(value).trim().toLowerCase();if(['up','positive','increase','increased','good','success','true','yes','▲','↑'].includes(text))return 1;if(['down','negative','decrease','decreased','bad','failure','false','no','▼','↓'].includes(text))return -1;return 0};
+    const automaticSign=Number.isFinite(diff)?(diff>0?1:diff<0?-1:0):0;
     const favorable=visual.format.favorableDirection||'up';
-    const good=Number.isFinite(diff)&&((favorable==='up'&&diff>0)||(favorable==='down'&&diff<0));
-    const bad=Number.isFinite(diff)&&((favorable==='up'&&diff<0)||(favorable==='down'&&diff>0));
-    const indicatorColor=good?(visual.format.positiveColor||'#16a34a'):bad?(visual.format.negativeColor||'#dc2626'):(visual.format.neutralColor||'#64748b');
-    const arrow=Number.isFinite(diff)?(diff>0?'↑':diff<0?'↓':'→'):'';
+    const statusCount=Math.max(
+      varianceMode==='measure'?varianceFields.length:varianceMode==='automatic'?1:0,
+      arrowMode==='measure'?indicatorFields.length:arrowMode==='automatic'?1:0,
+      colorFields.length,
+    );
+    const validMeasureColor=(value:any)=>{const candidate=String(value??'').trim();return /^(#[0-9a-f]{3,8}|(?:rgb|hsl)a?\([^)]*\)|[a-z]+)$/i.test(candidate)?candidate:''};
+    const statusRows=Array.from({length:statusCount},(_,index)=>{
+      const varianceName=varianceMode==='measure'?varianceFields[index]:undefined;
+      const indicatorName=arrowMode==='measure'?indicatorFields[index]:undefined;
+      const colorName=colorFields[index]||colorFields[0];
+      const boundVariance=varianceName?currentRow?.[varianceName]:undefined;
+      const varianceText=varianceMode==='hidden'?'':varianceMode==='measure'
+        ?(varianceName&&boundVariance!==undefined&&boundVariance!==null&&boundVariance!==''?formatForField(boundVariance,varianceName,formats):'')
+        :(index===0&&Number.isFinite(pct)?`${Math.abs(pct).toFixed(1)}%`:'');
+      const indicatorSign=arrowMode==='hidden'?0:arrowMode==='measure'?parseIndicator(indicatorName?currentRow?.[indicatorName]:undefined):(index===0?automaticSign:0);
+      const good=indicatorSign!==0&&((favorable==='up'&&indicatorSign>0)||(favorable==='down'&&indicatorSign<0));
+      const bad=indicatorSign!==0&&((favorable==='up'&&indicatorSign<0)||(favorable==='down'&&indicatorSign>0));
+      const fallbackColor=good?(visual.format.positiveColor||'#16a34a'):bad?(visual.format.negativeColor||'#dc2626'):(visual.format.neutralColor||'#64748b');
+      const indicatorColor=validMeasureColor(colorName?currentRow?.[colorName]:undefined)||fallbackColor;
+      const arrow=arrowMode==='hidden'?'':indicatorSign>0?'↑':indicatorSign<0?'↓':(arrowMode==='automatic'&&index===0&&Number.isFinite(diff)?'→':'');
+      return {index,varianceName,indicatorName,colorName,varianceText,indicatorSign,indicatorColor,arrow};
+    }).filter(item=>item.varianceText||item.arrow);
+    const primaryStatus=statusRows[0];
+    const varianceText=primaryStatus?.varianceText||'';
+    const indicatorColor=primaryStatus?.indicatorColor||visual.format.neutralColor||'#64748b';
+    const arrow=primaryStatus?.arrow||'';
+    const seriesValues=validRows.map(r=>Number(r?.[primary]));
     const spark=seriesValues.slice(-18);
     const min=Math.min(...spark,0),max=Math.max(...spark,1),range=max-min||1;
     const points=spark.map((v,i)=>`${spark.length===1?50:(i/(spark.length-1))*100},${34-((v-min)/range)*26}`).join(' ');
-    const metricLabel=valueField||'Metric';
-    const icon=(metricLabel.match(/sales|revenue|amount|cost|profit|price/i)?'₹':metricLabel.match(/customer|employee|user|people/i)?'●':metricLabel.match(/order|invoice|ticket|case/i)?'▣':'◆');
-    return <div className="premiumKpiCard">
-      <div className="premiumKpiTop"><span className="premiumKpiIcon" style={{background:`${accent}16`,color:accent}}>{icon}</span><div><small>{metricLabel}</small>{visual.format.subtitleVisible&&visual.format.subtitle&&<span>{visual.format.subtitle}</span>}</div></div>
-      <div className="premiumKpiMain">{visual.format.calloutVisible!==false&&<b style={{fontSize:visual.format.fontSize||38,color:visual.format.labelColor||'#0f172a',fontWeight:visual.format.calloutFontWeight||700}}>{fmt(current)}</b>}{visual.format.indicatorEnabled!==false&&arrow&&<div className="premiumKpiDelta" style={{color:indicatorColor}}><strong>{arrow}{Number.isFinite(pct)?` ${Math.abs(pct).toFixed(1)}%`:''}</strong><span>{targetField?`vs ${targetField}`:'vs previous'}</span></div>}</div>
-      {spark.length>1&&<div className="premiumSparkline"><svg viewBox="0 0 100 38" preserveAspectRatio="none"><polyline points={points} fill="none" stroke={accent} strokeWidth="2.6" vectorEffect="non-scaling-stroke"/><polyline points={`0,38 ${points} 100,38`} fill={`${accent}10`} stroke="none"/></svg></div>}
-    </div>;
+    const canonicalBinding=(field?:string)=>String(field||'').replace(/^(field:|numericField:|hierarchy:|measure:)/,'').split('::')[0].trim().toLowerCase();
+    const cleanLabel=(field?:string)=>visual.format.fieldDisplayNames?.[String(field||'')]||String(field||'Metric').replace(/^(field:|numericField:|hierarchy:|measure:)/,'').replace(/^.*\./,'').replace(/::.*$/,'').replace(/_/g,' ');
+    const metricLabel=cleanLabel(primary);
+    const targetRows=targetFields.map(field=>({field,label:cleanLabel(field),value:currentRow?.[field]})).filter(item=>item.value!==undefined&&item.value!==null&&item.value!=='').map(item=>({...item,display:formatForField(item.value,item.field,formats)}));
+    const reservedFields=new Set([primary,...targetFields,...varianceFields,...indicatorFields,...colorFields].filter(Boolean).map(canonicalBinding));
+    const detailFields=(visual.bindings.tooltips||[]).filter((field,index,list)=>field&&!reservedFields.has(canonicalBinding(field))&&list.findIndex(other=>canonicalBinding(other)===canonicalBinding(field))===index);
+    const detailRows=detailFields.map(field=>({field,label:cleanLabel(field),value:currentRow?.[field]})).filter(item=>item.value!==undefined&&item.value!==null&&item.value!=='').map(item=>({...item,display:formatForField(item.value,item.field,formats)}));
+    const compareLabel=comparisonMode==='target'?(Number.isFinite(explicitTarget)?cleanLabel(targetField):''):comparisonMode.replace('previous','Previous ');
+    const firstAxis=ordered.length?axisValue(ordered[0]):undefined,lastAxis=ordered.length?axisValue(ordered[ordered.length-1]):undefined;
+    const dateRange=axis&&firstAxis!==undefined&&lastAxis!==undefined?`${String(firstAxis)} – ${String(lastAxis)}`:'';
+    const kpiAccent=visual.format.kpiAccentColor||accent;
+    const surfaceStyle={'--kpi-surface':visual.format.kpiSurfaceColor||'#ffffff','--kpi-header':visual.format.kpiHeaderColor||'#60a5fa','--kpi-accent':kpiAccent,'--kpi-scale':kpiScale} as any;
+    const header=<div className="advancedKpiHeader"><b style={{fontSize:kpiFont(11,8)}}>{visual.title||metricLabel}</b>{visual.format.kpiShowDateRange!==false&&!kpiCompact&&dateRange&&<small>{dateRange}</small>}</div>;
+    const iconSize=kpiFont(18,12);
+    const icon=visual.format.kpiShowIcon===false?null:<span className="premiumKpiIcon" style={{background:`${kpiAccent}18`,color:kpiAccent,width:kpiFont(34,22),height:kpiFont(34,22)}}><ButtonIcon name={visual.format.kpiIcon||'chart'} size={iconSize}/></span>;
+    const labeledStatusRows=statusRows.map(item=>({
+      ...item,
+      label:item.varianceName?cleanLabel(item.varianceName):item.indicatorName?cleanLabel(item.indicatorName):compareLabel,
+      display:`${item.arrow}${item.arrow&&item.varianceText?' ':''}${item.varianceText}`.trim(),
+    })).filter(item=>item.display);
+    const primaryStatusRow=labeledStatusRows[0];
+    const statusLabel=primaryStatusRow?.label||'';
+    const calloutWeight=visual.format.calloutBold===false?400:(visual.format.calloutFontWeight||700);
+    const calloutStyle={fontWeight:calloutWeight,fontStyle:visual.format.calloutItalic?'italic':'normal'} as const;
+    const varianceAlignment=visual.format.kpiVarianceAlignment||'right';
+    const variancePositionStyle=varianceAlignment==='left'?{marginRight:'auto'}:varianceAlignment==='center'?{marginLeft:'auto',marginRight:'auto'}:{marginLeft:'auto'};
+    const delta=visual.format.indicatorEnabled!==false&&primaryStatusRow?<span className="advancedKpiDeltaBadge" style={{color:primaryStatusRow.indicatorColor,fontSize:kpiFont(10,7),...variancePositionStyle}}>{primaryStatusRow.display}</span>:null;
+    const secondaryStatusRows=visual.format.indicatorEnabled===false?labeledStatusRows:labeledStatusRows.slice(primaryStatusRow?1:0);
+    const supplementalRows=[
+      ...targetRows.map(item=>({...item,role:'comparison' as const,key:`target:${item.field}`,color:undefined})),
+      ...secondaryStatusRows.map(item=>({role:'variance' as const,field:item.varianceName||item.indicatorName||`status-${item.index}`,value:item.varianceName?currentRow?.[item.varianceName]:item.indicatorName?currentRow?.[item.indicatorName]:undefined,key:`status:${item.index}:${item.varianceName||''}:${item.indicatorName||''}`,label:item.label,display:item.display,color:item.indicatorColor})),
+      ...detailRows.map(item=>({...item,role:'detail' as const,key:`detail:${item.field}`,color:undefined})),
+    ];
+    const detailLimit=kpiCompact?3:8;
+    const details=visual.format.kpiShowDetails!==false&&supplementalRows.length?<div className="advancedKpiDetails" style={{fontSize:kpiFont(9,7)}}>{supplementalRows.slice(0,detailLimit).map(item=>{const conditional:any=tableConditionalStyle(visual,item.field,item.value,conditionalValues);const background=conditional['--cell-bg'];const color=conditional.__textColor||conditional['--cell-text']||item.color;const showLabel=item.role==='comparison'?visual.format.kpiComparisonLabelVisible!==false:item.role==='variance'?visual.format.kpiVarianceLabelVisible!==false:visual.format.kpiDetailLabelVisible!==false;const alignment=item.role==='comparison'?(visual.format.kpiComparisonAlignment||'right'):item.role==='variance'?(visual.format.kpiVarianceAlignment||'right'):(visual.format.kpiDetailAlignment||'right');return <div className={'advancedKpiDetail align-'+alignment} key={item.key} style={{background,color,borderRadius:background?5:undefined,padding:background?'2px 5px':undefined,textAlign:alignment}}>{showLabel&&<span>{item.label}</span>}<b style={{color,marginLeft:alignment==='right'?'auto':undefined,marginRight:alignment==='left'?'auto':undefined}}>{item.display}</b></div>})}</div>:null;
+    const sparkline=visual.format.kpiShowTrend!==false&&!kpiCompact&&spark.length>1?<div className="premiumSparkline"><svg viewBox="0 0 100 38" preserveAspectRatio="none">{visual.format.kpiTrendStyle!=='line'&&<polyline points={`0,38 ${points} 100,38`} fill={`${kpiAccent}18`} stroke="none"/>}<polyline points={points} fill="none" stroke={kpiAccent} strokeWidth="2.6" vectorEffect="non-scaling-stroke"/></svg></div>:null;
+    if(template==='periodGrid'){
+      const periods=validRows.slice(-Math.max(2,visual.format.kpiPeriodCount||4));
+      return <div className={kpiCardClass} style={{...surfaceStyle,'--kpi-period-count':periods.length} as any}>{header}<div className="advancedKpiPeriods">{periods.map((row,index)=><div className="advancedKpiPeriod" key={`${axisValue(row)}-${index}`}><small>{String(axisValue(row)??`Period ${index+1}`)}</small><b style={{fontSize:kpiFont(15,10)}}>{fmt(row?.[primary])}</b>{targetFields.map(field=>row?.[field]!==undefined&&row?.[field]!==null&&row?.[field]!==''?<span key={field}>{visual.format.kpiComparisonLabelVisible!==false&&<>{cleanLabel(field)}: </>}{formatForField(row?.[field],field,formats)}</span>:null)}</div>)}</div></div>;
+    }
+    if(template==='categoryInsight')return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="advancedKpiOperational"><div className="advancedKpiCategory"><span>{axis?cleanLabel(axis):'Category'}</span><strong style={{fontSize:kpiFont(18,12)}}>{String(axisValue(currentRow)??metricLabel)}</strong>{visual.format.calloutVisible!==false&&<b style={{fontSize:kpiFont(visual.format.fontSize||30,16),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{fmt(current)}</b>}{delta}</div>{details}</div>{sparkline}</div>;
+    if(template==='operational')return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="advancedKpiOperational"><div><div className="premiumKpiTop">{icon}<div><small style={{fontSize:kpiFont(10,7)}}>{metricLabel}</small>{(visual.format.subtitle||compareLabel)&&<span>{visual.format.subtitle||compareLabel}</span>}</div></div><div className="premiumKpiMain">{visual.format.calloutVisible!==false&&<b style={{fontSize:kpiFont(visual.format.fontSize||38,17),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{fmt(current)}</b>}{delta}</div></div>{details}</div>{sparkline}</div>;
+    if(template==='executive')return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="premiumKpiMain"><div><div className="premiumKpiTop">{icon}<div><small style={{fontSize:kpiFont(10,7)}}>{metricLabel}</small></div></div>{visual.format.calloutVisible!==false&&<b style={{display:'block',marginTop:kpiCompact?3:8,fontSize:kpiFont(visual.format.fontSize||38,17),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{fmt(current)}</b>}{delta&&<div className={'premiumKpiDelta align-'+varianceAlignment} style={{color:primaryStatusRow?.indicatorColor||indicatorColor,...variancePositionStyle}}>{delta}{statusLabel&&visual.format.kpiVarianceLabelVisible!==false&&<span>{statusLabel}</span>}</div>}</div>{details}</div>{sparkline}</div>;
+    return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="premiumKpiTop">{icon}<div><small style={{fontSize:kpiFont(10,7)}}>{metricLabel}</small>{visual.format.subtitleVisible&&visual.format.subtitle&&<span>{visual.format.subtitle}</span>}</div></div><div className="premiumKpiMain">{visual.format.calloutVisible!==false&&<b style={{fontSize:kpiFont(visual.format.fontSize||38,17),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{fmt(current)}</b>}{delta&&<div className={'premiumKpiDelta align-'+varianceAlignment} style={{color:indicatorColor,...variancePositionStyle}}>{delta}{statusLabel&&visual.format.kpiVarianceLabelVisible!==false&&<span>{statusLabel}</span>}</div>}</div>{details}{sparkline}</div>;
   }
 
   if (visual.type === 'card') {
@@ -547,7 +687,7 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={} }: {
     const trans=visual.format.backgroundEnabled===false?100:Math.max(0,Math.min(100,visual.format.cardBackgroundTransparency??0));
     const imagePosition=visual.format.cardImagePosition||'left';
     const image=visual.format.cardImageEnabled&&visual.format.cardImageUrl?<img className="powerCardImage" src={visual.format.cardImageUrl} alt="" style={{width:visual.format.cardImageSize||44,height:visual.format.cardImageSize||44,objectFit:visual.format.cardImageFit||'contain'}}/>:null;
-    return <div className="powerCardGrid" style={{gridTemplateColumns:columns,columnGap:visual.format.cardGapX??10,rowGap:visual.format.cardGapY??10}}>{fields.map(field=>{const category=visual.format.categoryLabelText||(visual.format as any).fieldDisplayNames?.[field]||(field||'Value').replace(/^.*\./,'').replace(/_/g,' ');const referenceValue=targetField?row[targetField]:undefined;const categoryNode=visual.format.categoryLabelVisible!==false?<div className="powerCardCategory" style={{color:visual.format.categoryLabelColor||'#616161',fontSize:visual.format.categoryLabelFontSize||11,fontWeight:visual.format.categoryLabelFontWeight||400}}>{category}</div>:null;const referenceNode=visual.format.referenceLabelsVisible?<div className="powerCardReference" style={{color:visual.format.referenceLabelColor||'#616161',fontSize:visual.format.referenceLabelFontSize||10}}><span>{visual.format.referenceLabelText||'Reference'}</span><b>{targetField?formatForField(referenceValue,targetField,formats):'-'}</b></div>:null;return <div key={field} className={'powerCardItem '+(image?'image-'+imagePosition:'image-none')} style={{background:`color-mix(in srgb, ${visual.format.cardBackground||'#ffffff'} ${100-trans}%, transparent)`,border:visual.format.cardBorderVisible?`${visual.format.cardBorderWidth||1}px solid ${visual.format.cardBorderColor||'#e2e8f0'}`:'none',borderRadius:visual.format.cardCornerRadius??8,padding:visual.format.cardPadding??12,minHeight:visual.format.cardMinHeight||92,alignItems:justify,justifyContent:vertical,textAlign:visual.format.cardHorizontalAlign||'center'}}>{imagePosition==='background'&&image?<div className="powerCardImageBackground">{image}</div>:null}{['left','above'].includes(imagePosition)&&image}{visual.format.referenceLabelPosition==='above'&&referenceNode}{visual.format.categoryLabelPosition==='above'&&categoryNode}{visual.format.calloutVisible!==false&&<div className="advancedCardValue" style={{color:visual.format.labelColor||'#242424',fontFamily,fontSize:visual.format.fontSize||28,fontWeight:visual.format.calloutFontWeight||700,whiteSpace:visual.format.calloutWrap===false?'nowrap':'normal'}}>{formatForField(row[field],field,formats)}</div>}{visual.format.categoryLabelPosition!=='above'&&categoryNode}{visual.format.referenceLabelPosition!=='above'&&referenceNode}{['right','below'].includes(imagePosition)&&image}</div>})}</div>;
+    return <div className="powerCardGrid" style={{gridTemplateColumns:columns,columnGap:visual.format.cardGapX??10,rowGap:visual.format.cardGapY??10}}>{fields.map(field=>{const category=visual.format.categoryLabelText||(visual.format as any).fieldDisplayNames?.[field]||(field||'Value').replace(/^.*\./,'').replace(/_/g,' ');const referenceValue=targetField?row[targetField]:undefined;const categoryNode=visual.format.categoryLabelVisible!==false?<div className="powerCardCategory" style={{color:visual.format.categoryLabelColor||'#616161',fontSize:visual.format.categoryLabelFontSize||11,fontWeight:visual.format.categoryLabelFontWeight||400}}>{category}</div>:null;const referenceNode=visual.format.referenceLabelsVisible?<div className="powerCardReference" style={{color:visual.format.referenceLabelColor||'#616161',fontSize:visual.format.referenceLabelFontSize||10}}><span>{visual.format.referenceLabelText||'Reference'}</span><b>{targetField?formatForField(referenceValue,targetField,formats):'-'}</b></div>:null;return <div key={field} className={'powerCardItem '+(image?'image-'+imagePosition:'image-none')} style={{background:`color-mix(in srgb, ${visual.format.cardBackground||'#ffffff'} ${100-trans}%, transparent)`,border:visual.format.cardBorderVisible?`${visual.format.cardBorderWidth||1}px solid ${visual.format.cardBorderColor||'#e2e8f0'}`:'none',borderRadius:visual.format.cardCornerRadius??8,padding:visual.format.cardPadding??12,minHeight:visual.format.cardMinHeight||92,alignItems:justify,justifyContent:vertical,textAlign:visual.format.cardHorizontalAlign||'center'}}>{imagePosition==='background'&&image?<div className="powerCardImageBackground">{image}</div>:null}{['left','above'].includes(imagePosition)&&image}{visual.format.referenceLabelPosition==='above'&&referenceNode}{visual.format.categoryLabelPosition==='above'&&categoryNode}{visual.format.calloutVisible!==false&&<div className="advancedCardValue" style={{color:visual.format.labelColor||'#242424',fontFamily,fontSize:visual.format.fontSize||28,fontWeight:visual.format.calloutBold===false?400:(visual.format.calloutFontWeight||700),fontStyle:visual.format.calloutItalic?'italic':'normal',whiteSpace:visual.format.calloutWrap===false?'nowrap':'normal'}}>{formatForField(row[field],field,formats)}</div>}{visual.format.categoryLabelPosition!=='above'&&categoryNode}{visual.format.referenceLabelPosition!=='above'&&referenceNode}{['right','below'].includes(imagePosition)&&image}</div>})}</div>;
   }
 
   if (visual.type === 'multirowcard') {
@@ -560,7 +700,7 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={} }: {
     const autoFit=visual.format.cardAutoFit!==false,columns=visual.format.cardLayoutDirection==='vertical'?'1fr':autoFit?`repeat(auto-fit,minmax(${visual.format.cardMinWidth||150}px,1fr))`:`repeat(${Math.max(1,visual.format.cardsPerRow||2)},minmax(0,1fr))`;
     const justify={left:'flex-start',center:'center',right:'flex-end'}[visual.format.cardHorizontalAlign||'left'];const align={top:'flex-start',middle:'center',bottom:'flex-end'}[visual.format.cardVerticalAlign||'middle'];
     const trans=visual.format.backgroundEnabled===false?100:Math.max(0,Math.min(100,visual.format.cardBackgroundTransparency??0));
-    return <div className="multiCardGrid premiumMultiCardGrid" style={{'--multi-grid-columns':columns,columnGap:visual.format.cardGapX??10,rowGap:visual.format.cardGapY??10} as any}>{fields.map((field,i)=>{const local=visual.format.cardStyles?.[field]||{},c=local.accent||tilePalette[i%tilePalette.length],iconPosition=visual.format.cardIconPosition||'left',labelOrder=visual.format.cardTitlePosition==='bottom'?3:1,valueOrder=visual.format.cardValuePosition==='top'?0:visual.format.cardValuePosition==='bottom'?4:2,localBorder=local.borderVisible??visual.format.cardBorderVisible;return <div className={'multiCardItem premiumMultiCardItem icon-'+iconPosition} key={field} style={{'--metric-color':c,'--multi-bg':`color-mix(in srgb, ${local.background||visual.format.cardBackground||'#ffffff'} ${100-trans}%, transparent)`,'--multi-border':localBorder?`${local.borderWidth||visual.format.cardBorderWidth||1}px solid ${local.borderColor||visual.format.cardBorderColor||'#e2e8f0'}`:'none','--multi-radius':`${local.cornerRadius??visual.format.cardCornerRadius??8}px`,'--multi-padding':`${visual.format.cardPadding??12}px`,'--multi-min-height':`${visual.format.cardMinHeight||92}px`,'--multi-label-color':local.labelColor||visual.format.categoryLabelColor||'#616161','--multi-label-size':`${visual.format.categoryLabelFontSize||11}px`,'--multi-label-weight':visual.format.categoryLabelFontWeight||400,'--multi-value-color':local.valueColor||visual.format.labelColor||'#242424','--multi-value-size':`${visual.format.fontSize||28}px`,'--multi-value-weight':visual.format.calloutFontWeight||700,justifyContent:align,textAlign:visual.format.cardHorizontalAlign||'left'} as any}><span className="premiumMultiIcon" style={{background:`${c}14`,color:c,width:visual.format.cardIconSize||34,height:visual.format.cardIconSize||34,fontSize:Math.max(12,(visual.format.cardIconSize||34)*.4),alignSelf:justify}}>{iconFor(field)}</span><div className="premiumMultiContent" style={{alignItems:justify}}>{visual.format.categoryLabelVisible!==false&&<span className="premiumMultiLabel" style={{order:labelOrder}}>{visual.format.categoryLabelText||(visual.format as any).fieldDisplayNames?.[field]||(field||'').replace(/^.*\./,'').replace(/_/g,' ')}</span>}{visual.format.calloutVisible!==false&&<b style={{order:valueOrder,whiteSpace:visual.format.calloutWrap===false?'nowrap':'normal'}}>{niceValue(field,row[field])}</b>}<small style={{order:5}}>Current value</small></div></div>})}</div>;
+    return <div className="multiCardGrid premiumMultiCardGrid" style={{'--multi-grid-columns':columns,columnGap:visual.format.cardGapX??10,rowGap:visual.format.cardGapY??10} as any}>{fields.map((field,i)=>{const local=visual.format.cardStyles?.[field]||{},c=local.accent||tilePalette[i%tilePalette.length],iconPosition=visual.format.cardIconPosition||'left',labelOrder=visual.format.cardTitlePosition==='bottom'?3:1,valueOrder=visual.format.cardValuePosition==='top'?0:visual.format.cardValuePosition==='bottom'?4:2,localBorder=local.borderVisible??visual.format.cardBorderVisible;return <div className={'multiCardItem premiumMultiCardItem icon-'+iconPosition} key={field} style={{'--metric-color':c,'--multi-bg':`color-mix(in srgb, ${local.background||visual.format.cardBackground||'#ffffff'} ${100-trans}%, transparent)`,'--multi-border':localBorder?`${local.borderWidth||visual.format.cardBorderWidth||1}px solid ${local.borderColor||visual.format.cardBorderColor||'#e2e8f0'}`:'none','--multi-radius':`${local.cornerRadius??visual.format.cardCornerRadius??8}px`,'--multi-padding':`${visual.format.cardPadding??12}px`,'--multi-min-height':`${visual.format.cardMinHeight||92}px`,'--multi-label-color':local.labelColor||visual.format.categoryLabelColor||'#616161','--multi-label-size':`${visual.format.categoryLabelFontSize||11}px`,'--multi-label-weight':visual.format.categoryLabelFontWeight||400,'--multi-value-color':local.valueColor||visual.format.labelColor||'#242424','--multi-value-size':`${visual.format.fontSize||28}px`,'--multi-value-weight':visual.format.calloutBold===false?400:(visual.format.calloutFontWeight||700),'--multi-value-style':visual.format.calloutItalic?'italic':'normal',justifyContent:align,textAlign:visual.format.cardHorizontalAlign||'left'} as any}><span className="premiumMultiIcon" style={{background:`${c}14`,color:c,width:visual.format.cardIconSize||34,height:visual.format.cardIconSize||34,fontSize:Math.max(12,(visual.format.cardIconSize||34)*.4),alignSelf:justify}}>{iconFor(field)}</span><div className="premiumMultiContent" style={{alignItems:justify}}>{visual.format.categoryLabelVisible!==false&&<span className="premiumMultiLabel" style={{order:labelOrder}}>{visual.format.categoryLabelText||(visual.format as any).fieldDisplayNames?.[field]||(field||'').replace(/^.*\./,'').replace(/_/g,' ')}</span>}{visual.format.calloutVisible!==false&&<b style={{order:valueOrder,fontStyle:visual.format.calloutItalic?'italic':'normal',whiteSpace:visual.format.calloutWrap===false?'nowrap':'normal'}}>{niceValue(field,row[field])}</b>}<small style={{order:5}}>Current value</small></div></div>})}</div>;
   }
 
   if (visual.type === 'progress') {
@@ -1626,6 +1766,7 @@ function RadarChartWrapper({ visual, names, values, valueField, gridLineColor, a
 }
 
 export default React.memo(Chart, (prev, next) => {
+  if (prev.kpiEditMode !== next.kpiEditMode) return false;
   if (prev.rows !== next.rows) return false;
   if (prev.visual.type !== next.visual.type) return false;
   if (prev.visual.drillLevel !== next.visual.drillLevel) return false;

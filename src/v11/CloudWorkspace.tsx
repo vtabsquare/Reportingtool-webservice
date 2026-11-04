@@ -8,8 +8,8 @@ import ReportServiceSettings from "./ReportServiceSettings";
 import SemanticModelService from "./SemanticModelService";
 import NotificationCenter from "./NotificationCenter";
 import NotificationSettingsDialog from "./NotificationSettingsDialog";
+import ServicesUpdateExperience from "./ServicesUpdateExperience";
 import HelpSupportView from "./HelpSupportView";
-import { PixelBuildScreen } from "./PixelBuildScreen";
 import { resolveReportUiPermissions } from '../uiPermissions';
 import { 
   Home, Plus, Compass, Layers, User, Search, Settings, HelpCircle, 
@@ -138,44 +138,6 @@ export default function CloudWorkspace({ session }: { session: any }) {
   const [menuReportId, setMenuReportId] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
-  const [updateStatus, setUpdateStatus] = useState<{update_available?:boolean;available_version?:string;release_notes?:string;applying?:boolean;last_apply_status?:string;current_version?:string}|null>(null);
-  const [isBuildingUpdate, setIsBuildingUpdate] = useState<boolean>(() => {
-    try {
-      return Boolean(localStorage.getItem('vtab_building_update'));
-    } catch {
-      return false;
-    }
-  });
-
-  useEffect(() => {
-    const checkUpdate = async () => {
-      try {
-        const d = await api<any>('/update/status');
-        setUpdateStatus(d);
-      } catch {}
-    };
-    checkUpdate();
-    const interval = setInterval(checkUpdate, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const applyServicesUpdate = async () => {
-    const targetVer = updateStatus?.available_version || 'latest';
-    if (!confirm(`Apply update to version ${targetVer}? The cloud container will be rebuilt on Render.`)) return;
-    try {
-      try {
-        localStorage.setItem('vtab_building_update', targetVer);
-      } catch {}
-      setIsBuildingUpdate(true);
-      await api('/update/apply', { method: 'POST' });
-    } catch (e: any) {
-      alert(`Update trigger failed: ${e.message}`);
-      try {
-        localStorage.removeItem('vtab_building_update');
-      } catch {}
-      setIsBuildingUpdate(false);
-    }
-  };
 
   // Add Member modal state
   const [addMemberOpen, setAddMemberOpen] = useState(false);
@@ -408,6 +370,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
     const userUiPermissions=resolveReportUiPermissions((activeWorkspace as any)?.description,session?.user?.id);
     return (
       <div className="pbi-app-shell">
+        <ServicesUpdateExperience />
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <PublishedViewer 
             reportId={viewing.id} 
@@ -438,53 +401,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
   // ─── MAIN POWER BI APP SHELL ──────────────────────────────────────────────────
   return (
     <div className="pbi-app-shell">
-      {isBuildingUpdate && (
-        <PixelBuildScreen
-          targetVersion={updateStatus?.available_version || (typeof localStorage !== 'undefined' ? localStorage.getItem('vtab_building_update') || '' : '') || 'latest'}
-          onComplete={() => {
-            try {
-              localStorage.removeItem('vtab_building_update');
-            } catch {}
-            setIsBuildingUpdate(false);
-            window.location.reload();
-          }}
-        />
-      )}
-      {updateStatus?.update_available && (
-        <div style={{
-          background: 'linear-gradient(90deg, #064e3b, #047857)',
-          color: '#ecfdf5',
-          padding: '6px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          fontSize: '13px',
-          fontWeight: 500,
-          borderBottom: '1px solid #10b981',
-          zIndex: 1000,
-        }}>
-          <span>🔔 <strong>Update available:</strong> Reporting Services v{updateStatus.available_version}{updateStatus.applying ? ' — Building on server…' : ''}</span>
-          {!updateStatus.applying ? (
-            <button
-              onClick={applyServicesUpdate}
-              style={{
-                background: '#10b981',
-                color: '#fff',
-                border: 'none',
-                padding: '4px 12px',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '12px'
-              }}
-            >
-              Update Now
-            </button>
-          ) : (
-            <span style={{ opacity: 0.85, fontSize: '12px' }}>{updateStatus.last_apply_status || 'In progress…'}</span>
-          )}
-        </div>
-      )}
+      <ServicesUpdateExperience />
       {/* GLOBAL TOPBAR */}
       <header className="pbi-topbar">
         <button className="pbi-waffle-btn" title="App launcher" onClick={() => setViewMode('home')}>

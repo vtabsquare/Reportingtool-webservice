@@ -1,928 +1,321 @@
-"""VTAB Update Agent — polls the VTAB Reporting Manager and handles update webhooks.
-
-
-
-Environment variables (never hardcoded):
-
-    VTAB_MANAGER_URL            Base URL of the VTAB Reporting Manager.
-
-    VTAB_CLIENT_ID              Client ID registered in the Manager.
-
-    VTAB_AGENT_TOKEN            Bootstrap token issued on client registration.
-
-    VTAB_WEBHOOK_SECRET         Optional secret for webhook authentication.
-
-    VTAB_UPDATE_POLL_INTERVAL_SECONDS   Poll interval in seconds (default 300).
-
-    VTAB_SIMULATE_BUILD         Set to '1' in test environments to simulate build without git.
-
-    RENDER_API_KEY              Render API key -- when set together with RENDER_SERVICE_ID,
-                                clicking 'Update Now' triggers a Render deploy automatically.
-
-    RENDER_SERVICE_ID           The Render service ID (e.g. srv-xxxxxxxxxxxx) to redeploy.
-
-
-
-This module is importable even when the env vars are absent; it logs a warning
-
-and the polling thread simply does not start.
-
-"""
-
 from __future__ import annotations
 
-
-
+import hashlib
+import hmac
 import json
-
-import logging
-
 import os
-
+import shutil
 import subprocess
-
 import threading
-
 import time
-
 import urllib.error
-
 import urllib.request
-
+from datetime import datetime, timezone
 from pathlib import Path
-
-
-
-logger = logging.getLogger(__name__)
-
-
-
-# ---------------------------------------------------------------------------
-
-# In-memory state (all guarded by _STATE_LOCK)
-
-# ---------------------------------------------------------------------------
-
-_STATE_LOCK = threading.Lock()
-
-
-
-_update_status: dict = {
-
-    'update_available': False,
-
-    'current_version': None,
-
-    'available_version': None,
-
-    'release_notes': None,
-
-    'component': None,
-
-    'deployment_id': None,
-
-}
-
-
-
-_last_apply_result: dict = {}
-
-
-
-# The deployment ID stored once a scheduled deployment is found.
-
-_pending_deployment: dict | None = None
-
-_store = None
-
-
-
-# ---------------------------------------------------------------------------
-
-# Helpers
-
-# ---------------------------------------------------------------------------
-
-
-
-def _manager_url() -> str:
-
-    return (os.environ.get('VTAB_MANAGER_URL') or '').rstrip('/')
-
-
-
-def _client_id() -> str:
-
-    return os.environ.get('VTAB_CLIENT_ID') or ''
-
-
-
-def _agent_token() -> str:
-
-    return os.environ.get('VTAB_AGENT_TOKEN') or ''
-
-
-
-def _poll_interval() -> int:
-
-    try:
-
-        return int(os.environ.get('VTAB_UPDATE_POLL_INTERVAL_SECONDS') or 300)
-
-    except (ValueError, TypeError):
-
-        return 300
-
-
-
-def _project_root() -> Path:
-
-    """Return the project root (two levels above this file: api/app -> api -> project)."""
-
-    return Path(__file__).resolve().parent.parent.parent
-
-
-
-def _current_commit() -> str:
-    commit = (os.environ.get('RENDER_GIT_COMMIT') or '').strip()
-    if commit:
-        return commit
-    try:
-        import subprocess
-        res = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=_project_root(), capture_output=True, text=True, timeout=2)
-        if res.returncode == 0 and res.stdout.strip():
-            return res.stdout.strip()
-    except Exception:
-        pass
-    return ''
-
-
-def _current_version() -> str:
-
-    try:
-
-        from .version import PRODUCT_VERSION
-
-        return PRODUCT_VERSION
-
-    except Exception:
-
-        return os.environ.get('VTAB_PRODUCT_VERSION', '6.1.10')
-
-
-
-def _get_store():
-
-    global _store
-
-    if _store is None:
-
+from typing import Any
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _env(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return default
+
+
+def _safe_version(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or len(text) > 80 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-+" for ch in text):
+        raise ValueError("A valid release version is required.")
+    return text
+
+
+def _safe_sha(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if len(text) < 7 or len(text) > 64 or any(ch not in "0123456789abcdef" for ch in text):
+        raise ValueError("A valid approved commit SHA is required.")
+    return text
+
+
+class UpdateAgent:
+    """Persistent, idempotent update coordinator for managed and self-hosted Services."""
+
+    def __init__(self) -> None:
+        default_state = Path(__file__).resolve().parents[2] / "data" / "update-agent-state.json"
+        self.state_path = Path(_env("VTAB_UPDATE_STATE_PATH", default=str(default_state))).resolve()
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock = threading.RLock()
+        self.worker: threading.Thread | None = None
+        self.state = self._load()
+        self._save()
+
+    def _defaults(self) -> dict[str, Any]:
+        return {
+            "component": "reporting-services",
+            "current_version": _env("VTAB_RELEASE_VERSION", default="unknown"),
+            "current_commit_sha": self._current_commit(),
+            "available_version": None,
+            "target_commit_sha": None,
+            "release_notes": "",
+            "release_id": None,
+            "update_available": False,
+            "status": "idle",
+            "progress": 0,
+            "provider_deploy_id": None,
+            "requested_at": None,
+            "started_at": None,
+            "completed_at": None,
+            "last_error": None,
+            "logs": [],
+            "event_ids": [],
+        }
+
+    def _load(self) -> dict[str, Any]:
+        state = self._defaults()
         try:
-
-            from .storage import Store
-
-            _store = Store()
-
-        except Exception as exc:
-
-            logger.warning('Could not initialize Store in update_agent: %s', exc)
-
-    return _store
-
-
-
-def _persist_update_event(event_type: str, deployment_id: str | None, version: str, status: str, details: dict | None = None) -> None:
-
-    s = _get_store()
-
-    if s:
-
-        try:
-
-            s.record_update_event(event_type, deployment_id, version, status, details)
-
-        except Exception as exc:
-
-            logger.warning('Failed to record update event in database: %s', exc)
-
-
-
-def _persist_state(key: str, value: any) -> None:
-
-    s = _get_store()
-
-    if s:
-
-        try:
-
-            s.set_update_state(key, value)
-
-        except Exception as exc:
-
-            logger.warning('Failed to persist update state in database: %s', exc)
-
-
-
-def _load_persisted_state() -> None:
-
-    s = _get_store()
-
-    if s:
-
-        try:
-
-            cached = s.get_update_state('current_offer')
-
-            if cached and isinstance(cached, dict) and cached.get('update_available'):
-
-                with _STATE_LOCK:
-
-                    _update_status.update(cached)
-
-                    global _pending_deployment
-
-                    if cached.get('deployment_id'):
-
-                        _pending_deployment = {
-
-                            'id': cached.get('deployment_id'),
-
-                            'target_version': cached.get('available_version'),
-
-                            'release_notes': cached.get('release_notes'),
-
-                            'component': cached.get('component'),
-
-                        }
-
-                logger.info('Restored pending update offer from database: version=%s', cached.get('available_version'))
-
-        except Exception as exc:
-
-            logger.warning('Failed to load persisted update state: %s', exc)
-
-
-
-def _manager_request(method: str, path: str, payload: dict | None = None, timeout: int = 15) -> dict:
-
-    """Make an authenticated request to the VTAB Manager and return parsed JSON."""
-
-    mgr = _manager_url()
-    if not mgr:
-        return {}
-    url = mgr + path
-
-    body = json.dumps(payload).encode('utf-8') if payload is not None else None
-
-    headers = {
-
-        'X-VTAB-Client-ID': _client_id(),
-
-        'X-VTAB-Agent-Token': _agent_token(),
-
-        'Content-Type': 'application/json',
-
-        'Accept': 'application/json',
-
-    }
-
-    req = urllib.request.Request(url, data=body, method=method, headers=headers)
-
-    try:
-
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-
-            text = resp.read().decode('utf-8')
-
-            return json.loads(text) if text else {}
-
-    except urllib.error.HTTPError as exc:
-
-        detail = exc.read().decode('utf-8', 'ignore')
-
-        logger.warning('Manager HTTP %s %s → %s %s', method, path, exc.code, detail[:200])
-
-        raise
-
-    except Exception as exc:
-
-        logger.warning('Manager request failed (%s %s): %s', method, path, exc)
-
-        raise
-
-
-
-def _report_deployment(deployment_id: str, status: str, message: str = '') -> None:
-
-    """POST a status report to the Manager for the given deployment."""
-
-    try:
-
-        _manager_request(
-
-            'POST',
-
-            f'/api/v1/agent/deployments/{deployment_id}/report',
-
-            {'status': status, 'message': message},
-
-        )
-
-    except Exception as exc:
-
-        logger.warning('Failed to report deployment %s status=%s: %s', deployment_id, status, exc)
-
-
-def _trigger_render_deploy() -> dict:
-    """Trigger a Render service redeploy via the Render REST API.
-
-    Requires RENDER_API_KEY. Uses RENDER_SERVICE_ID or defaults to production service ID.
-    Returns a dict with keys 'ok' (bool) and optionally 'error' or 'deploy_id'.
-    """
-    api_key = (
-        os.environ.get('RENDER_API_KEY') 
-        or os.environ.get('RENDER_TOKEN') 
-        or os.environ.get('RENDER_API_TOKEN') 
-        or ''
-    ).strip()
-    service_id = (
-        os.environ.get('RENDER_SERVICE_ID') 
-        or os.environ.get('VTAB_RENDER_SERVICE_ID') 
-        or 'srv-dbkmh4d9fdbs73bos7u0'
-    ).strip()
-
-    if not api_key:
-        logger.warning('RENDER_API_KEY not set in environment variables.')
-        return {'ok': False, 'error': 'RENDER_API_KEY is not set in Render environment variables'}
-    if not service_id:
-        return {'ok': False, 'error': 'RENDER_SERVICE_ID is not configured'}
-
-    url = f'https://api.render.com/v1/services/{service_id}/deploys'
-    payload = json.dumps({'clearCache': 'do_not_clear'}).encode('utf-8')
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        method='POST',
-        headers={
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            body = json.loads(resp.read().decode('utf-8'))
-            deploy_id = body.get('id') or (body.get('deploy') or {}).get('id')
-            logger.info('Render deploy triggered: service=%s deploy_id=%s', service_id, deploy_id)
-            return {'ok': True, 'deploy_id': deploy_id}
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode('utf-8', 'ignore')
-        logger.warning('Render API error %s: %s', exc.code, detail[:300])
-        return {'ok': False, 'error': f'HTTP {exc.code}: {detail[:200]}'}
-    except Exception as exc:
-        logger.warning('Failed to trigger Render deploy: %s', exc)
-        return {'ok': False, 'error': str(exc)}
-
-
-# ---------------------------------------------------------------------------
-
-# Public API
-
-# ---------------------------------------------------------------------------
-
-
-
-def get_update_status() -> dict:
-
-    """Return the cached update status dict (never blocks)."""
-
-    with _STATE_LOCK:
-
-        res = dict(_update_status)
-
-        if not res.get('current_version'):
-
-            res['current_version'] = _current_version()
-        res['commit_sha'] = _current_commit()
-
-        apply_res = dict(_last_apply_result)
-        phase = apply_res.get('phase')
-        success = apply_res.get('success')
-        res['applying'] = phase in ('preflight', 'git_pull', 'pip_install', 'npm_build', 'validating')
-        res['last_apply_status'] = 'succeeded' if phase == 'succeeded' or success else ('failed' if success is False else phase)
-        res['last_apply_message'] = apply_res.get('message') or ''
-        return res
-
-
-
-def get_last_apply_result() -> dict:
-
-    """Return the result of the last `trigger_apply()` call."""
-
-    with _STATE_LOCK:
-
-        return dict(_last_apply_result)
-
-
-
-def handle_update_webhook(payload: dict) -> dict:
-
-    """Process an incoming update webhook from VTAB Reporting Manager or deployment pipeline.
-
-    Supported events:
-
-      - 'update_offered' / 'update_available' / 'scheduled'
-
-      - 'update_cancelled' / 'cancelled'
-
-      - 'ping'
-
-    """
-
-    event = payload.get('event') or payload.get('action') or 'update_offered'
-
-    if event == 'ping':
-
-        return {'ok': True, 'pong': True, 'service': 'Reporting Tool Services', 'current_version': _current_version()}
-
-
-
-    if event in ('update_offered', 'update_available', 'scheduled'):
-
-        deployment_id = payload.get('deployment_id') or payload.get('id')
-
-        ver = payload.get('version') or payload.get('target_version') or payload.get('release_version')
-
-        notes = payload.get('release_notes') or payload.get('releaseNotes') or ''
-
-        comp = payload.get('component') or 'services'
-
-
-
-        with _STATE_LOCK:
-
-            global _pending_deployment
-
-            _pending_deployment = {
-
-                'id': deployment_id,
-
-                'target_version': ver,
-
-                'release_version': ver,
-
-                'release_notes': notes,
-
-                'component': comp,
-
-            }
-
-            _update_status.update({
-
-                'update_available': True,
-
-                'current_version': _current_version(),
-
-                'available_version': ver,
-
-                'release_notes': notes,
-
-                'component': comp,
-
-                'deployment_id': deployment_id,
-
-            })
-
-
-
-        _persist_update_event('webhook_offer_received', deployment_id, str(ver or 'unknown'), 'offered', payload)
-
-        _persist_state('current_offer', _update_status)
-
-        logger.info('Update offer received via webhook: version=%s deployment_id=%s', ver, deployment_id)
-
-        return {'ok': True, 'event': 'update_offered', 'deployment_id': deployment_id, 'version': ver, 'status': 'offered'}
-
-
-
-    elif event in ('update_cancelled', 'cancelled'):
-
-        deployment_id = payload.get('deployment_id') or payload.get('id')
-
-        with _STATE_LOCK:
-
-            _pending_deployment = None
-
-            _update_status['update_available'] = False
-
-            _update_status['deployment_id'] = None
-
-        _persist_update_event('webhook_offer_cancelled', deployment_id, str(_update_status.get('available_version') or 'unknown'), 'cancelled', payload)
-
-        _persist_state('current_offer', None)
-
-        logger.info('Update offer cancelled via webhook: deployment_id=%s', deployment_id)
-
-        return {'ok': True, 'event': 'update_cancelled', 'deployment_id': deployment_id}
-
-
-
-    return {'ok': False, 'error': f'Unrecognized event: {event}'}
-
-
-
-# ---------------------------------------------------------------------------
-
-# Polling loop
-
-# ---------------------------------------------------------------------------
-
-
-
-def _poll_once() -> None:
-
-    """Single poll tick: check Manager for a scheduled deployment."""
-
-    global _pending_deployment
-
-
-
-    try:
-
-        data = _manager_request('GET', '/api/v1/agent/updates/available?component=services')
-
-    except Exception:
-
-        try:
-
-            data = _manager_request('GET', '/api/v1/agent/deployments/next')
-
-        except Exception:
-
-            return
-
-
-
-    raw = data.get('update') or data.get('deployment') or data
-
-    deployment = raw if isinstance(raw, dict) and raw.get('id') else None
-
-
-
-    with _STATE_LOCK:
-
-        if deployment:
-
-            _pending_deployment = deployment
-
-            ver = deployment.get('target_version') or deployment.get('release_version') or deployment.get('version')
-
-            _update_status.update({
-
-                'update_available': True,
-
-                'current_version': _current_version(),
-
-                'available_version': ver,
-
-                'release_notes': deployment.get('release_notes') or deployment.get('releaseNotes') or '',
-
-                'component': deployment.get('component'),
-
-                'deployment_id': deployment.get('id'),
-
-            })
-
-            _persist_update_event('poll_offer_received', deployment.get('id'), str(ver), 'offered', deployment)
-
-            _persist_state('current_offer', _update_status)
-
-            logger.info('Update available via poll: version=%s deployment_id=%s', ver, deployment.get('id'))
-
-        elif not deployment:
-
-            _pending_deployment = None
-
-            _update_status['update_available'] = False
-
-            _update_status['deployment_id'] = None
-
-            _persist_state('current_offer', None)
-
-
-
-def _polling_loop() -> None:
-
-    """Background daemon thread: poll repeatedly at the configured interval."""
-
-    logger.info('VTAB update-agent polling loop started (interval=%ss)', _poll_interval())
-
-    while True:
-
-        try:
-
-            _poll_once()
-
-        except Exception as exc:
-
-            logger.warning('Unexpected error in update-agent poll: %s', exc)
-
-        time.sleep(_poll_interval())
-
-
-
-# ---------------------------------------------------------------------------
-
-# Apply flow
-
-# ---------------------------------------------------------------------------
-
-
-
-def trigger_apply() -> None:
-
-    """Run the full update flow in the calling thread (call via a daemon Thread)."""
-
-    global _pending_deployment
-
-
-
-    with _STATE_LOCK:
-
-        deployment = _pending_deployment
-
-        deployment_id = (deployment or {}).get('id')
-
-        ver = _update_status.get('available_version') or 'unknown'
-
-
-
-    def _set_result(phase: str, success: bool, message: str = '') -> None:
-
-        with _STATE_LOCK:
-
-            _last_apply_result.update({
-
-                'phase': phase,
-
-                'success': success,
-
-                'message': message,
-
-                'timestamp': time.time(),
-
-            })
-
-
-
-    def _run(cmd: list[str], cwd: Path) -> tuple[int, str]:
-
-        try:
-
-            result = subprocess.run(
-
-                cmd,
-
-                cwd=str(cwd),
-
-                capture_output=True,
-
-                text=True,
-
-                timeout=600,
-
-            )
-
-            return result.returncode, (result.stdout + result.stderr).strip()
-
-        except Exception as exc:
-
-            return 1, str(exc)
-
-
-
-    root = _project_root()
-
-
-
-    try:
-
-        # --- preflight ---
-
-        _set_result('preflight', True, 'Starting update')
-
-        _persist_update_event('preflight', deployment_id, ver, 'preflight')
-
-        if deployment_id:
-
-            _report_deployment(deployment_id, 'preflight', 'Starting update')
-
-
-
-        # Trigger Render deploy if running on Render or configured
-        is_render = bool(
-            os.environ.get('RENDER')
-            or os.environ.get('RENDER_INSTANCE_ID')
-            or os.environ.get('RENDER_SERVICE_ID')
-            or os.environ.get('RENDER_API_KEY')
-        )
-        if is_render:
-            render_result = _trigger_render_deploy()
-            if render_result.get('ok'):
-                logger.info('Render deploy triggered automatically (deploy_id=%s)', render_result.get('deploy_id'))
-                _set_result('deploying', True, 'Render deploy triggered — building in cloud...')
-                _persist_update_event('render_deploy_triggered', deployment_id, ver, 'deploying', render_result)
-                if deployment_id:
-                    _report_deployment(deployment_id, 'deploying', 'Render deploy triggered — building in cloud')
-                with _STATE_LOCK:
-                    _pending_deployment = None
-                    _update_status['update_available'] = False
-                    _update_status['deployment_id'] = None
-                    _update_status['current_version'] = ver
-                _persist_state('current_offer', None)
-                _set_result('succeeded', True, 'Render deploy triggered — your app will reload once the build completes (~2 min)')
-                _persist_update_event('apply_succeeded', deployment_id, ver, 'succeeded', {'render_deploy': render_result})
-                if deployment_id:
-                    _report_deployment(deployment_id, 'succeeded', 'Render deploy triggered successfully')
-                return
+            loaded = json.loads(self.state_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                state.update(loaded)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+        if state.get("status") in {"queued", "applying", "deploying", "building", "restarting"}:
+            running_commit = _env("RENDER_GIT_COMMIT", "VTAB_RELEASE_COMMIT_SHA")
+            if running_commit and str(state.get("target_commit_sha") or "").startswith(running_commit[:7]):
+                state.update(
+                    current_version=state.get("available_version"), current_commit_sha=running_commit,
+                    update_available=False, status="completed", progress=100, completed_at=_now(), last_error=None,
+                )
             else:
-                err_msg = render_result.get('error') or 'Render deploy failed'
-                logger.warning('Render deploy failed: %s', err_msg)
-                _set_result('failed', False, f'Render cloud deploy failed: {err_msg}')
-                _persist_update_event('apply_failed', deployment_id, ver, 'failed', {'error': err_msg})
-                if deployment_id:
-                    _report_deployment(deployment_id, 'failed', err_msg)
-                return
+                state.update(status="interrupted", last_error="The previous update was interrupted before completion.")
+        return state
 
+    def _save(self) -> None:
+        temporary = self.state_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(self.state, indent=2, sort_keys=True), encoding="utf-8")
+        temporary.replace(self.state_path)
 
-        # Check for simulated test mode
+    def _current_commit(self) -> str:
+        rendered = _env("RENDER_GIT_COMMIT", "VTAB_RELEASE_COMMIT_SHA")
+        if rendered:
+            return rendered
+        try:
+            root = Path(_env("VTAB_UPDATE_REPO_PATH", default=str(Path(__file__).resolve().parents[3])))
+            return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, timeout=8, stderr=subprocess.DEVNULL).strip()
+        except Exception:
+            return "unknown"
 
-        if os.environ.get('VTAB_SIMULATE_BUILD') == '1':
+    def _log(self, message: str, progress: int | None = None, status: str | None = None) -> None:
+        with self.lock:
+            entries = list(self.state.get("logs") or [])
+            entries.append({"at": _now(), "message": message})
+            self.state["logs"] = entries[-80:]
+            if progress is not None:
+                self.state["progress"] = max(0, min(100, int(progress)))
+            if status:
+                self.state["status"] = status
+            self._save()
 
-            time.sleep(0.3)
+    def public_status(self) -> dict[str, Any]:
+        with self.lock:
+            return {key: value for key, value in self.state.items() if key not in {"event_ids"}}
 
-            _set_result('succeeded', True, 'Simulated update completed successfully')
+    def offer(self, payload: dict[str, Any], event_id: str | None = None) -> dict[str, Any]:
+        component = str(payload.get("component") or "reporting-services").strip()
+        if component != "reporting-services":
+            raise ValueError("This Services agent only accepts the reporting-services component.")
+        version = _safe_version(payload.get("version"))
+        commit_sha = _safe_sha(payload.get("commit_sha") or payload.get("commitSha"))
+        with self.lock:
+            known = list(self.state.get("event_ids") or [])
+            if event_id and event_id in known:
+                return self.public_status()
+            if event_id:
+                known.append(event_id)
+            self.state.update(
+                component=component,
+                available_version=version,
+                target_commit_sha=commit_sha,
+                release_notes=str(payload.get("release_notes") or payload.get("releaseNotes") or "")[:12000],
+                release_id=str(payload.get("release_id") or payload.get("releaseId") or "") or None,
+                update_available=True,
+                status="available",
+                progress=0,
+                requested_at=_now(),
+                last_error=None,
+                event_ids=known[-200:],
+            )
+            self._save()
+        self._report_manager("available")
+        return self.public_status()
 
-            _persist_update_event('apply_succeeded', deployment_id, ver, 'succeeded', {'simulated': True})
+    def cancel(self, reason: str = "Update offer cancelled.") -> dict[str, Any]:
+        with self.lock:
+            if self.worker and self.worker.is_alive():
+                raise RuntimeError("An update that is already applying cannot be cancelled from the browser.")
+            self.state.update(update_available=False, status="cancelled", progress=0, last_error=None)
+            self._save()
+        self._log(reason)
+        self._report_manager("cancelled")
+        return self.public_status()
 
-            if deployment_id:
+    def apply(self) -> dict[str, Any]:
+        with self.lock:
+            if self.worker and self.worker.is_alive():
+                return self.public_status()
+            if not self.state.get("update_available"):
+                raise RuntimeError("No approved update is available.")
+            if not self.state.get("target_commit_sha"):
+                raise RuntimeError("The approved update does not include an exact commit SHA.")
+            self.state.update(status="queued", progress=2, started_at=_now(), completed_at=None, last_error=None, logs=[])
+            self._save()
+            self.worker = threading.Thread(target=self._run, name="vtab-update-agent", daemon=True)
+            self.worker.start()
+            return self.public_status()
 
-                _report_deployment(deployment_id, 'succeeded', 'Simulated update completed successfully')
+    def _run(self) -> None:
+        try:
+            if _env("VTAB_SIMULATE_BUILD") == "1":
+                for progress, message in ((15, "Validating approved release"), (45, "Building application"), (75, "Running health checks"), (100, "Update verified")):
+                    self._log(message, progress, "applying")
+                    time.sleep(0.35)
+            elif _env("RENDER_SERVICE_ID", "VTAB_RENDER_SERVICE_ID"):
+                self._trigger_render_deploy()
+            else:
+                self._apply_self_hosted()
+            with self.lock:
+                self.state.update(
+                    current_version=self.state.get("available_version"),
+                    current_commit_sha=self.state.get("target_commit_sha"),
+                    update_available=False,
+                    status="completed",
+                    progress=100,
+                    completed_at=_now(),
+                    last_error=None,
+                )
+                self._save()
+            self._report_manager("completed")
+        except Exception as exc:
+            with self.lock:
+                self.state.update(status="failed", completed_at=_now(), last_error=str(exc))
+                self._save()
+            self._log(f"Update failed: {exc}")
+            self._report_manager("failed")
 
-            with _STATE_LOCK:
-
-                _pending_deployment = None
-
-                _update_status['update_available'] = False
-
-                _update_status['deployment_id'] = None
-
-                _update_status['current_version'] = ver
-
-            _persist_state('current_offer', None)
-
-            return
-
-
-
-        import shutil
-        has_git = bool(shutil.which('git')) and (root / '.git').exists()
-        if has_git:
-            # --- git pull ---
-            _set_result('git_pull', True, 'Running git pull')
-            _persist_update_event('git_pull', deployment_id, ver, 'deploying')
-            rc, out = _run(['git', 'pull', 'origin', 'main'], root)
-            if rc != 0:
-                msg = f'git pull failed: {out[:500]}'
-                _set_result('git_pull', False, msg)
-                _persist_update_event('apply_failed', deployment_id, ver, 'failed', {'phase': 'git_pull', 'error': msg})
-                if deployment_id:
-                    _report_deployment(deployment_id, 'failed', msg)
-                return
-        else:
-            logger.info('Container or cloud runtime detected without git repository. Proceeding with deployment.')
-
-        # --- deploying (pip install) ---
-        if deployment_id:
-            _report_deployment(deployment_id, 'deploying', 'Installing Python dependencies')
-        _set_result('pip_install', True, 'Running pip install')
-        _persist_update_event('pip_install', deployment_id, ver, 'deploying')
-        req_file = root / 'requirements.txt'
-        if req_file.exists() and shutil.which('pip'):
-            rc, out = _run(['pip', 'install', '-r', str(req_file)], root)
-            if rc != 0:
-                msg = f'pip install failed: {out[:500]}'
-                _set_result('pip_install', False, msg)
-                _persist_update_event('apply_failed', deployment_id, ver, 'failed', {'phase': 'pip_install', 'error': msg})
-                if deployment_id:
-                    _report_deployment(deployment_id, 'failed', msg)
-                return
-
-        # --- frontend rebuild (optional) ---
-        pkg_json = root / 'package.json'
-        if pkg_json.exists() and shutil.which('npm'):
-            _set_result('npm_build', True, 'Rebuilding frontend')
-            _persist_update_event('npm_build', deployment_id, ver, 'deploying')
-            rc, out = _run(['npm', 'ci'], root)
-            if rc != 0:
-                msg = f'npm ci failed: {out[:500]}'
-                _set_result('npm_build', False, msg)
-                _persist_update_event('apply_failed', deployment_id, ver, 'failed', {'phase': 'npm_ci', 'error': msg})
-                if deployment_id:
-                    _report_deployment(deployment_id, 'failed', msg)
-                return
-            rc, out = _run(['npm', 'run', 'build'], root)
-            if rc != 0:
-                msg = f'npm run build failed: {out[:500]}'
-                _set_result('npm_build', False, msg)
-                _persist_update_event('apply_failed', deployment_id, ver, 'failed', {'phase': 'npm_build', 'error': msg})
-                if deployment_id:
-                    _report_deployment(deployment_id, 'failed', msg)
-                return
-
-        # --- validating / succeeded ---
-
-        if deployment_id:
-
-            _report_deployment(deployment_id, 'validating', 'Validating deployment')
-
-        _persist_update_event('validating', deployment_id, ver, 'validating')
-
-        _set_result('succeeded', True, 'Update applied successfully')
-
-        _persist_update_event('apply_succeeded', deployment_id, ver, 'succeeded')
-
-        if deployment_id:
-
-            _report_deployment(deployment_id, 'succeeded', 'Update applied successfully')
-
-
-
-        # Clear the pending deployment after a successful apply.
-
-        with _STATE_LOCK:
-
-            _pending_deployment = None
-
-            _update_status['update_available'] = False
-
-            _update_status['deployment_id'] = None
-
-            _update_status['current_version'] = ver
-
-        _persist_state('current_offer', None)
-
-
-
-    except Exception as exc:
-
-        msg = f'Unexpected error during apply: {exc}'
-
-        logger.exception('update_agent.trigger_apply raised an unexpected error')
-
-        _set_result('failed', False, msg)
-
-        _persist_update_event('apply_failed', deployment_id, ver, 'failed', {'error': str(exc)})
-
-        if deployment_id:
-
-            _report_deployment(deployment_id, 'failed', msg)
-
-
-
-# ---------------------------------------------------------------------------
-
-# Startup
-
-# ---------------------------------------------------------------------------
-
-
-
-def start_update_agent() -> None:
-
-    """Start the background polling thread and load any persisted offer."""
-
-    _load_persisted_state()
-
-
-
-    if not (_manager_url() and _client_id() and _agent_token()):
-
-        logger.warning(
-
-            'VTAB update-agent: VTAB_MANAGER_URL, VTAB_CLIENT_ID, or VTAB_AGENT_TOKEN '
-
-            'not set — update polling disabled.'
-
+    def _trigger_render_deploy(self) -> None:
+        api_key = _env("RENDER_API_KEY", "RENDER_TOKEN", "RENDER_API_TOKEN")
+        service_id = _env("RENDER_SERVICE_ID", "VTAB_RENDER_SERVICE_ID")
+        if not api_key or not service_id:
+            raise RuntimeError("Render deployment credentials are not configured.")
+        commit_sha = str(self.state["target_commit_sha"])
+        self._log("Submitting exact approved commit to Render", 18, "deploying")
+        body = json.dumps({"clearCache": "do_not_clear", "commitId": commit_sha}).encode("utf-8")
+        request = urllib.request.Request(
+            f"https://api.render.com/v1/services/{service_id}/deploys",
+            data=body,
+            method="POST",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"},
         )
+        try:
+            with urllib.request.urlopen(request, timeout=45) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")
+            raise RuntimeError(f"Render rejected the deployment ({exc.code}): {detail[:500]}") from exc
+        deploy = result.get("deploy") if isinstance(result, dict) else None
+        deploy_id = (deploy or result or {}).get("id") if isinstance((deploy or result), dict) else None
+        with self.lock:
+            self.state["provider_deploy_id"] = deploy_id
+            self._save()
+        self._log("Render accepted the deployment. Waiting for provider health verification.", 42, "deploying")
+        if not deploy_id:
+            raise RuntimeError("Render accepted the request but did not return a deployment identifier.")
+        deadline = time.time() + max(120, int(_env("VTAB_RENDER_DEPLOY_TIMEOUT_SECONDS", default="1200")))
+        last_status = ""
+        while time.time() < deadline:
+            status_request = urllib.request.Request(
+                f"https://api.render.com/v1/services/{service_id}/deploys/{deploy_id}",
+                headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(status_request, timeout=30) as response:
+                    detail = json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                raise RuntimeError(f"Could not verify Render deployment health ({exc.code}).") from exc
+            provider_status = str((detail.get("deploy") or detail).get("status") or "unknown")
+            if provider_status != last_status:
+                last_status = provider_status
+                self._log(f"Render deployment status: {provider_status}", 55 if "progress" in provider_status else 72, "deploying")
+            if provider_status == "live":
+                self._log("Render reports the approved commit as live and healthy.", 96, "restarting")
+                return
+            if provider_status in {"build_failed", "update_failed", "pre_deploy_failed", "canceled", "deactivated"}:
+                raise RuntimeError(f"Render deployment ended with status: {provider_status}")
+            time.sleep(8)
+        raise RuntimeError("Timed out waiting for Render to verify the approved deployment.")
 
-        return
+    def _run_command(self, args: list[str], cwd: Path, message: str, progress: int) -> None:
+        self._log(message, progress, "building")
+        completed = subprocess.run(args, cwd=cwd, text=True, capture_output=True, timeout=1800)
+        if completed.returncode:
+            output = (completed.stderr or completed.stdout or "Unknown command failure")[-1800:]
+            raise RuntimeError(f"{message} failed: {output}")
+
+    def _apply_self_hosted(self) -> None:
+        repo = Path(_env("VTAB_UPDATE_REPO_PATH", default=str(Path(__file__).resolve().parents[3]))).resolve()
+        releases = Path(_env("VTAB_UPDATE_RELEASES_DIR", default=str(repo.parent / "vtab-releases"))).resolve()
+        releases.mkdir(parents=True, exist_ok=True)
+        version = _safe_version(self.state["available_version"])
+        target = releases / version
+        if target.exists():
+            shutil.rmtree(target)
+        sha = str(self.state["target_commit_sha"])
+        self._run_command(["git", "fetch", "--all", "--tags", "--prune"], repo, "Fetching approved source", 12)
+        self._run_command(["git", "worktree", "add", "--detach", str(target), sha], repo, "Creating isolated release", 25)
+        requirements = target / "api" / "requirements.txt"
+        if requirements.exists():
+            self._run_command([os.environ.get("PYTHON", "python"), "-m", "pip", "install", "-r", str(requirements)], target, "Installing backend dependencies", 42)
+        if (target / "package.json").exists():
+            self._run_command(["npm", "ci"], target, "Installing frontend dependencies", 58)
+            self._run_command(["npm", "run", "build:web"], target, "Building Services frontend", 76)
+        pointer = releases / "active-release.json"
+        pointer.write_text(json.dumps({"version": version, "commit_sha": sha, "path": str(target), "activated_at": _now()}, indent=2), encoding="utf-8")
+        restart = _env("VTAB_UPDATE_RESTART_COMMAND")
+        if restart:
+            self._log("Restarting Services", 92, "restarting")
+            completed = subprocess.run(restart, cwd=target, shell=True, text=True, capture_output=True, timeout=120)
+            if completed.returncode:
+                raise RuntimeError(f"Service restart failed: {(completed.stderr or completed.stdout)[-1200:]}")
+
+    def _report_manager(self, lifecycle: str) -> None:
+        url = _env("VTAB_MANAGER_URL")
+        token = _env("VTAB_AGENT_TOKEN")
+        client_id = _env("VTAB_CLIENT_ID")
+        if not url or not token or not client_id:
+            return
+        payload = json.dumps({"client_id": client_id, "component": "reporting-services", "lifecycle": lifecycle, "status": self.public_status()}).encode("utf-8")
+        request = urllib.request.Request(url.rstrip("/") + "/api/v1/agents/update-status", data=payload, method="POST", headers={"X-VTAB-Agent-Token": token, "Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(request, timeout=12).read()
+        except Exception:
+            pass
 
 
+def verify_agent_token(candidate: str | None) -> bool:
+    expected = _env("VTAB_AGENT_TOKEN")
+    return bool(expected and candidate and hmac.compare_digest(expected, candidate))
 
-    t = threading.Thread(target=_polling_loop, daemon=True, name='vtab-update-agent')
 
-    t.start()
+def verify_webhook_signature(raw_body: bytes, signature: str | None) -> bool:
+    secret = _env("VTAB_UPDATE_WEBHOOK_SECRET")
+    if not secret or not signature:
+        return False
+    supplied = signature.removeprefix("sha256=").strip().lower()
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, supplied)
 
-    logger.info('VTAB update-agent started (thread=%s)', t.name)
 
+update_agent = UpdateAgent()

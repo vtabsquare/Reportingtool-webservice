@@ -9,6 +9,8 @@ import{richTextHtml}from'../richText';
 import{resolveActionButtonLabel,resolveActionCommands,visualIsHidden}from'../buttonActions';
 import{resolveConditionalFormat}from'../conditionalFormatting';
 import{sortVisualRows}from'../sortingEngine';
+import{ButtonIcon}from'../buttonIcons';
+import{buttonVisualCss}from'../buttonVisualStyle';
 import type{Visual,VisualFilter}from'../types';
 import html2canvas from'html2canvas-pro';
 import{DEFAULT_REPORT_UI_PERMISSIONS,type ReportUiPermissions}from'../uiPermissions';
@@ -218,7 +220,8 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
  const titleBackgroundOn=f.titleBackgroundEnabled!==false,titleBg=f.titleBackground||'#fff',titleTransparency=titleBackgroundOn?Math.max(0,Math.min(100,f.titleBackgroundTransparency||0)):100,titleBackground=publishedColor(titleBg,titleTransparency);
  const titleRadius=titleBackgroundOn?`${f.cornerRadii?.topLeft??f.cornerRadius??0}px ${f.cornerRadii?.topRight??f.cornerRadius??0}px 0 0`:'0';
   const shadowOpacity=Math.max(0,Math.min(100,f.shadowOpacity??18)),shadow=f.shadow?`${f.shadowOffsetX??0}px ${f.shadowOffset??8}px ${f.shadowBlur??24}px color-mix(in srgb, ${f.shadowColor||'#0f172a'} ${shadowOpacity}%, transparent)`:'none';
-  const responsiveSizeClass=f.responsive===false?' visualFixed':(v.w<=260||v.h<=130?' visualCompact':(v.w>=540?' visualWide':' visualStandard'));
+  // Published visuals use the same responsive composition as Desktop.
+  const responsiveSizeClass=f.responsive===false?' visualFixed':(v.w<=260||v.h<=130?' visualCompact':(v.w>=900?' visualWide':' visualStandard'));
   const titleTextStyle:any={fontFamily:f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.titleFontSize||12,color:f.titleColor||(dark?'#fff':'#242424'),fontWeight:f.titleBold===false?400:(f.titleFontWeight||700),fontStyle:f.titleFontStyle||'normal',textDecoration:f.titleUnderline?'underline':'none',whiteSpace:f.titleWrap===false?'nowrap':'normal',textAlign:f.titleAlignment||'left',lineHeight:1.25,paddingBottom:'2px',boxSizing:'border-box'};
   const subtitleTextStyle:any={fontFamily:f.subtitleFontFamily||f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.subtitleFontSize||10,color:f.subtitleColor||'#616161',fontWeight:f.subtitleBold?(f.subtitleFontWeight||700):400,fontStyle:f.subtitleFontStyle||'normal',textDecoration:f.subtitleUnderline?'underline':'none',whiteSpace:f.subtitleWrap===false?'nowrap':'normal',textAlign:f.subtitleAlignment||f.titleAlignment||'left'};
   if(v.type==='shape')return <div role="img" aria-label={f.altText||`${f.shapeType||'rectangle'} shape`} className="viewerShapeObject" data-export-state="ready" data-visual-title={v.title||v.type}><ViewerShape format={f}/></div>;
@@ -227,8 +230,8 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
     <div className="viewerTextBox" style={{fontSize:f.fontSize||18,color:f.labelColor||'#111827',fontFamily:f.fontFamily||'inherit',fontWeight:f.textFontWeight||400,fontStyle:f.textItalic?'italic':'normal',textDecoration:f.textUnderline?'underline':'none',textAlign:f.textAlign||'left',lineHeight:f.textLineHeight||1.45,whiteSpace:f.textWrap===false?'nowrap':'pre-wrap',overflowWrap:f.textWrap===false?'normal':'anywhere',display:'flex',flexDirection:'column',justifyContent:f.textVerticalAlign==='bottom'?'flex-end':f.textVerticalAlign==='middle'?'center':'flex-start',width:'100%',height:'100%',boxSizing:'border-box'}} dangerouslySetInnerHTML={{__html:richTextHtml(v.richText,v.text)}}/>
   ):v.type==='button'?(
     <div className="viewerActionButtonWrap" style={{width:'100%',height:'100%',display:'flex'}}>
-      <button aria-label={f.buttonBlank?'Blank action button':undefined} aria-pressed={!f.buttonBlank&&f.buttonSelectionEnabled!==false?selected:undefined} className={'viewerActionButton buttonVisualOnly'+(f.buttonBlank?' blankActionButton':'')+(selected?' actionSelected':'')} style={{flex:1,width:'100%',height:'100%',minHeight:0,margin:0,background:f.buttonBlank?'transparent':selected?(f.buttonSelectedBackground||'#16a34a'):(f.buttonBackground||'#6b7280'),color:f.buttonBlank?'transparent':selected?(f.buttonSelectedTextColor||'#fff'):(f.buttonTextColor||'#fff'),fontSize:f.buttonFontSize||12,borderRadius:f.buttonBlank?0:(f.buttonCornerRadius??6),border:f.buttonBlank?'none':f.buttonBorderVisible?`1px solid ${selected?(f.buttonSelectedBorderColor||'#15803d'):(f.buttonBorderColor||'#4b5563')}`:'none',boxSizing:'border-box'}} onClick={()=>onAction(v)}>
-        {!f.buttonBlank&&<><MousePointerClick size={16}/>{v.buttonLabel||'Action'}</>}
+      <button disabled={f.buttonDisabled===true} aria-label={f.buttonBlank?'Blank action button':undefined} aria-pressed={!f.buttonBlank&&f.buttonSelectionEnabled===true?selected:undefined} className={'viewerActionButton modernReportButton buttonVisualOnly icon-'+(f.buttonIconPosition||'left')+' text-'+(f.buttonTextAlign||'center')+(f.buttonBlank?' blankActionButton':'')+(f.buttonSelectionEnabled===true&&selected?' actionSelected':'')} style={f.buttonBlank?{flex:1,width:'100%',height:'100%',minHeight:0,margin:0,background:'transparent',color:'transparent',border:'none',boxShadow:'none'}:{...buttonVisualCss(f,f.buttonSelectionEnabled===true&&selected),flex:1,width:'100%',height:'100%',minHeight:0,margin:0,boxSizing:'border-box','--button-gap':`${f.buttonIconGap??8}px`} as any} onClick={()=>onAction(v)}>
+        {!f.buttonBlank&&<><ButtonIcon className="modernButtonIcon" name={f.buttonIcon||'arrow-right'} size={f.buttonIconSize||18} strokeWidth={f.buttonIconStroke||2}/><span className="modernButtonLabel">{v.buttonLabel||'Action'}</span></>}
       </button>
     </div>
   ):v.type==='slicer'?(()=>{
@@ -366,7 +369,7 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
     '--slicer-row-padding':`${f.tableRowPadding??8}px`
   };
   const clearSlicer=()=>{setSlicerSelected([]);setSlicerSearch('');setSlicerDropdownOpen(false);onCrossFilter(null)};
-  const card=<div className={`viewerVisual viewerVisual-${v.type} visualCard ${v.type==='slicer'?'slicerVisual':''} ${slicerDropdownOpen?'slicerDropdownOpen':''} ${responsiveSizeClass}`} data-export-state={loading?'loading':err?'error':'ready'} data-visual-title={v.title||v.type} data-visual-background={backgroundOn?'on':'off'} data-visual-border={f.borderVisible?'on':'off'} data-title-background={titleBackgroundOn?'on':'off'} data-export-narrative={JSON.stringify(narrative)} data-export-insights={JSON.stringify(narrative.points)} style={cardStyle}>
+  const card=<div className={`viewerVisual viewerVisual-${v.type} visualCard ${!['slicer','textbox','button','image','shape'].includes(v.type)?'premiumVisualCard':''} ${v.type==='slicer'?'slicerVisual':''} ${slicerDropdownOpen?'slicerDropdownOpen':''} ${responsiveSizeClass}`} data-export-state={loading?'loading':err?'error':'ready'} data-visual-title={v.title||v.type} data-visual-background={backgroundOn?'on':'off'} data-visual-border={f.borderVisible?'on':'off'} data-title-background={titleBackgroundOn?'on':'off'} data-export-narrative={JSON.stringify(narrative)} data-export-insights={JSON.stringify(narrative.points)} style={cardStyle}>
     {f.showTitle!==false&&<div className="viewerVisualTitle visualTitle" style={{background:titleBackground,borderRadius:titleRadius,...titleTextStyle}}><div className="viewerVisualTitleLabel visualTitleText" style={{flex:1,minWidth:0,textAlign:f.titleAlignment||'left',display:'flex',flexDirection:'column',alignItems:'stretch'}}><span style={{...titleTextStyle,display:'block',width:'100%',textAlign:f.titleAlignment||'left'}}>{v.title}</span>{f.subtitleVisible&&f.subtitle&&<small style={{...subtitleTextStyle,display:'block',width:'100%',textAlign:f.subtitleAlignment||f.titleAlignment||'left'}}>{f.subtitle}</small>}</div>{v.type==='slicer'&&!!slicerSelected.length&&<button className="slicerClearButton" title="Clear slicer" onClick={clearSlicer}><Eraser size={13}/></button>}{f.visualHeader!==false&&<button className="viewerVisualFocus" onClick={()=>setFocus(true)} title="Focus visual"><Maximize2 size={13}/></button>}</div>}
     <div className="viewerVisualBody" style={{paddingTop:f.paddingTop??f.padding??8,paddingRight:f.paddingRight??f.padding??8,paddingBottom:f.paddingBottom??f.padding??8,paddingLeft:f.paddingLeft??f.padding??8}}>{loading?<div className="viewerVisualLoading" role="status"><span className="viewerSpinner"/><b>Loading visual data…</b></div>:err?<div className="viewerError">{err}</div>:content}</div>
   </div>;
@@ -466,8 +469,12 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    return()=>controller.abort();
  },[reportId,item?.id,page?.id,JSON.stringify(queryVisualIds),JSON.stringify(combinedFilters),publishedMode,visualReloadKey]);
  useEffect(()=>{const targetPage=new URLSearchParams(location.search).get('page');if(targetPage){const index=pages.findIndex((item:any)=>item.id===targetPage);if(index>=0)setPageIndex(index)}},[item?.id]);
- const width=s.pageWidth||1600,height=s.pageHeight||900;
- const pixelLayout=(page?.visuals||[]).some((visual:Visual)=>visual.geometryVersion===2);
+ const width=s.pageWidth||1920,height=s.pageHeight||1080;
+ const fixedPagePreset=['16:9','HD 16:9','Full HD 16:9','QHD 16:9','16:10','4:3','Letter','Tooltip','A4 Landscape','A4 Portrait'].includes(String(s.pageSizePreset||''));
+ // Older snapshots may contain pixel coordinates without the migration flag.
+ // Infer that contract from the coordinate range instead of treating those
+ // values as legacy grid units and inflating the published page height.
+ const pixelLayout=(page?.visuals||[]).some((visual:Visual)=>visual.geometryVersion===2||visual.x>12||visual.w>12||visual.y>40||visual.h>40);
  const visualBottom=(page?.visuals||[]).reduce((m:any,v:any)=>Math.max(m,v.geometryVersion===2?(v.y||0)+(v.h||100):(v.y||0)*70+(v.h||2)*54+Math.max(0,(v.h||2)-1)*16),0);
  const headerHeight=s.header?.visible!==false?(s.header?.height||84):0;
  // Geometry-v2 coordinates are page-relative (the Desktop canvas origin), so
@@ -476,7 +483,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  // A geometry-v2 report owns an explicit canvas size (for example 960x720,
  // 4:3). Never grow that canvas from visual-content heuristics because doing
  // so changes the orientation that was authored in Desktop.
- const effectiveHeight=s.autoFitHeight ? Math.max(height,contentHeight) : (pixelLayout ? height : Math.max(height,contentHeight));
+ const effectiveHeight=s.autoFitHeight===true&&!fixedPagePreset ? Math.max(height,contentHeight) : (pixelLayout ? height : Math.max(height,contentHeight));
  useEffect(()=>{
    if(!item||!page)return;
    const stage=stageRef.current;if(!stage)return;
@@ -514,13 +521,15 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
   try{
    const rendered=[] as Array<{name:string,image:string,insights:string[],narratives:ExportNarrative[]}>;
    for(let index=0;index<pages.length;index++){
-    const pageDefinition=pages[index],pageSettings=pageDefinition.settings||{},pageWidth=pageSettings.pageWidth||1600;
+    const pageDefinition=pages[index],pageSettings=pageDefinition.settings||{},pageWidth=pageSettings.pageWidth||1920;
     const pageVisuals=pageDefinition.visuals||[];
-    const pagePixelLayout=pageVisuals.some((visual:Visual)=>visual.geometryVersion===2);
+    const pageFixedPreset=['16:9','HD 16:9','Full HD 16:9','QHD 16:9','16:10','4:3','Letter','Tooltip','A4 Landscape','A4 Portrait'].includes(String(pageSettings.pageSizePreset||''));
+    const pagePixelLayout=pageVisuals.some((visual:Visual)=>visual.geometryVersion===2||visual.x>12||visual.w>12||visual.y>40||visual.h>40);
     const pageVisualBottom=pageVisuals.reduce((m:any,v:any)=>Math.max(m,v.geometryVersion===2?(v.y||0)+(v.h||100):(v.y||0)*70+(v.h||2)*54+Math.max(0,(v.h||2)-1)*16),0);
     const pageHeaderHeight=pageSettings.header?.visible!==false?(pageSettings.header?.height||84):0;
     const pageContentHeight=Math.max(480,pageVisualBottom+(pageSettings.footerGap??96)+(pagePixelLayout?0:pageHeaderHeight+34));
-    const pageHeight=pageSettings.autoFitHeight?Math.max(pageSettings.pageHeight||900,pageContentHeight):(pagePixelLayout?(pageSettings.pageHeight||900):Math.max(pageSettings.pageHeight||900,pageContentHeight));
+    const authoredPageHeight=pageSettings.pageHeight||1080;
+    const pageHeight=pageSettings.autoFitHeight===true&&!pageFixedPreset?Math.max(authoredPageHeight,pageContentHeight):(pagePixelLayout?authoredPageHeight:Math.max(authoredPageHeight,pageContentHeight));
     setPageIndex(index);const stage=stageRef.current;if(!stage)throw new Error('The report canvas is not available for export.');
     const reportPage=await waitForExportPage(stage,String(pageDefinition.id||''),pageDefinition.name||`Page ${index+1}`);
     const insights=Array.from(reportPage.querySelectorAll<HTMLElement>('[data-export-insights]')).flatMap(node=>{try{return JSON.parse(node.dataset.exportInsights||'[]')}catch{return[]}}).filter((value,index,array)=>value&&array.indexOf(value)===index).slice(0,6);
@@ -528,11 +537,11 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     rendered.push({name:pageDefinition.name||`Page ${index+1}`,image:await captureViewerPage(reportPage,pageWidth,pageHeight),insights,narratives});
    }
    const now=new Date(),pad=(n:number)=>String(n).padStart(2,'0');
-   const stamp=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+   const stamp = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
    const reportTitle=report?.name||item?.name||project?.report?.name||project?.name||'VTAB Report';
    const safe=reportTitle.replace(/[^A-Za-z0-9_-]+/g,'_').replace(/^_+|_+$/g,'')||'VTAB_Report';
    const extension=fmt==='pdf'?'pdf':'pptx';
-   const exportFilename=`${safe}_${stamp}.${extension}`;
+   const exportFilename = `${safe}_${stamp}.${extension}`;
    const exportProject={name:reportTitle,report:{name:reportTitle}};
    try{
     await apiDownloadPost(`/published/${reportId}/export-rendered/${fmt}`,exportFilename,{pages:rendered,project:exportProject,filename:exportFilename});
@@ -541,7 +550,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     // service-side exporter remains a reliable fallback and preserves access
     // checks. Surface an error only when both export paths fail.
     try{await apiDownload(`/published/${reportId}/export/${fmt}`,exportFilename)}
-    catch(fallbackError:any){throw new Error(`Rendered export failed: ${renderedError?.message||renderedError}. Service export also failed: ${fallbackError?.message||fallbackError}`)}
+     catch(fallbackError:any){throw new Error(`Rendered export failed: ${renderedError?.message||renderedError}. Service export also failed: ${fallbackError?.message||fallbackError}`)}
    }
   }catch(error:any){alert(error?.message||String(error))}finally{setPageIndex(originalPage);setExporting('')}
  };
@@ -849,7 +858,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
      )}
      <div className="viewerScaleFrame" style={{width:width*scale,height:effectiveHeight*scale}}>
     <div className={'viewerPage '+(pixelLayout?'pixelPublishedPage':'legacyPublishedPage')} data-page-id={String(page.id||'')} style={{width,height:effectiveHeight,background:s.background||'#f5f7fb',transform:`scale(${scale})`,transformOrigin:'top left'}}>
-     {s.backgroundImage&&<div className="viewerPageBg" style={{backgroundImage:`url(${s.backgroundImage})`,backgroundSize:s.backgroundImageFit||'cover',opacity:(s.backgroundImageOpacity??24)/100}}/>}
+     {s.backgroundImage&&<div className={`viewerPageBg pageBackgroundImage fit-${s.backgroundImageFit||'cover'}`} style={{backgroundImage:`url(${s.backgroundImage})`,opacity:(s.backgroundImageOpacity??24)/100}}/>}
      <div className="viewerPageLayer">
       {!pixelLayout&&s.header?.visible!==false&&<div className="viewerDashboardHeader" style={{background:s.header?.background||'#fff','--viewer-header-bg':s.header?.background||'#fff','--viewer-header-height':`${s.header?.height||84}px`,'--viewer-header-pad-top':`${s.header?.paddingTop??12}px`,'--viewer-header-pad-bottom':`${s.header?.paddingBottom??12}px`,'--viewer-header-pad-left':`${s.header?.paddingLeft??24}px`,'--viewer-header-pad-right':`${s.header?.paddingRight??24}px`,'--viewer-header-radius':`${s.header?.borderRadius??14}px`,'--viewer-header-title-size':`${s.header?.fontSize||28}px`,'--viewer-header-title-color':s.header?.titleColor||'#111827','--viewer-header-subtitle-size':`${s.header?.subtitleFontSize||12}px`,'--viewer-header-subtitle-color':s.header?.subtitleColor||'#475569'} as any}><div className="viewerDashboardHeaderCopy" style={{textAlign:s.header?.alignment||'left'}}><h1 style={{color:s.header?.titleColor||'#111827'}}>{s.header?.title||''}</h1><p style={{color:s.header?.subtitleColor||'#475569'}}>{s.header?.subtitle||''}</p></div>{s.header?.showGeneratedInfo!==false&&<div className="viewerReportMeta" style={{background:s.header?.generatedInfoBackground||'#f8fbff'}}><CalendarDays size={20}/><div><small>REPORT GENERATED</small><b>{new Date(item.updated_at||item.published_at).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}</b><span>{new Date(item.updated_at||item.published_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span></div></div>}</div>}
       <div className={'viewerGrid '+(pixelLayout?'pixelLayout':'legacyLayout')}>{visibleVisuals.map((v:Visual,index:number)=>{const visualField=v.bindings.axis?.[0]||'',publishedSlicerStyle=v.slicerStyle||(v.format as any)?.slicerStyle||'list';const activeFilter=interactionFilterMap[v.id]||(visualField?interactionFilters.find(filter=>filter.field===visualField||filter.field.endsWith('.'+visualField)||visualField.endsWith('.'+filter.field)):null)||null;return <div key={v.id} className={`viewerVisualWrapper ${v.geometryVersion===2?'viewerPixelObject':''}`} style={v.geometryVersion===2?{position:'absolute',left:v.x,top:v.y,width:v.w,height:v.h,zIndex:v.zIndex??index,transform:`rotate(${v.rotation||0}deg)`,transformOrigin:'center',display:'flex',flexDirection:'column',boxSizing:'border-box',overflow:(v.type==='slicer'&&publishedSlicerStyle==='dropdown')?'visible':'hidden'}:{gridColumn:`${v.x+1} / span ${v.w}`,gridRow:`${v.y+1} / span ${v.h}`}}><ViewerVisual v={v} model={project.model} result={visualResults[v.id]||(visualLoadError?{rows:[],error:visualLoadError}:undefined)} loading={v.type==='slicer'?(!visualResults[v.id]&&visualLoading):(!['textbox','button','image','shape'].includes(v.type)&&visualLoading&&!visualResults[v.id])} selected={buttonSelections[(v.format?.buttonSelectionGroup||'default').trim()||'default']===v.id} activeFilter={activeFilter} onCrossFilter={filter=>handleCrossFilter(v.id,filter)} onAction={executeAction}/></div>})}{visibleVisuals.length===0&&<div className="viewerEmptyPage"><b>No visible visuals on this published page</b><span>Open this page in Report Designer, verify visual visibility, save the report, and publish again.</span></div>}</div>

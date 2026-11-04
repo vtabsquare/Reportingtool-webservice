@@ -56,7 +56,7 @@ from .reporting_service import (
     update_semantic_model as service_update_semantic_model,
 )
 from .version import PRODUCT_VERSION
-from .update_agent import start_update_agent, get_update_status, get_last_apply_result
+from .update_agent import update_agent, verify_agent_token, verify_webhook_signature
 
 # Metadata initialization is deliberately non-destructive. Never unlink studio_meta.db
 # on Windows: an active SQLite handle causes WinError 32 and deleting metadata can lose
@@ -69,8 +69,7 @@ except Exception as exc:
 # Home/project metadata must be able to load even if DuckDB is unavailable, locked,
 # or needs recovery. Data/Transform/Model endpoints initialize it lazily.
 store=Store(); app=FastAPI(title='VTAB Reporting Studio API',version=PRODUCT_VERSION)
-if os.environ.get('VTAB_MANAGER_URL') and os.environ.get('VTAB_CLIENT_ID') and os.environ.get('VTAB_AGENT_TOKEN'):
-    start_update_agent()
+
 app.include_router(data_bridge_router)
 # Compress larger API responses (report definitions, visual rows and export
 # metadata) before they cross the public network. Static assets should also be
@@ -576,72 +575,55 @@ def register_confirm(req:RegisterConfirmReq):
 
 @app.get('/api/v1/health')
 def health():
-    return {'status':'ok','product':'VTAB Reporting Studio','version':PRODUCT_VERSION,'demoDatabase':DEMO.exists(),'metadataDatabase':META.exists(),'analyticalEngine':'DuckDB + Parquet ZSTD','analytics':analytics_status(),'update':get_update_status()}
+    return {'status':'ok','product':'VTAB Reporting Studio','version':PRODUCT_VERSION,'demoDatabase':DEMO.exists(),'metadataDatabase':META.exists(),'analyticalEngine':'DuckDB + Parquet ZSTD','analytics':analytics_status()}
+
+def _authorize_update_request(authorization:str|None,agent_token:str|None)->dict:
+    if verify_agent_token(agent_token):
+        return {'kind':'agent'}
+    token=(authorization or '').replace('Bearer ','',1).strip()
+    if not token:
+        raise HTTPException(401,'An authenticated Services administrator or update agent token is required.')
+    user=store.session_user(token)
+    if user:
+        roles={str(item.get('role') or '') for item in user.get('memberships',[])}
+        if roles and 'Admin' not in roles:
+            raise HTTPException(403,'Administrator role required to manage Services updates.')
+        return {'kind':'local','user':user}
+    try:
+        cloud_user=service_authenticate(token)
+        return {'kind':'cloud','user':cloud_user}
+    except Exception as exc:
+        raise HTTPException(401,'The Services administrator session is invalid or expired.') from exc
 
 @app.get('/api/v1/update/status')
-def update_status():
-    return get_update_status()
+def update_status(authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
+    _authorize_update_request(authorization,x_vtab_agent_token)
+    return update_agent.public_status()
 
 @app.post('/api/v1/update/apply')
-async def apply_update(request: Request):
-    import threading
-    from .update_agent import trigger_apply
-    token = (request.headers.get('x-vtab-agent-token') or request.headers.get('x-vtab-webhook-secret') or '').strip()
-    expected = os.environ.get('VTAB_AGENT_TOKEN', '').strip()
+def update_apply(authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
+    _authorize_update_request(authorization,x_vtab_agent_token)
+    try:return update_agent.apply()
+    except RuntimeError as exc:raise HTTPException(409,str(exc)) from exc
 
-    # 1. Server-to-server authorization via agent token
-    is_agent_authorized = bool(expected and token and secrets.compare_digest(token, expected))
+@app.post('/api/v1/update/cancel')
+def update_cancel(payload:dict|None=None,authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
+    _authorize_update_request(authorization,x_vtab_agent_token)
+    try:return update_agent.cancel(str((payload or {}).get('reason') or 'Update offer cancelled by an administrator.'))
+    except RuntimeError as exc:raise HTTPException(409,str(exc)) from exc
 
-    # 2. Browser user authorization via session / Supabase JWT
-    is_user_authorized = hasattr(request.state, 'vtab_user') and request.state.vtab_user is not None
-    if not is_user_authorized:
-        auth_hdr = (request.headers.get('authorization') or '').replace('Bearer ', '', 1).strip()
-        if auth_hdr and (auth_hdr.startswith('eyJ') or store.session_user(auth_hdr)):
-            is_user_authorized = True
-
-    if not is_agent_authorized and not is_user_authorized:
-        raise HTTPException(403, 'Invalid agent token or unauthenticated session. Please sign in as an administrator.')
-
-    threading.Thread(target=trigger_apply, daemon=True).start()
-    return {'ok': True, 'message': 'Update triggered in background. Poll /api/v1/update/status for progress.'}
-
-
+@app.post('/api/v1/update/offer')
 @app.post('/api/v1/update/webhook')
 @app.post('/api/v1/webhook/update')
-async def update_webhook(request: Request):
-    """Receive an update notification webhook from VTAB Reporting Manager or deployment pipeline."""
-    from .update_agent import handle_update_webhook
-    token = (request.headers.get('x-vtab-agent-token') or request.headers.get('x-vtab-webhook-secret') or '').strip()
-    expected_agent = os.environ.get('VTAB_AGENT_TOKEN', '').strip()
-    expected_secret = os.environ.get('VTAB_WEBHOOK_SECRET', '').strip()
-    expected_client = os.environ.get('VTAB_CLIENT_ID', '').strip()
-    client_id_header = (request.headers.get('x-vtab-client-id') or '').strip()
-
-    if expected_agent or expected_secret or expected_client:
-        authorized = False
-        if expected_agent and token and secrets.compare_digest(token, expected_agent):
-            authorized = True
-        elif expected_secret and token and secrets.compare_digest(token, expected_secret):
-            authorized = True
-        elif expected_client and client_id_header and secrets.compare_digest(client_id_header, expected_client):
-            authorized = True
-        if not authorized:
-            raise HTTPException(403, 'Invalid agent token or client authorization header.')
-
+async def update_offer(request:Request,x_vtab_agent_token:str|None=Header(default=None),x_vtab_signature_256:str|None=Header(default=None),x_vtab_event_id:str|None=Header(default=None)):
+    raw=await request.body()
+    if not verify_agent_token(x_vtab_agent_token) and not verify_webhook_signature(raw,x_vtab_signature_256):
+        raise HTTPException(401,'Valid update-agent authentication or webhook signature required.')
     try:
-        payload = await request.json()
-    except Exception:
-        raise HTTPException(400, 'Webhook payload must be valid JSON.')
-    result = handle_update_webhook(payload)
-    if not result.get('ok'):
-        raise HTTPException(400, result.get('error', 'Webhook processing failed.'))
-    return result
-
-
-@app.get('/api/v1/update/history')
-def update_history():
-    """Return historical update and webhook events recorded in persistent database storage."""
-    return {'history': store.list_update_history(50)}
+        payload=json.loads(raw.decode('utf-8')) if raw else {}
+        return update_agent.offer(payload,x_vtab_event_id)
+    except (ValueError,json.JSONDecodeError) as exc:
+        raise HTTPException(400,str(exc)) from exc
 
 @app.get('/api/v1/analytics/health')
 def analytics_health():
@@ -3039,6 +3021,9 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
     measures = [] if visual.get('type') == 'slicer' else list(dict.fromkeys([
         *(bindings.get('values') or []),
         *(bindings.get('target') or []),
+        *(bindings.get('variance') or []),
+        *(bindings.get('indicator') or []),
+        *(bindings.get('color') or []),
         *(bindings.get('tooltips') or []),
         *(bindings.get('min') or []),
         *(bindings.get('max') or []),

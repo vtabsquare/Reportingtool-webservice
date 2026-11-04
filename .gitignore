@@ -47,3 +47,7 @@ data/columnar/
 # Python virtual environments
 .venv/
 venv/
+
+# Local temporary / runtime
+data/update-agent-state.json
+_backup_latest/

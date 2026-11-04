@@ -16,6 +16,7 @@
     "test:desktop-parity": "node test_city_partition_runtime.mjs && node test_matrix_visual_runtime.mjs && node test_sorting_engine_runtime.mjs && node test_slicer_text_input_contract.mjs",
     "test:paginated-parity": "node test_paginated_publish_parity.cjs",
     "test:publish-visual-parity": "node test_publish_visual_parity.cjs",
+    "test:services-update-workflow": "node test_services_update_workflow_contract.cjs",
     "desktop": "electron .",
     "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-backend.ps1",
     "release": "npm run build:backend && npm run build && electron-builder --win nsis --publish never --config.electronDownload.cache=.electron-cache"
