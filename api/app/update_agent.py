@@ -136,9 +136,20 @@ class UpdateAgent:
             current = self._current_commit().lower()
             target = str(self.state.get("target_commit_sha") or "").strip().lower()
 
-            # If an update was previously offered and the server has now reached that commit, mark completed:
+            # Auto-clear the banner ONLY when:
+            #   - The offer was for a FUTURE commit (different from current), AND
+            #   - The server has since been updated to that commit (Render/DO auto-deploy).
+            # Do NOT auto-clear if the offer's commit already matches the currently running
+            # commit — that is a legitimate Manager offer (e.g. announcing release notes
+            # for the already-deployed version) that the user must see and dismiss manually.
             if current and current != "unknown" and target:
-                if target.startswith(current[:7]) or current.startswith(target[:7]):
+                offer_was_for_different_commit = not (
+                    target.startswith(current[:7]) or current.startswith(target[:7])
+                )
+                # Only auto-clear if we were waiting for a different commit that is now live
+                # (i.e. the offer pointed somewhere in the future, and now we're there)
+                if not offer_was_for_different_commit and self.state.get("status") in {"deploying", "building", "restarting"}:
+                    # We were actively deploying and have arrived — mark complete
                     with self.lock:
                         if self.state.get("update_available"):
                             self.state.update(
