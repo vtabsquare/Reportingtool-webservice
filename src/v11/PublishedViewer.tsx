@@ -923,16 +923,6 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     <div className="viewerZoomDock" role="toolbar" aria-label="Zoom controls">
       <button 
         type="button" 
-        className={`viewerZoomFitBtn ${viewMode === 'fitPage' ? 'active' : ''}`} 
-        onClick={handleToggleFit} 
-        title={viewMode === 'fitPage' ? 'Fit to page (active) - Click for 100%' : 'Fit to page'}
-      >
-        <Scaling size={13} />
-        <span>Fit</span>
-      </button>
-      <div className="viewerZoomDivider" />
-      <button 
-        type="button" 
         className="viewerZoomBtn" 
         onClick={handleZoomOut} 
         disabled={zoomPercent <= 20} 
@@ -970,9 +960,19 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
         type="button" 
         className="viewerZoomPercentBtn" 
         onClick={handleResetActual} 
-        title="Reset to 100%"
+        title="Click to reset to 100%"
       >
         {zoomPercent}%
+      </button>
+      <div className="viewerZoomDivider" />
+      <button 
+        type="button" 
+        className={`viewerZoomFitBtn ${viewMode === 'fitPage' ? 'active' : ''}`}
+        onClick={handleToggleFit} 
+        title={viewMode === 'fitPage' ? 'Fit to page (active) - Click for 100%' : 'Fit page'}
+      >
+        <Maximize2 size={13} />
+        <span>Fit page</span>
       </button>
     </div>
    </div>}

@@ -2868,3 +2868,11 @@ html[data-color-mode="dark"] [data-theme="vtab"] .view-report .advancedFields .f
   background-position: center !important;
   background-repeat: no-repeat !important;
 }
+
+/* ── Published Canvas Parity with Desktop ─────────────────────────────────── */
+.viewerPage,
+.viewerPage.pixelPublishedPage,
+.viewerPage.legacyPublishedPage {
+  border-radius: 0 !important;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.12), 0 1px 3px rgba(15, 23, 42, 0.08) !important;
+}
