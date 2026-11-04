@@ -28,6 +28,13 @@ const rootEnv = parseDotEnv(resolve(process.cwd(), '.env'));
 const desktopEnv = parseDotEnv(resolve(process.cwd(), 'desktop.env'));
 const processViteEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('VITE_')));
 const env = { ...webEnv, ...rootEnv, ...desktopEnv, ...processViteEnv };
+// For production web build (WORKSPACE_ONLY), default VITE_API_URL to relative '/api/v1'
+// so client browsers in deployment do not attempt to contact local developer port 8830.
+if (process.env.VITE_APP_MODE === 'WORKSPACE_ONLY') {
+  if (!process.env.VITE_API_URL || /(?:127\.0\.0\.1|localhost|0\.0\.0\.0)/.test(env.VITE_API_URL || '')) {
+    env.VITE_API_URL = '/api/v1';
+  }
+}
 const packageMetadata = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8'));
 env.VITE_APP_VERSION ||= String(packageMetadata.version || '');
 

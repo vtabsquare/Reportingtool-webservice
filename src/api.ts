@@ -20,7 +20,27 @@ const _isDesktop=typeof window!=='undefined'&&(
 );
 const _isTauri=typeof window!=='undefined'&&!!(window as any).__TAURI__;
 const _desktopBase=typeof window!=='undefined'&&(window as any).__VTAB_DESKTOP__?.apiBase;
-const FALLBACK_BASE=_envBase||(typeof _desktopBase==='string'&&_desktopBase?_desktopBase:(_isDesktop?'http://127.0.0.1:8820/api/v1':'/api/v1'));
+
+export function getEffectiveApiBase():string{
+  if(typeof window!=='undefined'){
+    const isDesktop=_isDesktop;
+    if(isDesktop){
+      return (typeof _desktopBase==='string'&&_desktopBase)?_desktopBase:'http://127.0.0.1:8820/api/v1';
+    }
+    const host=window.location.hostname;
+    const isLocalhost=host==='localhost'||host==='127.0.0.1'||host==='0.0.0.0'||host==='::1';
+    // When running on a remote/deployed host (e.g. reportservices.vtabsquare.com),
+    // NEVER attempt to call localhost/127.0.0.1 — always route through the same-origin reverse proxy /api/v1
+    if(!isLocalhost&&_envBase&&(/(?:localhost|127\.0\.0\.1|0\.0\.0\.0)/i.test(_envBase))){
+      return '/api/v1';
+    }
+    if(_envBase)return _envBase;
+    return '/api/v1';
+  }
+  return _envBase||'/api/v1';
+}
+
+const FALLBACK_BASE=getEffectiveApiBase();
 let runtimeBase:string|undefined;
 async function apiBase():Promise<string>{
   if(runtimeBase)return runtimeBase;
@@ -30,7 +50,7 @@ async function apiBase():Promise<string>{
       try{const value=await invoke('api_base');if(typeof value==='string'&&value){runtimeBase=value;return value;}}catch{}
     }
   }
-  return FALLBACK_BASE;
+  return getEffectiveApiBase();
 }
 async function jsonResponse<T>(response:Response,base:string,path:string):Promise<T>{
   const text=await response.text();
@@ -146,4 +166,4 @@ export async function apiDownloadPost(path:string,filename:string,payload:any){
   const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=resolvedFilename;document.body.appendChild(anchor);anchor.click();anchor.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
 }
 
-export const API_BASE=FALLBACK_BASE;
+export const API_BASE=getEffectiveApiBase();

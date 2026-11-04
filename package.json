@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "node tools/build-frontend.mjs",
-    "build:web": "cross-env VITE_APP_MODE=WORKSPACE_ONLY node tools/build-frontend.mjs",
+    "build:web": "cross-env VITE_APP_MODE=WORKSPACE_ONLY VITE_API_URL=/api/v1 node tools/build-frontend.mjs",
     "preview": "vite preview",
     "test:visual-formatting": "node test_visual_formatting_contract.cjs",
     "test:map": "node test_advanced_map_engine.mjs",

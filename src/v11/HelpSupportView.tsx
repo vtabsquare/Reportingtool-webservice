@@ -593,7 +593,7 @@ export default function HelpSupportView({
                 Service health and known issues
               </b>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
-                <a href="#status" onClick={e => { e.preventDefault(); alert("System Status: All services running normally on http://127.0.0.1:8830"); }} style={{ color: '#0f6cbd', textDecoration: 'none' }}>
+                <a href="#status" onClick={e => { e.preventDefault(); alert("System Status: All services running normally"); }} style={{ color: '#0f6cbd', textDecoration: 'none' }}>
                   Check service status
                 </a>
                 <a href="http://admin-reporting.139.59.32.39.nip.io/" target="_blank" rel="noreferrer" style={{ color: '#0f6cbd', textDecoration: 'none' }}>
