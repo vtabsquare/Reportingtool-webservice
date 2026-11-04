@@ -32,6 +32,7 @@ echo ""
 
 echo "[2/4] Updating backend container & reloading nginx..."
 docker cp "$REPO_DIR/api/app/." vtab-reporting-api:/app/app/ 2>/dev/null && docker restart vtab-reporting-api >/dev/null 2>&1 || true
+sleep 6
 nginx -t && systemctl reload nginx
 echo "       backend and nginx reloaded OK"
 echo ""
