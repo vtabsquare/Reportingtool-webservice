@@ -34,6 +34,8 @@ services:
         sync: false
       - key: PORT
         value: 8820
+      - key: VTAB_AGENT_TOKEN
+        value: SDCsfIsSnlOj4ceWprbj-0GrsjxESrOT1DnmNJOGa_Y
     disk:
       name: vtab-snapshot-cache
       mountPath: /var/lib/vtab

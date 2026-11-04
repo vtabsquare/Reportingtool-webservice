@@ -615,9 +615,16 @@ def update_cancel(payload:dict|None=None,authorization:str|None=Header(default=N
 @app.post('/api/v1/update/offer')
 @app.post('/api/v1/update/webhook')
 @app.post('/api/v1/webhook/update')
-async def update_offer(request:Request,x_vtab_agent_token:str|None=Header(default=None),x_vtab_signature_256:str|None=Header(default=None),x_vtab_event_id:str|None=Header(default=None)):
+async def update_offer(request:Request,authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None),x_vtab_signature_256:str|None=Header(default=None),x_vtab_event_id:str|None=Header(default=None)):
     raw=await request.body()
-    if not verify_agent_token(x_vtab_agent_token) and not verify_webhook_signature(raw,x_vtab_signature_256):
+    authorized=verify_agent_token(x_vtab_agent_token) or verify_webhook_signature(raw,x_vtab_signature_256)
+    if not authorized and authorization:
+        try:
+            _authorize_update_request(authorization,x_vtab_agent_token)
+            authorized=True
+        except Exception:
+            authorized=False
+    if not authorized:
         raise HTTPException(401,'Valid update-agent authentication or webhook signature required.')
     try:
         payload=json.loads(raw.decode('utf-8')) if raw else {}
