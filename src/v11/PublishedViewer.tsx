@@ -1,6 +1,6 @@
 import{useCallback,useEffect,useMemo,useRef,useState}from'react';
 import{createPortal}from'react-dom';
-import{ChevronLeft,ChevronRight,ChevronDown,RefreshCcw,Maximize2,Minimize2,Home,CalendarDays,ShieldCheck,MonitorUp,Expand,Scaling,Eraser,BarChart3,PieChart,Table2,LayoutGrid,Filter,TrendingUp,MousePointerClick,FileDown,Presentation,Mail,FileText,Printer,Code2,QrCode,Star,Settings2,Share2,ArrowLeft,Download,FileArchive,Check,Copy,ExternalLink,Globe,Users,BellRing,Search,X}from'lucide-react';
+import{ChevronLeft,ChevronRight,ChevronDown,RefreshCcw,Maximize2,Minimize2,Home,CalendarDays,ShieldCheck,MonitorUp,Expand,Scaling,Eraser,BarChart3,PieChart,Table2,LayoutGrid,Filter,TrendingUp,MousePointerClick,FileDown,Presentation,Mail,FileText,Printer,Code2,QrCode,Star,Settings2,Share2,ArrowLeft,Download,FileArchive,Check,Copy,ExternalLink,Globe,Users,BellRing,Search,X,Minus,Plus,ZoomIn,ZoomOut}from'lucide-react';
 import Chart from'../components/Chart';
 import PaginatedReportViewer from'./PaginatedReportViewer';
 import ReportAutomationDialog from'./ReportAutomationDialog';
@@ -225,7 +225,11 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
   const titleTextStyle:any={fontFamily:f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.titleFontSize||12,color:f.titleColor||(dark?'#fff':'#242424'),fontWeight:f.titleBold===false?400:(f.titleFontWeight||700),fontStyle:f.titleFontStyle||'normal',textDecoration:f.titleUnderline?'underline':'none',whiteSpace:f.titleWrap===false?'nowrap':'normal',textAlign:f.titleAlignment||'left',lineHeight:1.25,paddingBottom:'2px',boxSizing:'border-box'};
   const subtitleTextStyle:any={fontFamily:f.subtitleFontFamily||f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.subtitleFontSize||10,color:f.subtitleColor||'#616161',fontWeight:f.subtitleBold?(f.subtitleFontWeight||700):400,fontStyle:f.subtitleFontStyle||'normal',textDecoration:f.subtitleUnderline?'underline':'none',whiteSpace:f.subtitleWrap===false?'nowrap':'normal',textAlign:f.subtitleAlignment||f.titleAlignment||'left'};
   if(v.type==='shape')return <div role="img" aria-label={f.altText||`${f.shapeType||'rectangle'} shape`} className="viewerShapeObject" data-export-state="ready" data-visual-title={v.title||v.type}><ViewerShape format={f}/></div>;
-  if(v.type==='image'){const media=<img className="viewerImageVisual" src={v.imageSrc||''} alt={f.altText||v.imageName||''} style={{objectFit:f.imageFit||'contain',opacity:(f.imageOpacity??100)/100}}/>;return <div className={`viewerVisual viewerVisual-image visualCard ${responsiveSizeClass}`} data-export-state="ready" data-visual-title={v.title||v.type} data-visual-background={backgroundOn?'on':'off'} data-visual-border={f.borderVisible?'on':'off'} data-title-background={titleBackgroundOn?'on':'off'} style={{background,border:'0',borderTop:edges.top?border:'0',borderRight:edges.right?border:'0',borderBottom:edges.bottom?border:'0',borderLeft:edges.left?border:'0',borderRadius:radius,boxShadow:shadow,'--viewer-background':background,'--viewer-border-top':edges.top?border:'none','--viewer-border-right':edges.right?border:'none','--viewer-border-bottom':edges.bottom?border:'none','--viewer-border-left':edges.left?border:'none','--viewer-radius':radius,'--viewer-shadow':shadow,'--visual-background':background,'--visual-border-top':edges.top?border:'none','--visual-border-right':edges.right?border:'none','--visual-border-bottom':edges.bottom?border:'none','--visual-border-left':edges.left?border:'none','--visual-radius':radius,'--visual-shadow':shadow,'--viewer-title-background':titleBackground,'--visual-title-background':titleBackground,'--visual-title-radius':titleRadius,'--visual-title-border':titleBackgroundOn?'1px solid rgba(15,23,42,.08)':'none','--visual-backdrop':backgroundOn?'blur(9px)':'none'} as any}>{f.showTitle!==false&&<div className="viewerVisualTitle visualTitle" style={{background:titleBackground,borderRadius:titleRadius,...titleTextStyle}}><div className="viewerVisualTitleLabel visualTitleText" style={{flex:1,minWidth:0,textAlign:f.titleAlignment||'left',display:'flex',flexDirection:'column',alignItems:'stretch'}}><span style={{...titleTextStyle,display:'block',width:'100%',textAlign:f.titleAlignment||'left'}}>{v.title}</span></div></div>}<div className="viewerVisualBody">{media}</div></div>}
+  if(v.type==='image'){
+    const isCanvasCover=(v.w>=1200&&v.h>=600)||(v.x===0&&v.y===0&&(v.w>=900||v.h>=500));
+    const resolvedFit=(f.imageFit==='stretch'||f.imageFit==='fill'||isCanvasCover)?'fill':(f.imageFit==='cover'?'cover':(f.imageFit||'contain'));
+    const media=<img className="viewerImageVisual" src={v.imageSrc||''} alt={f.altText||v.imageName||''} style={{width:'100%',height:'100%',objectFit:resolvedFit as any,opacity:(f.imageOpacity??100)/100,display:'block'}}/>;
+    return <div className={`viewerVisual viewerVisual-image visualCard ${responsiveSizeClass}`} data-export-state="ready" data-visual-title={v.title||v.type} data-visual-background={backgroundOn?'on':'off'} data-visual-border={f.borderVisible?'on':'off'} data-title-background={titleBackgroundOn?'on':'off'} style={{background,border:'0',borderTop:edges.top?border:'0',borderRight:edges.right?border:'0',borderBottom:edges.bottom?border:'0',borderLeft:edges.left?border:'0',borderRadius:radius,boxShadow:shadow,'--viewer-background':background,'--viewer-border-top':edges.top?border:'none','--viewer-border-right':edges.right?border:'none','--viewer-border-bottom':edges.bottom?border:'none','--viewer-border-left':edges.left?border:'none','--viewer-radius':radius,'--viewer-shadow':shadow,'--visual-background':background,'--visual-border-top':edges.top?border:'none','--visual-border-right':edges.right?border:'none','--visual-border-bottom':edges.bottom?border:'none','--visual-border-left':edges.left?border:'none','--visual-radius':radius,'--visual-shadow':shadow,'--viewer-title-background':titleBackground,'--visual-title-background':titleBackground,'--visual-title-radius':titleRadius,'--visual-title-border':titleBackgroundOn?'1px solid rgba(15,23,42,.08)':'none','--visual-backdrop':backgroundOn?'blur(9px)':'none'} as any}>{f.showTitle!==false&&<div className="viewerVisualTitle visualTitle" style={{background:titleBackground,borderRadius:titleRadius,...titleTextStyle}}><div className="viewerVisualTitleLabel visualTitleText" style={{flex:1,minWidth:0,textAlign:f.titleAlignment||'left',display:'flex',flexDirection:'column',alignItems:'stretch'}}><span style={{...titleTextStyle,display:'block',width:'100%',textAlign:f.titleAlignment||'left'}}>{v.title}</span></div></div>}<div className="viewerVisualBody" style={{padding:0,margin:0,width:'100%',height:'100%',overflow:'hidden'}}>{media}</div></div>}
   const content=v.type==='textbox'?(
     <div className="viewerTextBox" style={{fontSize:f.fontSize||18,color:f.labelColor||'#111827',fontFamily:f.fontFamily||'inherit',fontWeight:f.textFontWeight||400,fontStyle:f.textItalic?'italic':'normal',textDecoration:f.textUnderline?'underline':'none',textAlign:f.textAlign||'left',lineHeight:f.textLineHeight||1.45,whiteSpace:f.textWrap===false?'nowrap':'pre-wrap',overflowWrap:f.textWrap===false?'normal':'anywhere',display:'flex',flexDirection:'column',justifyContent:f.textVerticalAlign==='bottom'?'flex-end':f.textVerticalAlign==='middle'?'center':'flex-start',width:'100%',height:'100%',boxSizing:'border-box'}} dangerouslySetInnerHTML={{__html:richTextHtml(v.richText,v.text)}}/>
   ):v.type==='button'?(
@@ -376,7 +380,7 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
   return <>{card}{focus&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>setFocus(false)}><div className="visualFocusPanel viewerFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>FOCUS MODE</small><b>{v.title}</b></div><button onClick={()=>setFocus(false)}>Close</button></div><div className="visualFocusBody">{content}</div></div></div>,document.body)}</>;
 }
 export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId,userRole,onBack,onManageAccess,workspacePermissions}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string,userRole?:string,onBack?:()=>void,onManageAccess?:()=>void,workspacePermissions?:Partial<ReportUiPermissions>}){
- const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(false),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'>('fitPage'),[scale,setScale]=useState(1),[interactionFilterMap,setInteractionFilterMap]=useState<Record<string,VisualFilter>>({}),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
+ const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(false),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'|'custom'>('fitPage'),[scale,setScale]=useState(1),[isZoomDragging,setIsZoomDragging]=useState(false),[interactionFilterMap,setInteractionFilterMap]=useState<Record<string,VisualFilter>>({}),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
  const[publishedMode,setPublishedMode]=useState<'interactive'|'paginated'>(initialPaginatedId?'paginated':'interactive');
  const[activeRibbonTab,setActiveRibbonTab]=useState<'Home'|'File'|'View'>('Home');
  const permissions=useMemo(()=>({...DEFAULT_REPORT_UI_PERMISSIONS,...(workspacePermissions||{})}),[workspacePermissions]);
@@ -474,7 +478,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  // Older snapshots may contain pixel coordinates without the migration flag.
  // Infer that contract from the coordinate range instead of treating those
  // values as legacy grid units and inflating the published page height.
- const pixelLayout=(page?.visuals||[]).some((visual:Visual)=>visual.geometryVersion===2||visual.x>12||visual.w>12||visual.y>40||visual.h>40);
+ const pixelLayout=Boolean(s.v5CanvasMigrated||s.v5Migrated||s.pageSizePreset||s.pageWidth||!(page?.visuals?.length)||(page?.visuals||[]).some((visual:Visual)=>visual.geometryVersion===2||visual.x>12||visual.w>12||visual.y>40||visual.h>40));
  const visualBottom=(page?.visuals||[]).reduce((m:any,v:any)=>Math.max(m,v.geometryVersion===2?(v.y||0)+(v.h||100):(v.y||0)*70+(v.h||2)*54+Math.max(0,(v.h||2)-1)*16),0);
  const headerHeight=s.header?.visible!==false?(s.header?.height||84):0;
  // Geometry-v2 coordinates are page-relative (the Desktop canvas origin), so
@@ -488,6 +492,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    if(!item||!page)return;
    const stage=stageRef.current;if(!stage)return;
    const compute=()=>{
+      if(viewMode==='custom')return;
      const rect=stage.getBoundingClientRect();
      const availW=Math.max(240,rect.width-(viewMode==='fitWidth'?36:28)),availH=Math.max(240,rect.height-28);
      let next=1;
@@ -499,6 +504,53 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    };
    compute();const ro=new ResizeObserver(compute);ro.observe(stage);window.addEventListener('resize',compute);return()=>{ro.disconnect();window.removeEventListener('resize',compute)};
  },[width,effectiveHeight,viewMode,full,activeRibbonTab,publishedMode,item?.id,page?.id]);
+  useEffect(()=>{
+    const stage=stageRef.current;
+    if(!stage)return;
+    const onWheel=(e:WheelEvent)=>{
+      if(e.ctrlKey||e.metaKey){
+        e.preventDefault();
+        const factor=e.deltaY<0?1.08:0.92;
+        setViewMode('custom');
+        setScale(prev=>Math.max(0.2,Math.min(3.0,Math.round(prev*factor*100)/100)));
+      }
+    };
+    stage.addEventListener('wheel',onWheel,{passive:false});
+    return()=>stage.removeEventListener('wheel',onWheel);
+  },[]);
+  const zoomPercent=Math.round(scale*100);
+  const handleSliderChange=(e:React.ChangeEvent<HTMLInputElement>)=>{
+    const val=Number(e.target.value);
+    if(!Number.isFinite(val)||val<10)return;
+    setViewMode('custom');
+    setScale(val/100);
+  };
+  const handleZoomOut=()=>{
+    const current=Math.round(scale*100);
+    const step=current<=50?5:current<=120?10:25;
+    const nextVal=Math.max(20,Math.floor((current-step)/5)*5);
+    setViewMode('custom');
+    setScale(nextVal/100);
+  };
+  const handleZoomIn=()=>{
+    const current=Math.round(scale*100);
+    const step=current<50?5:current<120?10:25;
+    const nextVal=Math.min(300,Math.ceil((current+step)/5)*5);
+    setViewMode('custom');
+    setScale(nextVal/100);
+  };
+  const handleToggleFit=()=>{
+    if(viewMode==='fitPage'){
+      setViewMode('actual');
+      setScale(1);
+    }else{
+      setViewMode('fitPage');
+    }
+  };
+  const handleResetActual=()=>{
+    setViewMode('actual');
+    setScale(1);
+  };
  useEffect(()=>{const stage=stageRef.current;if(stage)stage.scrollTo({top:0,left:0,behavior:'instant' as ScrollBehavior})},[pageIndex,viewMode,full,item?.id]);
  useEffect(()=>{for(const reportPage of pages)for(const visual of reportPage.visuals||[])if(Object.prototype.hasOwnProperty.call(runtimeVisibilityDefaultsRef.current,visual.id))visual.hidden=runtimeVisibilityDefaultsRef.current[visual.id];setRuntimeHidden({});setInteractionFilterMap({})},[page?.id]);
  const doLogin=async()=>{try{const r=await api<any>('/auth/login',{method:'POST',body:JSON.stringify(login)});localStorage.setItem('vtab_workspace_token',r.token);setSignedIn(true);load()}catch(e:any){alert(e.message)}};
@@ -524,7 +576,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     const pageDefinition=pages[index],pageSettings=pageDefinition.settings||{},pageWidth=pageSettings.pageWidth||1920;
     const pageVisuals=pageDefinition.visuals||[];
     const pageFixedPreset=['16:9','HD 16:9','Full HD 16:9','QHD 16:9','16:10','4:3','Letter','Tooltip','A4 Landscape','A4 Portrait'].includes(String(pageSettings.pageSizePreset||''));
-    const pagePixelLayout=pageVisuals.some((visual:Visual)=>visual.geometryVersion===2||visual.x>12||visual.w>12||visual.y>40||visual.h>40);
+    const pagePixelLayout=Boolean(pageSettings.v5CanvasMigrated||pageSettings.v5Migrated||pageSettings.pageSizePreset||pageSettings.pageWidth||!(pageVisuals.length)||pageVisuals.some((visual:Visual)=>visual.geometryVersion===2||visual.x>12||visual.w>12||visual.y>40||visual.h>40));
     const pageVisualBottom=pageVisuals.reduce((m:any,v:any)=>Math.max(m,v.geometryVersion===2?(v.y||0)+(v.h||100):(v.y||0)*70+(v.h||2)*54+Math.max(0,(v.h||2)-1)*16),0);
     const pageHeaderHeight=pageSettings.header?.visible!==false?(pageSettings.header?.height||84):0;
     const pageContentHeight=Math.max(480,pageVisualBottom+(pageSettings.footerGap??96)+(pagePixelLayout?0:pageHeaderHeight+34));
@@ -856,9 +908,9 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
          )}
        </div>
      )}
-     <div className="viewerScaleFrame" style={{width:width*scale,height:effectiveHeight*scale}}>
-    <div className={'viewerPage '+(pixelLayout?'pixelPublishedPage':'legacyPublishedPage')} data-page-id={String(page.id||'')} style={{width,height:effectiveHeight,background:s.background||'#f5f7fb',transform:`scale(${scale})`,transformOrigin:'top left'}}>
-     {s.backgroundImage&&<div className={`viewerPageBg pageBackgroundImage fit-${s.backgroundImageFit||'cover'}`} style={{backgroundImage:`url(${s.backgroundImage})`,opacity:(s.backgroundImageOpacity??24)/100}}/>}
+     <div className="viewerScaleFrame" style={{width:width*scale,height:effectiveHeight*scale,transition:isZoomDragging?'none':'width 0.15s ease, height 0.15s ease'}}>
+    <div className={'viewerPage '+(pixelLayout?'pixelPublishedPage':'legacyPublishedPage')} data-page-id={String(page.id||'')} style={{width,height:effectiveHeight,background:s.background||'#f5f7fb',transform:`scale(${scale})`,transformOrigin:'top left',transition:isZoomDragging?'none':'transform 0.15s ease'}}>
+     {s.backgroundImage&&<div className={`viewerPageBg pageBackgroundImage fit-${s.backgroundImageFit||'cover'}`} style={{backgroundImage:`url(${s.backgroundImage})`,opacity:(s.backgroundImageOpacity!==undefined?s.backgroundImageOpacity:100)/100}}/>}
      <div className="viewerPageLayer">
       {!pixelLayout&&s.header?.visible!==false&&<div className="viewerDashboardHeader" style={{background:s.header?.background||'#fff','--viewer-header-bg':s.header?.background||'#fff','--viewer-header-height':`${s.header?.height||84}px`,'--viewer-header-pad-top':`${s.header?.paddingTop??12}px`,'--viewer-header-pad-bottom':`${s.header?.paddingBottom??12}px`,'--viewer-header-pad-left':`${s.header?.paddingLeft??24}px`,'--viewer-header-pad-right':`${s.header?.paddingRight??24}px`,'--viewer-header-radius':`${s.header?.borderRadius??14}px`,'--viewer-header-title-size':`${s.header?.fontSize||28}px`,'--viewer-header-title-color':s.header?.titleColor||'#111827','--viewer-header-subtitle-size':`${s.header?.subtitleFontSize||12}px`,'--viewer-header-subtitle-color':s.header?.subtitleColor||'#475569'} as any}><div className="viewerDashboardHeaderCopy" style={{textAlign:s.header?.alignment||'left'}}><h1 style={{color:s.header?.titleColor||'#111827'}}>{s.header?.title||''}</h1><p style={{color:s.header?.subtitleColor||'#475569'}}>{s.header?.subtitle||''}</p></div>{s.header?.showGeneratedInfo!==false&&<div className="viewerReportMeta" style={{background:s.header?.generatedInfoBackground||'#f8fbff'}}><CalendarDays size={20}/><div><small>REPORT GENERATED</small><b>{new Date(item.updated_at||item.published_at).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}</b><span>{new Date(item.updated_at||item.published_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span></div></div>}</div>}
       <div className={'viewerGrid '+(pixelLayout?'pixelLayout':'legacyLayout')}>{visibleVisuals.map((v:Visual,index:number)=>{const visualField=v.bindings.axis?.[0]||'',publishedSlicerStyle=v.slicerStyle||(v.format as any)?.slicerStyle||'list';const activeFilter=interactionFilterMap[v.id]||(visualField?interactionFilters.find(filter=>filter.field===visualField||filter.field.endsWith('.'+visualField)||visualField.endsWith('.'+filter.field)):null)||null;return <div key={v.id} className={`viewerVisualWrapper ${v.geometryVersion===2?'viewerPixelObject':''}`} style={v.geometryVersion===2?{position:'absolute',left:v.x,top:v.y,width:v.w,height:v.h,zIndex:v.zIndex??index,transform:`rotate(${v.rotation||0}deg)`,transformOrigin:'center',display:'flex',flexDirection:'column',boxSizing:'border-box',overflow:(v.type==='slicer'&&publishedSlicerStyle==='dropdown')?'visible':'hidden'}:{gridColumn:`${v.x+1} / span ${v.w}`,gridRow:`${v.y+1} / span ${v.h}`}}><ViewerVisual v={v} model={project.model} result={visualResults[v.id]||(visualLoadError?{rows:[],error:visualLoadError}:undefined)} loading={v.type==='slicer'?(!visualResults[v.id]&&visualLoading):(!['textbox','button','image','shape'].includes(v.type)&&visualLoading&&!visualResults[v.id])} selected={buttonSelections[(v.format?.buttonSelectionGroup||'default').trim()||'default']===v.id} activeFilter={activeFilter} onCrossFilter={filter=>handleCrossFilter(v.id,filter)} onAction={executeAction}/></div>})}{visibleVisuals.length===0&&<div className="viewerEmptyPage"><b>No visible visuals on this published page</b><span>Open this page in Report Designer, verify visual visibility, save the report, and publish again.</span></div>}</div>
@@ -866,7 +918,64 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     </div>
     </div>
    </main>
-  </div>}
+
+    {/* Floating Zoom Controls Dock at bottom-right corner */}
+    <div className="viewerZoomDock" role="toolbar" aria-label="Zoom controls">
+      <button 
+        type="button" 
+        className={`viewerZoomFitBtn ${viewMode === 'fitPage' ? 'active' : ''}`} 
+        onClick={handleToggleFit} 
+        title={viewMode === 'fitPage' ? 'Fit to page (active) - Click for 100%' : 'Fit to page'}
+      >
+        <Scaling size={13} />
+        <span>Fit</span>
+      </button>
+      <div className="viewerZoomDivider" />
+      <button 
+        type="button" 
+        className="viewerZoomBtn" 
+        onClick={handleZoomOut} 
+        disabled={zoomPercent <= 20} 
+        title="Zoom out" 
+        aria-label="Zoom out"
+      >
+        <Minus size={13} />
+      </button>
+      <input 
+        type="range" 
+        className="viewerZoomSlider" 
+        min={20} 
+        max={300} 
+        step={5} 
+        value={zoomPercent} 
+        onChange={handleSliderChange}
+        onPointerDown={() => setIsZoomDragging(true)}
+        onPointerUp={() => setIsZoomDragging(false)}
+        onTouchStart={() => setIsZoomDragging(true)}
+        onTouchEnd={() => setIsZoomDragging(false)}
+        title={`Zoom: ${zoomPercent}%`}
+        aria-label="Zoom slider"
+      />
+      <button 
+        type="button" 
+        className="viewerZoomBtn" 
+        onClick={handleZoomIn} 
+        disabled={zoomPercent >= 300} 
+        title="Zoom in" 
+        aria-label="Zoom in"
+      >
+        <Plus size={13} />
+      </button>
+      <button 
+        type="button" 
+        className="viewerZoomPercentBtn" 
+        onClick={handleResetActual} 
+        title="Reset to 100%"
+      >
+        {zoomPercent}%
+      </button>
+    </div>
+   </div>}
    {/* Embed Dialog */}
    {embedModal && (
      <div className="modalShade" onMouseDown={() => setEmbedModal(null)}>

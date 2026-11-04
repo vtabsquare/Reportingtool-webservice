@@ -2670,3 +2670,201 @@ html[data-color-mode="dark"] [data-theme="vtab"] .view-report .advancedFields .f
   place-items: center;
   width: 14px;
 }
+
+
+/* ── Viewer Zoom Dock (Floating Bottom Corner) ────────────────────────────── */
+.viewerBody {
+  position: relative !important;
+}
+
+.viewerZoomDock {
+  position: absolute;
+  bottom: 16px;
+  right: 20px;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 20px;
+  padding: 4px 10px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.14), 0 1px 3px rgba(15, 23, 42, 0.08);
+  user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", Aptos, Roboto, sans-serif;
+  opacity: 0.95;
+  transition: opacity 0.15s ease, box-shadow 0.15s ease;
+}
+
+.viewerZoomDock:hover {
+  opacity: 1;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.2), 0 2px 5px rgba(15, 23, 42, 0.1);
+}
+
+.viewerZoomBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #4b5563;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.viewerZoomBtn:hover:not(:disabled) {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.viewerZoomBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.viewerZoomSlider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 108px;
+  height: 4px;
+  background: #e2e8f0;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  margin: 0 3px;
+}
+
+.viewerZoomSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #0d6257;
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.1s, background-color 0.1s;
+}
+
+.viewerZoomSlider::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
+  background: #09473f;
+}
+
+.viewerZoomSlider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #0d6257;
+  cursor: pointer;
+  border: 2px solid #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.1s, background-color 0.1s;
+}
+
+.viewerZoomSlider::-moz-range-thumb:hover {
+  transform: scale(1.18);
+  background: #09473f;
+}
+
+.viewerZoomPercentBtn {
+  background: transparent;
+  border: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #374151;
+  min-width: 44px;
+  text-align: center;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.12s, color 0.12s;
+}
+
+.viewerZoomPercentBtn:hover {
+  background: #f3f4f6;
+  color: #0d6257;
+}
+
+.viewerZoomDivider {
+  width: 1px;
+  height: 15px;
+  background: #e5e7eb;
+  margin: 0 2px;
+}
+
+.viewerZoomFitBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: transparent;
+  border: none;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #4b5563;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 4px;
+  transition: background 0.12s, color 0.12s;
+}
+
+.viewerZoomFitBtn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.viewerZoomFitBtn.active {
+  background: #e8f4ee;
+  color: #0d6257;
+  font-weight: 600;
+}
+
+
+/* ── Published Image Visual & Background Image Parity ─────────────────────── */
+.viewerVisual-image,
+.viewerVisual-image.visualCard {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.viewerVisual-image .viewerVisualBody {
+  padding: 0 !important;
+  margin: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+  display: block !important;
+}
+
+.viewerVisual-image .viewerImageVisual {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.pageBackgroundImage.fit-stretch,
+.pageBackgroundImage.fit-fill {
+  background-size: 100% 100% !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+}
+
+.pageBackgroundImage.fit-cover {
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+}
+
+.pageBackgroundImage.fit-contain {
+  background-size: contain !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+}
