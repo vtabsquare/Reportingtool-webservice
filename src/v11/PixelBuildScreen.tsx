@@ -133,9 +133,9 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
         if (onComplete) {
           onComplete();
         } else {
-          window.location.reload();
+          window.location.href = window.location.origin + window.location.pathname + '?workspace=1&_v=' + Date.now();
         }
-      }, 1500);
+      }, 1200);
     };
 
     const pollInterval = setInterval(pollStatus, 2000);

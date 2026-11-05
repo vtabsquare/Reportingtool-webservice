@@ -45,14 +45,15 @@ export default function ServicesUpdateExperience() {
     if (status && activeStates.has(status.status)) {
       wasBuildingRef.current = true;
       localStorage.setItem('vtab_building_update', '1');
-    } else if (status && (status.status === 'completed' || (wasBuildingRef.current && !status.update_available))) {
+    } else if (status && wasBuildingRef.current && (status.status === 'completed' || !status.update_available)) {
+      wasBuildingRef.current = false;
       localStorage.removeItem('vtab_building_update');
-      // If we were building and update is completed, reload automatically to load new UI
-      if (wasBuildingRef.current && !isBuilding) {
-        window.location.reload();
-      }
+      // Hard refresh to reload all fresh scripts and assets immediately!
+      setTimeout(() => {
+        window.location.href = window.location.origin + window.location.pathname + '?workspace=1&_v=' + Date.now();
+      }, 1200);
     }
-  }, [status, isBuilding]);
+  }, [status]);
 
   const apply = async () => {
     setBusy(true);
@@ -78,8 +79,8 @@ export default function ServicesUpdateExperience() {
         onComplete={() => {
           localStorage.removeItem('vtab_building_update');
           setIsBuilding(false);
-          // Hard reload with cache clear to ensure fresh bundle is active immediately
-          window.location.reload();
+          // Force hard reload with cache-bust to ensure new bundle is active immediately
+          window.location.href = window.location.origin + window.location.pathname + '?workspace=1&_v=' + Date.now();
         }}
         onMinimize={() => setIsBuilding(false)}
       />
