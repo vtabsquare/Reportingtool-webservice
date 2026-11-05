@@ -155,9 +155,9 @@ export default function CloudWorkspace({ session }: { session: any }) {
     try {
       setLoading(true); setErr(""); setTargetDenied("");
       const r = await fetchReports();
-      setReports(r);
+      setReports(r || []);
       const res = await api<Workspace[]>('/cloud/workspaces');
-      if (res) {
+      if (res && res.length > 0) {
         const ordered = [...res].sort((a, b) => (a.name.toLowerCase() === 'my workspace' ? 0 : 1) - (b.name.toLowerCase() === 'my workspace' ? 0 : 1) || a.name.localeCompare(b.name));
         setWorkspaces(ordered);
         if (!activeWorkspace && ordered[0]) {
@@ -166,11 +166,19 @@ export default function CloudWorkspace({ session }: { session: any }) {
         }
       }
       const target = workspaceTarget();
-      if (target.reportId && !r.some((x: any) => x.id === target.reportId)) {
+      if (target.reportId && r && !r.some((x: any) => x.id === target.reportId)) {
         setTargetDenied("This report is not shared with the signed-in account.");
       }
       void loadRegisteredUsers();
-    } catch (e: any) { setErr(e.message || String(e)); } finally { setLoading(false); }
+    } catch (e: any) {
+      console.warn("Could not sync cloud data:", e);
+      const msg = e?.message || String(e);
+      if (msg.includes("500") || msg.includes("502") || msg.includes("522") || msg.includes("timed out") || msg.includes("Failed to fetch")) {
+        setErr("Cloud reporting database is temporarily unavailable or resuming. Please refresh in a moment.");
+      } else {
+        setErr(msg);
+      }
+    } finally { setLoading(false); }
   };
 
   useEffect(() => { loadData(); }, [session?.user?.id]);
@@ -725,8 +733,15 @@ export default function CloudWorkspace({ session }: { session: any }) {
           )}
 
           {err && (
-            <div style={{ margin: 20, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '12px 16px', color: '#dc2626', fontSize: 13 }}>
-              ⚠️ {err}
+            <div style={{ margin: 20, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 6, padding: '12px 16px', color: '#dc2626', fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+              <span>⚠️ {err}</span>
+              <button
+                type="button"
+                onClick={() => loadData()}
+                style={{ background: '#fff', border: '1px solid #fca5a5', borderRadius: 4, padding: '4px 12px', fontSize: 12, cursor: 'pointer', color: '#b91c1c', fontWeight: 600, flexShrink: 0 }}
+              >
+                Retry
+              </button>
             </div>
           )}
           {targetDenied && (

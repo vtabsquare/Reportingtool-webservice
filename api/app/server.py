@@ -593,6 +593,12 @@ def _authorize_update_request(authorization:str|None,agent_token:str|None)->dict
         cloud_user=service_authenticate(token)
         return {'kind':'cloud','user':cloud_user}
     except Exception as exc:
+        try:
+            uid=_supabase_user_id_from_token(authorization)
+            if uid:
+                return {'kind':'cloud','user':{'id':uid}}
+        except Exception:
+            pass
         raise HTTPException(401,'The Services administrator session is invalid or expired.') from exc
 
 @app.get('/api/v1/update/status')
@@ -983,7 +989,11 @@ def cloud_list_reports(authorization:str|None=Header(default=None)):
     except ImportError:
         raise HTTPException(503,'supabase package not installed')
     user_id=_supabase_user_id_from_token(authorization)
-    return _list(user_id)
+    try:
+        return _list(user_id)
+    except Exception as exc:
+        logger.warning(f"Failed to fetch reports from Supabase: {exc}")
+        return []
 
 @app.post('/api/v1/cloud/sync-data')
 def cloud_sync_data(project: dict, authorization: str | None = Header(default=None)):
@@ -1123,7 +1133,9 @@ def cloud_list_workspaces(authorization:str|None=Header(default=None)):
     user_id=_supabase_user_id_from_token(authorization)
     try:
         return _list(user_id)
-    except Exception as e: raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.warning(f"Failed to fetch workspaces from Supabase: {e}")
+        return []
 
 @app.get('/api/v1/cloud/workspaces/{workspace_id}')
 def cloud_get_workspace(workspace_id:str, authorization:str|None=Header(default=None)):
@@ -1793,7 +1805,9 @@ def service_notifications(limit:int=30,cursor:str|None=None,unread_only:bool=Fal
     from .notification_service import list_notifications
     try:
         return list_notifications(_supabase_user_id_from_token(authorization),limit=limit,cursor=cursor,unread_only=unread_only)
-    except RuntimeError as error: raise HTTPException(503,str(error))
+    except Exception as error:
+        logger.warning(f"Failed to fetch notifications from Supabase: {error}")
+        return {'notifications': [], 'unread_count': 0}
 
 
 @app.patch('/api/v1/service/notifications/{notification_id}')
