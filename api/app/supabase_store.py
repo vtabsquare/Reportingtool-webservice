@@ -270,7 +270,7 @@ def list_accessible_reports(user_id: str) -> list:
     # Keep navigation payloads independent of report size. The complete
     # project_json is fetched only when a user opens a report.
     reports = sb.table("published_reports") \
-        .select("id,name,published_at,updated_at,workspace_id,semantic_model_id,paginatedPublishMode:project_json->>paginatedPublishMode,paginatedReports:project_json->paginatedReports,sourceType:project_json->>sourceType,dataSourceType:project_json->>dataSourceType") \
+        .select("id,name,published_at,updated_at,workspace_id,semantic_model_id") \
         .in_("id", report_ids) \
         .order("published_at", desc=True) \
         .execute()
@@ -296,7 +296,7 @@ def list_accessible_reports(user_id: str) -> list:
             "updated_at": r.get("updated_at"),
             "role": role_map.get(r["id"], "Viewer"),
             "pages": None,
-            "sourceType": r.get("sourceType") or r.get("dataSourceType"),
+            "sourceType": r.get("sourceType") or r.get("dataSourceType") or "Report",
             "itemType": "Report",
             "semantic_model_id": r.get("semantic_model_id"),
             **common,
@@ -314,7 +314,7 @@ def list_accessible_reports(user_id: str) -> list:
                     "updated_at": r.get("updated_at"),
                     "role": role_map.get(r["id"], "Viewer"),
                     "pages": 0,
-                    "sourceType": r.get("sourceType") or r.get("dataSourceType"),
+                    "sourceType": r.get("sourceType") or r.get("dataSourceType") or "Report",
                     "itemType": "Paginated report",
                     **common,
                 })
@@ -697,7 +697,7 @@ def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
     # Workspace ownership is authoritative. workspace_reports is retained only
     # as a compatibility bridge for reports shared before workspace publishing.
     direct = sb.table('published_reports') \
-        .select('id, name, published_at, updated_at, semantic_model_id, paginatedPublishMode:project_json->>paginatedPublishMode, paginatedReports:project_json->paginatedReports') \
+        .select('id, name, published_at, updated_at, semantic_model_id') \
         .eq('workspace_id', workspace_id) \
         .execute()
     report_map = {str(rpt['id']): dict(rpt) for rpt in (direct.data or [])}
@@ -710,7 +710,7 @@ def get_workspace_detail(workspace_id: str, user_id: str) -> dict:
         missing_ids = [wr['report_id'] for wr in ws_reports.data if str(wr['report_id']) not in report_map]
         if missing_ids:
             legacy = sb.table('published_reports') \
-                .select('id, name, published_at, updated_at, semantic_model_id, paginatedPublishMode:project_json->>paginatedPublishMode, paginatedReports:project_json->paginatedReports') \
+                .select('id, name, published_at, updated_at, semantic_model_id') \
                 .in_('id', missing_ids) \
                 .execute()
             report_map.update({str(rpt['id']): dict(rpt) for rpt in (legacy.data or [])})

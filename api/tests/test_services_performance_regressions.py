@@ -96,8 +96,11 @@ class ServicesPerformanceRegressionTests(unittest.TestCase):
     def test_report_navigation_does_not_select_the_complete_project_json(self):
         source = (Path(__file__).parents[1] / "app" / "supabase_store.py").read_text(encoding="utf-8")
         listing = source[source.index("def list_accessible_reports"):source.index("# ── Package Upload")]
-        self.assertNotIn('project_json, workspace_id', listing)
-        self.assertIn('paginatedReports:project_json->paginatedReports', listing)
+        start = listing.index('.select("id,name')
+        end = listing.index('.order(')
+        select_clause = listing[start:end]
+        self.assertNotIn('project_json', select_clause)
+        self.assertIn('semantic_model_id', select_clause)
 
     def test_chart_execution_is_not_serialized_by_the_ddl_lock(self):
         active = 0
