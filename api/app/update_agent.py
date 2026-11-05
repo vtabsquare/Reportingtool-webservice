@@ -207,7 +207,12 @@ class UpdateAgent:
         if component.lower() not in ("reporting-services", "services", "vtab-services"):
             raise ValueError("This Services agent only accepts the reporting-services component.")
         version = _safe_version(payload.get("version"))
-        commit_sha = _safe_sha(payload.get("commit_sha") or payload.get("commitSha"))
+        raw_sha = payload.get("commit_sha") or payload.get("commitSha") or payload.get("target_commit_sha")
+        if not raw_sha and str(payload.get("version") or "").startswith("commit-"):
+            raw_sha = str(payload.get("version")).replace("commit-", "", 1)
+        if not raw_sha and payload.get("artifact_url"):
+            raw_sha = str(payload["artifact_url"]).rstrip("/").split("/")[-1]
+        commit_sha = _safe_sha(raw_sha)
         with self.lock:
             known = list(self.state.get("event_ids") or [])
             if event_id and event_id in known:
