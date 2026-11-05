@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 import re
 import uuid
 import tempfile
@@ -640,6 +640,10 @@ async def update_offer(request:Request,authorization:str|None=Header(default=Non
         raise HTTPException(401,'Valid update-agent authentication or webhook signature required.')
     try:
         payload=json.loads(raw.decode('utf-8')) if raw else {}
+        if str(payload.get('event') or '').lower() in ('update_cancelled', 'cancelled'):
+            return update_agent.cancel(payload.get('reason') or 'Update offer cancelled by Manager.')
+        if str(payload.get('event') or '').lower() in ('update_completed', 'completed'):
+            return update_agent.complete(payload.get('commit_sha') or payload.get('commitSha'), payload.get('version'))
         return update_agent.offer(payload,x_vtab_event_id)
     except (ValueError,json.JSONDecodeError) as exc:
         raise HTTPException(400,str(exc)) from exc
