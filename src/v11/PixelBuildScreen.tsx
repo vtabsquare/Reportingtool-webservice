@@ -105,10 +105,9 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
           return;
         }
       } catch (err) {
-        // Render restarts the container mid-deploy, which causes brief connection timeouts.
-        // This is expected and normal during cloud container rollouts!
-        if (secondsElapsed > 40 && !isCompleted) {
-          setStatusMessage('CONTAINER RESTARTING IN CLOUD... AWAITING PORT...');
+        // Services restarts container mid-deploy, which causes brief connection drop.
+        if ((isDO ? secondsElapsed > 2 : secondsElapsed > 30) && !isCompleted) {
+          setStatusMessage(isDO ? 'CONTAINER RESTARTING ON HOST... AWAITING PORT...' : 'CONTAINER RESTARTING IN CLOUD... AWAITING PORT...');
         }
       }
     };
@@ -118,7 +117,7 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
       successTriggered = true;
       setProgress(100);
       setIsCompleted(true);
-      setStatusMessage('★ CLOUD BUILD COMPLETE & VERIFIED HEALTHY! ★');
+      setStatusMessage('★ BUILD COMPLETE & VERIFIED HEALTHY! ★');
       setLogs((l) => [
         ...l,
         `> [${formatTime(secondsElapsed)}] STATUS: 200 OK — CONTAINER HEALTH VERIFIED!`,
@@ -131,12 +130,15 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
       } catch {}
 
       setTimeout(() => {
-        if (onComplete) onComplete();
-        else window.location.reload();
-      }, 2400);
+        if (onComplete) {
+          onComplete();
+        } else {
+          window.location.reload();
+        }
+      }, 1500);
     };
 
-    const pollInterval = setInterval(pollStatus, 3000);
+    const pollInterval = setInterval(pollStatus, 2000);
     return () => {
       unmounted = true;
       clearInterval(pollInterval);

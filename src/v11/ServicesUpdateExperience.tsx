@@ -10,12 +10,22 @@ export default function ServicesUpdateExperience() {
   const [busy, setBusy] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [isBuilding, setIsBuilding] = useState(() => {
+    return typeof window !== 'undefined' && localStorage.getItem('vtab_building_update') === '1';
+  });
+  const wasBuildingRef = useRef(false);
   const mounted = useRef(true);
 
   const poll = useCallback(async () => {
     try {
       const next = await api<ServicesUpdateStatus>('/update/status');
-      if (mounted.current) setStatus(next);
+      if (mounted.current) {
+        setStatus(next);
+        if (next && activeStates.has(next.status)) {
+          wasBuildingRef.current = true;
+          setIsBuilding(true);
+        }
+      }
     } catch {
       /* Keep the current update UI while a managed service restarts. */
     }
@@ -24,7 +34,7 @@ export default function ServicesUpdateExperience() {
   useEffect(() => {
     mounted.current = true;
     poll();
-    const timer = window.setInterval(poll,5000);
+    const timer = window.setInterval(poll, 4000);
     return () => {
       mounted.current = false;
       window.clearInterval(timer);
@@ -33,36 +43,45 @@ export default function ServicesUpdateExperience() {
 
   useEffect(() => {
     if (status && activeStates.has(status.status)) {
+      wasBuildingRef.current = true;
       localStorage.setItem('vtab_building_update', '1');
-    } else if (
-      status &&
-      (status.status === 'completed' ||
-        status.status === 'cancelled' ||
-        status.status === 'idle' ||
-        status.status === 'available' ||
-        !status.update_available)
-    ) {
+    } else if (status && (status.status === 'completed' || (wasBuildingRef.current && !status.update_available))) {
       localStorage.removeItem('vtab_building_update');
+      // If we were building and update is completed, reload automatically to load new UI
+      if (wasBuildingRef.current && !isBuilding) {
+        window.location.reload();
+      }
     }
-  }, [status]);
+  }, [status, isBuilding]);
 
   const apply = async () => {
     setBusy(true);
     setDismissed(false);
+    wasBuildingRef.current = true;
+    setIsBuilding(true);
     localStorage.setItem('vtab_building_update', '1');
     try {
-      setStatus(await api<ServicesUpdateStatus>('/update/apply', { method: 'POST', body: '{}' }));
+      const res = await api<ServicesUpdateStatus>('/update/apply', { method: 'POST', body: '{}' });
+      setStatus(res);
+    } catch {
+      // Keep building active while container restarts
     } finally {
       setBusy(false);
     }
   };
 
-  const building = !!status && activeStates.has(status.status);
-  if (building && status) {
+  if (isBuilding) {
+    const targetVer = status?.available_version || (status?.target_commit_sha ? `commit-${status.target_commit_sha.slice(0, 12)}` : 'latest');
     return (
       <PixelBuildScreen
-        status={status}
-        onClose={() => (status.status === 'completed' ? location.reload() : setStatus({ ...status, status: 'idle' }))}
+        targetVersion={targetVer}
+        onComplete={() => {
+          localStorage.removeItem('vtab_building_update');
+          setIsBuilding(false);
+          // Hard reload with cache clear to ensure fresh bundle is active immediately
+          window.location.reload();
+        }}
+        onMinimize={() => setIsBuilding(false)}
       />
     );
   }
