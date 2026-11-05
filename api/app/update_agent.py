@@ -45,7 +45,9 @@ class UpdateAgent:
     """Persistent, idempotent update coordinator for managed and self-hosted Services."""
 
     def __init__(self) -> None:
-        default_state = Path(__file__).resolve().parents[2] / "data" / "update-agent-state.json"
+        parents = Path(__file__).resolve().parents
+        root_dir = parents[2] if len(parents) > 3 else (parents[1] if len(parents) > 1 else parents[0])
+        default_state = root_dir / "data" / "update-agent-state.json"
         self.state_path = Path(_env("VTAB_UPDATE_STATE_PATH", default=str(default_state))).resolve()
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
@@ -104,7 +106,8 @@ class UpdateAgent:
         if rendered:
             return rendered
         try:
-            root = Path(_env("VTAB_UPDATE_REPO_PATH", default=str(Path(__file__).resolve().parents[3])))
+            parents = Path(__file__).resolve().parents
+            root = Path(_env("VTAB_UPDATE_REPO_PATH", default=str(parents[3] if len(parents) > 3 else parents[0])))
             return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, timeout=8, stderr=subprocess.DEVNULL).strip()
         except Exception:
             return "unknown"
@@ -279,6 +282,8 @@ class UpdateAgent:
                     time.sleep(0.35)
             elif _env("RENDER_SERVICE_ID", "VTAB_RENDER_SERVICE_ID"):
                 self._trigger_render_deploy()
+            elif self._trigger_digitalocean_deploy():
+                return
             else:
                 self._apply_self_hosted()
             with self.lock:
@@ -299,6 +304,27 @@ class UpdateAgent:
                 self._save()
             self._log(f"Update failed: {exc}")
             self._report_manager("failed")
+
+    def _trigger_digitalocean_deploy(self) -> bool:
+        trigger_urls = ["http://172.17.0.1:8829/deploy", "http://127.0.0.1:8829/deploy"]
+        token = _env("VTAB_AGENT_TOKEN", default="SDCsfIsSnlOj4ceWprbj-0GrsjxESrOT1DnmNJOGa_Y")
+        target_sha = str(self.state.get("target_commit_sha") or "")
+        payload = json.dumps({"commit_sha": target_sha, "version": self.state.get("available_version")}).encode("utf-8")
+        for url in trigger_urls:
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=payload,
+                    method="POST",
+                    headers={"X-VTAB-Agent-Token": token, "Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    if resp.status in (200, 202):
+                        self._log("DigitalOcean deployment initiated on host.", 45, "deploying")
+                        return True
+            except Exception:
+                pass
+        return False
 
     def _trigger_render_deploy(self) -> None:
         api_key = _env("RENDER_API_KEY", "RENDER_TOKEN", "RENDER_API_TOKEN")
@@ -363,7 +389,8 @@ class UpdateAgent:
             raise RuntimeError(f"{message} failed: {output}")
 
     def _apply_self_hosted(self) -> None:
-        repo = Path(_env("VTAB_UPDATE_REPO_PATH", default=str(Path(__file__).resolve().parents[3]))).resolve()
+        parents = Path(__file__).resolve().parents
+        repo = Path(_env("VTAB_UPDATE_REPO_PATH", default=str(parents[3] if len(parents) > 3 else parents[0]))).resolve()
         if not (repo / ".git").exists() and not shutil.which("git"):
             self._log("Self-hosted deployment synced and verified", 100, "completed")
             return
