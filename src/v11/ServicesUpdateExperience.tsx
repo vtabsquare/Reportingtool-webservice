@@ -34,7 +34,7 @@ export default function ServicesUpdateExperience() {
   useEffect(() => {
     mounted.current = true;
     poll();
-    const timer = window.setInterval(poll, 4000);
+    const timer = window.setInterval(poll,5000);
     return () => {
       mounted.current = false;
       window.clearInterval(timer);

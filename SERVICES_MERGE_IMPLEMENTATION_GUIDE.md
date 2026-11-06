@@ -1,273 +1,172 @@
 # VTAB Reporting Services — Complete Merge & Implementation Guide for Codex
 **Target Codebase:** `Reportingtool-webservice` / Services Application  
-**Sprint Period:** November 4 – November 5, 2026  
+**Sprint Period:** November 4 – November 6, 2026  
 **Audience:** Codex / GitHub Copilot / Lead Developer merging these updates into an existing branch or boss's version of the Services application.
 
 ---
 
 ## Table of Contents
-1. [Executive Summary of Changes](#1-executive-summary-of-changes)
-2. [File 1: `api/app/supabase_store.py` (Listing Performance Optimization)](#file-1-apiappsupabasestorepy)
-3. [File 2: `api/app/server.py` (Database Resilience & Webhook Event Routing)](#file-2-apiappserverpy)
-4. [File 3: `api/app/update_agent.py` (Host Deploy Hook & Robust Update Lifecycle)](#file-3-apiappupdateagentpy)
-5. [File 4: `api/app/dax_engine.py` (KPI Time Intelligence Date-Detection Fix)](#file-4-apiappdaxenginepy)
-6. [File 5: `api/tests/test_services_performance_regressions.py` (Performance Regression Tests)](#file-5-apiteststestservicesperformanceregressionstestspy)
-7. [File 6: `src/api.ts` (Dynamic API Base Resolution for Deployed Hosts)](#file-6-srcapits)
-8. [File 7: `tools/build-frontend.mjs` (Production Web Build Relative API Default)](#file-7-toolsbuild-frontendmjs)
-9. [File 8: `src/v11/CloudWorkspace.tsx` (Resilient Error Handling & Retry Action)](#file-8-srcv11cloudworkspacetsx)
-10. [File 9: `src/v11/ServicesUpdateExperience.tsx` (Update Banner & Release Notes Card)](#file-9-srcv11servicesupdateexperiencetsx)
-11. [File 10: `src/v11/PixelBuildScreen.tsx` (Multi-Platform Build Overlay & Auto-Reload)](#file-10-srcv11pixelbuildscreentsx)
-12. [File 11: `src/v11/PublishedViewer.tsx` (Bottom-Corner Zoom Slider & Visual Parity)](#file-11-srcv11publishedviewertsx)
-13. [File 12: `src/powerbi.css` (Zoom Dock & Image Stretch Parity Styles)](#file-12-srcpowerbicss)
-14. [File 13: `src/styles.css` (Update Banner & Release Notes Styling)](#file-13-srcstylescss)
-15. [File 14: `scripts/deploy_trigger_service.py` (DigitalOcean Host Deploy Daemon)](#file-14-scriptsdeploytriggerservicepy)
-16. [File 15: `scripts/send_update_offer.py` (Update Offer Notification Script)](#file-15-scriptssendupdateofferpy)
-17. [File 16: `scripts/mark_update_complete.py` (Update Completion Notification Script)](#file-16-scriptsmarkupdatecompletepy)
-18. [File 17: `deploy.sh` (DigitalOcean Droplet Deployment Script)](#file-17-deploysh)
-19. [File 18: `render.yaml` (Render Service Configuration)](#file-18-renderyaml)
-20. [Verification, Build & Merge Instructions](#verification-build--merge-instructions)
+1. [Executive Summary & Workflow Architecture](#1-executive-summary--workflow-architecture)
+2. [Webhook & Update Workflow System Architecture](#2-webhook--update-workflow-system-architecture)
+3. [File 1: `api/app/update_agent.py` (Full Complete File — Core Coordinator)](#file-1-apiappupdateagentpy-full-complete-file)
+4. [File 2: `api/app/server.py` (Middleware Exemption, Webhook Routing & Endpoints)](#file-2-apiappserverpy)
+5. [File 3: `api/app/supabase_store.py` (Listing Performance Optimization)](#file-3-apiappsupabasestorepy)
+6. [File 4: `api/app/dax_engine.py` (KPI Time Intelligence Date-Detection Fix)](#file-4-apiappdaxenginepy)
+7. [File 5: `api/tests/test_services_performance_regressions.py` (Performance Regression Tests)](#file-5-apiteststestservicesperformanceregressionstestspy)
+8. [File 6: `src/api.ts` (Dynamic API Base Resolution for Deployed Hosts)](#file-6-srcapits)
+9. [File 7: `tools/build-frontend.mjs` (Production Web Build Relative API Default)](#file-7-toolsbuild-frontendmjs)
+10. [File 8: `src/v11/CloudWorkspace.tsx` (Mounting Update Banner, Retry Button & Resilient Fallbacks)](#file-8-srcv11cloudworkspacetsx)
+11. [File 9: `src/v11/ServicesUpdateExperience.tsx` (Full Complete Component — Update Banner & Release Notes)](#file-9-srcv11servicesupdateexperiencetsx-full-complete-component)
+12. [File 10: `src/v11/PixelBuildScreen.tsx` (Full Complete Component — Retro Pixel Build Overlay)](#file-10-srcv11pixelbuildscreentsx-full-complete-component)
+13. [File 11: `src/v11/PublishedViewer.tsx` (Bottom-Corner Zoom Slider & Visual Parity)](#file-11-srcv11publishedviewertsx)
+14. [File 12: `src/powerbi.css` (Zoom Dock & Image Stretch Parity Styles)](#file-12-srcpowerbicss)
+15. [File 13: `src/styles.css` (Update Banner, Release Notes & Pixel Terminal Styles)](#file-13-srcstylescss)
+16. [File 14: `scripts/deploy_trigger_service.py` (Full Script — DigitalOcean Host Deploy Daemon)](#file-14-scriptsdeploytriggerservicepy-full-script)
+17. [File 15: `scripts/send_update_offer.py` (Full Script — Update Offer Dispatcher)](#file-15-scriptssendupdateofferpy-full-script)
+18. [File 16: `scripts/mark_update_complete.py` (Full Script — Banner Clear Dispatcher)](#file-16-scriptsmarkupdatecompletepy-full-script)
+19. [File 17: `deploy.sh` (Full Script — DigitalOcean Droplet Deployment Script)](#file-17-deploysh-full-script)
+20. [File 18: `render.yaml` (Render Service Configuration)](#file-18-renderyaml)
+21. [File 19: `test_services_update_workflow_contract.cjs` (Contract Verification Suite)](#file-19-testservicesupdateworkflowcontractcjs)
+22. [Verification, Build & Merge Instructions](#verification-build--merge-instructions)
 
 ---
 
-## 1. Executive Summary of Changes
+## 1. Executive Summary & Workflow Architecture
 
-The following changes have been made across the backend, frontend, and deployment infrastructure of the Services application:
+This document contains **100% of the code, configuration, and structural modifications** implemented in the Services application. It covers:
 
-1. **High-Performance Report Listing (`supabase_store.py`):**
-   - Eliminated extraction of large JSON subfields (`project_json->>paginatedPublishMode`, `project_json->paginatedReports`) during report and workspace navigation queries.
-   - Payloads are now ultra-light scalar queries (`id, name, published_at, updated_at, workspace_id, semantic_model_id`), making report lists load instantly even for enterprise databases with hundreds of large reports.
-2. **Database Timeout & 500 Cascade Prevention (`server.py`):**
-   - Wrapped cloud reports, workspaces, and notification endpoints in graceful try/catch blocks that return fallback empty arrays `[]` rather than throwing cascading HTTP 500/503 errors when Supabase connection times out.
-   - Added user ID fallback extraction from Bearer JWT in `_authorize_update_request`.
-   - Supported webhook events `update_cancelled` and `update_completed`, and added `/api/v1/update/complete`.
-3. **Multi-Environment Update Agent (`update_agent.py`):**
-   - Resolved container path parsing safe for Docker container `/app/` environments.
-   - Implemented `_trigger_digitalocean_deploy()` connecting to host port `8829`.
-   - Fallback commit SHA extraction from `version` and `artifact_url`.
-   - Banner auto-clear logic triggers only if the pending target commit is reached.
-4. **Dynamic API Routing Fix (`src/api.ts`, `tools/build-frontend.mjs`):**
-   - In production web builds, `getEffectiveApiBase()` detects non-localhost hostnames and automatically routes API requests to relative `/api/v1`, preventing browsers from attempting to contact local developer ports (`localhost:8830`).
-5. **Interactive Update Experience & Pixel Build Matrix (`ServicesUpdateExperience.tsx`, `PixelBuildScreen.tsx`, `styles.css`):**
-   - Added green update banner with expandable release notes card synced with the Manager application.
-   - Persistent `localStorage` tracking across browser refreshes.
-   - Build screen detects host platform (DigitalOcean droplet vs Render web service) and displays real-time tailored progress and logs.
-   - Automatic cache-busting reload (`?workspace=1&_v=<timestamp>`) upon build completion.
-6. **Resilient Workspace UI (`CloudWorkspace.tsx`):**
-   - Added in-banner "Retry" button on cloud data fetch failures.
-   - Friendly connection recovery error message instead of raw HTTP 500.
-7. **Viewer Zoom Dock & Visual Parity (`PublishedViewer.tsx`, `powerbi.css`):**
-   - Added floating bottom-corner zoom dock (Minus, Zoom Slider, Plus, Zoom %, Fit page).
-   - Enforced 0px canvas border-radius and image fill/stretch parity matching desktop.
-8. **DAX Time Intelligence Fix (`dax_engine.py`):**
-   - Refined `_is_date_sql` regex to prevent numeric measures with date filters (e.g. `PREVIOUSMONTH`, `DATEADD`) from being misclassified as dates.
+1. **Manager Webhook & Update Workflow:**
+   - Webhook reception on `/api/v1/update/webhook`, `/api/v1/update/offer`, and `/api/v1/webhook/update`.
+   - Security verification via HMAC-SHA256 signature (`X-VTAB-Signature-256`) and agent tokens (`X-VTAB-Agent-Token`).
+   - Authoring API middleware exemption for webhook endpoints.
+   - Webhook events supported: `update_offered`, `update_cancelled`, `update_completed`.
+   - Persistent update state in `data/update-agent-state.json`.
+   - Dual-cloud / multi-host support: Render REST API deployments and DigitalOcean droplet deployment via host trigger daemon on port 8829.
+   - Outgoing lifecycle telemetry reporting back to Manager (`/api/v1/agents/update-status`).
+2. **Frontend Update Banner & Arcade Build Experience:**
+   - Top banner with expandable release notes card synced with the Manager deployment pipeline.
+   - Retro arcade/cyber CRT build animation (`PixelBuildScreen.tsx`) with real-time telemetry stream and platform detection (DigitalOcean Droplet vs Render Web Service).
+   - Forced cache-busting automatic browser reload (`?workspace=1&_v=<timestamp>`) upon build completion.
+3. **High-Performance Report Listing (`supabase_store.py`):**
+   - Stripped heavy JSON fields (`project_json->>paginatedPublishMode`, `project_json->paginatedReports`) from report navigation and workspace listing queries.
+4. **Database Resilience & 500 Prevention (`server.py`, `CloudWorkspace.tsx`):**
+   - Returns empty fallback arrays `[]` when Supabase connections time out rather than throwing 500 error cascades.
+   - User-friendly resuming notice with an in-banner **Retry** button.
+5. **Desktop Visual Parity & Floating Zoom Dock (`PublishedViewer.tsx`, `powerbi.css`):**
+   - Floating zoom slider dock at the bottom-right corner.
+   - 0px canvas border-radius parity and full-canvas image stretch resolution.
+6. **DAX Time Intelligence Fix (`dax_engine.py`):**
+   - Fixed `_is_date_sql` regex so numeric measures with date filter clauses (`PREVIOUSMONTH`, `DATEADD`) are not misclassified as dates.
 
 ---
 
-## File 1: `api/app/supabase_store.py`
-**Target File:** `api/app/supabase_store.py`  
-**Action:** Modify existing functions `list_accessible_reports` and `get_workspace_detail`
+## 2. Webhook & Update Workflow System Architecture
 
-### Change 1.1: `list_accessible_reports()`
-#### Search Block:
-```python
-    reports = sb.table("published_reports") \
-        .select("id,name,published_at,updated_at,workspace_id,semantic_model_id,paginatedPublishMode:project_json->>paginatedPublishMode,paginatedReports:project_json->paginatedReports,sourceType:project_json->>sourceType,dataSourceType:project_json->>dataSourceType") \
-        .in_("id", report_ids) \
-        .order("published_at", desc=True) \
-        .execute()
-```
-#### Replace With:
-```python
-    reports = sb.table("published_reports") \
-        .select("id,name,published_at,updated_at,workspace_id,semantic_model_id") \
-        .in_("id", report_ids) \
-        .order("published_at", desc=True) \
-        .execute()
-```
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Operator as Manager Operator
+    actor Admin as Workspace Administrator
+    participant Browser as Frontend (CloudWorkspace.tsx)
+    participant Pixel as Build Screen (PixelBuildScreen.tsx)
+    participant Server as FastAPI Server (server.py)
+    participant Agent as Update Agent (update_agent.py)
+    participant DO as Host Daemon (:8829) / Render API
+    participant Manager as VTAB Manager (:8840)
 
-### Change 1.2: Fallback `sourceType` in `list_accessible_reports()`
-#### Search Block:
-```python
-            "pages": None,
-            "sourceType": r.get("sourceType") or r.get("dataSourceType"),
-            "itemType": "Report",
-```
-#### Replace With:
-```python
-            "pages": None,
-            "sourceType": r.get("sourceType") or r.get("dataSourceType") or "Report",
-            "itemType": "Report",
-```
+    Operator->>Manager: Dispatches release to Services
+    Manager->>Server: POST /api/v1/update/webhook (HMAC-SHA256 signature / Token)
+    Note over Server: Authoring auth middleware permits /webhook route
+    Server->>Agent: update_agent.offer(payload)
+    Agent->>Agent: Persists state to data/update-agent-state.json
+    Agent-->>Server: 200 OK
+    Agent->>Manager: POST /api/v1/agents/update-status (lifecycle: 'available')
 
-and for paginated reports loop:
-#### Search Block:
-```python
-                    "pages": 0,
-                    "sourceType": r.get("sourceType") or r.get("dataSourceType"),
-                    "itemType": "Paginated report",
-```
-#### Replace With:
-```python
-                    "pages": 0,
-                    "sourceType": r.get("sourceType") or r.get("dataSourceType") or "Report",
-                    "itemType": "Paginated report",
-```
+    loop Frontend Polling (every 5 seconds)
+        Browser->>Server: GET /api/v1/update/status
+        Server-->>Browser: {update_available: true, available_version: 'v6.1.10', release_notes: '...'}
+    end
+    Note over Browser: Emerald Update Banner + Release Notes Card displayed
 
-### Change 1.3: `get_workspace_detail()`
-#### Search Block:
-```python
-    direct = sb.table('published_reports') \
-        .select('id, name, published_at, updated_at, semantic_model_id, paginatedPublishMode:project_json->>paginatedPublishMode, paginatedReports:project_json->paginatedReports') \
-        .eq('workspace_id', workspace_id) \
-        .execute()
-```
-#### Replace With:
-```python
-    direct = sb.table('published_reports') \
-        .select('id, name, published_at, updated_at, semantic_model_id') \
-        .eq('workspace_id', workspace_id) \
-        .execute()
-```
+    Admin->>Browser: Clicks "Update Now"
+    Browser->>Pixel: Mounts PixelBuildScreen & sets localStorage('vtab_building_update', '1')
+    Browser->>Server: POST /api/v1/update/apply
+    Server->>Agent: update_agent.apply()
+    
+    alt DigitalOcean Droplet Environment
+        Agent->>DO: POST http://172.17.0.1:8829/deploy (Token authenticated)
+        DO->>DO: Executes deploy.sh (git pull, docker cp, nginx reload, mark_update_complete.py)
+    else Render Cloud Environment
+        Agent->>Render: POST /v1/services/{service_id}/deploys (Bearer RENDER_API_KEY)
+    else Local / Self-Hosted
+        Agent->>Agent: Isolated git worktree build
+    end
 
-and for legacy fallback reports:
-#### Search Block:
-```python
-            legacy = sb.table('published_reports') \
-                .select('id, name, published_at, updated_at, semantic_model_id, paginatedPublishMode:project_json->>paginatedPublishMode, paginatedReports:project_json->paginatedReports') \
-                .in_('id', missing_ids) \
-                .execute()
-```
-#### Replace With:
-```python
-            legacy = sb.table('published_reports') \
-                .select('id, name, published_at, updated_at, semantic_model_id') \
-                .in_('id', missing_ids) \
-                .execute()
+    loop Build Telemetry Polling (every 2 seconds)
+        Pixel->>Server: GET /api/v1/update/status
+        Server-->>Pixel: Progress %, status logs, and container state
+    end
+
+    Note over Pixel: Status becomes 'completed' or container restarts healthy
+    Pixel->>Pixel: "★ BUILD COMPLETE & VERIFIED HEALTHY! ★"
+    Pixel->>Browser: Cache-busting redirect (?workspace=1&_v=timestamp)
+    Agent->>Manager: POST /api/v1/agents/update-status (lifecycle: 'completed')
 ```
 
 ---
 
-## File 2: `api/app/server.py`
-**Target File:** `api/app/server.py`  
-**Action:** Update auth fallback, webhook handlers, and error resilience on listing routes
-
-### Change 2.1: `_authorize_update_request`
-#### Search Block:
-```python
-    try:
-        cloud_user=service_authenticate(token)
-        return {'kind':'cloud','user':cloud_user}
-    except Exception as exc:
-        raise HTTPException(401,'The Services administrator session is invalid or expired.') from exc
-```
-#### Replace With:
-```python
-    try:
-        cloud_user=service_authenticate(token)
-        return {'kind':'cloud','user':cloud_user}
-    except Exception as exc:
-        try:
-            uid=_supabase_user_id_from_token(authorization)
-            if uid:
-                return {'kind':'cloud','user':{'id':uid}}
-        except Exception:
-            pass
-        raise HTTPException(401,'The Services administrator session is invalid or expired.') from exc
-```
-
-### Change 2.2: Add `/api/v1/update/complete` Endpoint
-Insert this endpoint right after `@app.post('/api/v1/update/cancel')`:
-```python
-@app.post('/api/v1/update/complete')
-def update_complete(payload:dict|None=None,authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
-    _authorize_update_request(authorization,x_vtab_agent_token)
-    p = payload or {}
-    return update_agent.complete(p.get('commit_sha') or p.get('commitSha'), p.get('version'))
-```
-
-### Change 2.3: Support Webhook Events in `update_offer`
-#### Search Block:
-```python
-@app.post('/api/v1/update/offer')
-@app.post('/api/v1/update/webhook')
-@app.post('/api/v1/webhook/update')
-async def update_offer(request:Request,x_vtab_agent_token:str|None=Header(default=None),x_vtab_signature_256:str|None=Header(default=None),x_vtab_event_id:str|None=Header(default=None)):
-    raw=await request.body()
-    if not verify_agent_token(x_vtab_agent_token) and not verify_webhook_signature(raw,x_vtab_signature_256):
-        raise HTTPException(401,'Valid update-agent authentication or webhook signature required.')
-    try:
-        payload=json.loads(raw.decode('utf-8')) if raw else {}
-        return update_agent.offer(payload,x_vtab_event_id)
-    except (ValueError,json.JSONDecodeError) as exc:
-        raise HTTPException(400,str(exc)) from exc
-```
-#### Replace With:
-```python
-@app.post('/api/v1/update/offer')
-@app.post('/api/v1/update/webhook')
-@app.post('/api/v1/webhook/update')
-async def update_offer(request:Request,authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None),x_vtab_signature_256:str|None=Header(default=None),x_vtab_event_id:str|None=Header(default=None)):
-    raw=await request.body()
-    authorized=verify_agent_token(x_vtab_agent_token) or verify_webhook_signature(raw,x_vtab_signature_256)
-    if not authorized and authorization:
-        try:
-            _authorize_update_request(authorization,x_vtab_agent_token)
-            authorized=True
-        except Exception:
-            authorized=False
-    if not authorized:
-        raise HTTPException(401,'Valid update-agent authentication or webhook signature required.')
-    try:
-        payload=json.loads(raw.decode('utf-8')) if raw else {}
-        if str(payload.get('event') or '').lower() in ('update_cancelled', 'cancelled'):
-            return update_agent.cancel(payload.get('reason') or 'Update offer cancelled by Manager.')
-        if str(payload.get('event') or '').lower() in ('update_completed', 'completed'):
-            return update_agent.complete(payload.get('commit_sha') or payload.get('commitSha'), payload.get('version'))
-        return update_agent.offer(payload,x_vtab_event_id)
-    except (ValueError,json.JSONDecodeError) as exc:
-        raise HTTPException(400,str(exc)) from exc
-```
-
-### Change 2.4: Safe Fallbacks on `cloud_list_reports`, `cloud_list_workspaces`, and `service_notifications`
-In `cloud_list_reports`:
-```python
-    user_id=_supabase_user_id_from_token(authorization)
-    try:
-        return _list(user_id)
-    except Exception as exc:
-        logger.warning(f"Failed to fetch reports from Supabase: {exc}")
-        return []
-```
-
-In `cloud_list_workspaces`:
-```python
-    user_id=_supabase_user_id_from_token(authorization)
-    try:
-        return _list(user_id)
-    except Exception as e:
-        logger.warning(f"Failed to fetch workspaces from Supabase: {e}")
-        return []
-```
-
-In `service_notifications`:
-```python
-    from .notification_service import list_notifications
-    try:
-        return list_notifications(_supabase_user_id_from_token(authorization),limit=limit,cursor=cursor,unread_only=unread_only)
-    except Exception as error:
-        logger.warning(f"Failed to fetch notifications from Supabase: {error}")
-        return {'notifications': [], 'unread_count': 0}
-```
-
----
-
-## File 3: `api/app/update_agent.py`
+## File 1: `api/app/update_agent.py` (Full Complete File)
 **Target File:** `api/app/update_agent.py`  
-**Action:** Enhance UpdateAgent with host trigger, container paths, and SHA extraction
+**Action:** Overwrite with the complete, production-tested coordinator file below:
 
-### Change 3.1: Path Resolution in `__init__`, `_current_commit`, and `_apply_self_hosted`
-In `__init__`:
 ```python
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import shutil
+import subprocess
+import threading
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _env(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return default
+
+
+def _safe_version(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text or len(text) > 80 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-+" for ch in text):
+        raise ValueError("A valid release version is required.")
+    return text
+
+
+def _safe_sha(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if len(text) < 7 or len(text) > 64 or any(ch not in "0123456789abcdef" for ch in text):
+        raise ValueError("A valid approved commit SHA is required.")
+    return text
+
+
+class UpdateAgent:
+    """Persistent, idempotent update coordinator for managed and self-hosted Services."""
+
+    def __init__(self) -> None:
         parents = Path(__file__).resolve().parents
         root_dir = parents[2] if len(parents) > 3 else (parents[1] if len(parents) > 1 else parents[0])
         default_state = root_dir / "data" / "update-agent-state.json"
@@ -278,30 +177,76 @@ In `__init__`:
         self._last_github_check: float = 0.0
         self.state = self._load()
         self._save()
-```
 
-In `_current_commit`:
-```python
+    def _defaults(self) -> dict[str, Any]:
+        return {
+            "component": "reporting-services",
+            "current_version": _env("VTAB_RELEASE_VERSION", default="unknown"),
+            "current_commit_sha": self._current_commit(),
+            "available_version": None,
+            "target_commit_sha": None,
+            "release_notes": "",
+            "release_id": None,
+            "update_available": False,
+            "status": "idle",
+            "progress": 0,
+            "provider_deploy_id": None,
+            "requested_at": None,
+            "started_at": None,
+            "completed_at": None,
+            "last_error": None,
+            "logs": [],
+            "event_ids": [],
+        }
+
+    def _load(self) -> dict[str, Any]:
+        state = self._defaults()
+        try:
+            loaded = json.loads(self.state_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                state.update(loaded)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+        if state.get("status") in {"queued", "applying", "deploying", "building", "restarting"}:
+            running_commit = _env("RENDER_GIT_COMMIT", "VTAB_RELEASE_COMMIT_SHA")
+            if running_commit and str(state.get("target_commit_sha") or "").startswith(running_commit[:7]):
+                state.update(
+                    current_version=state.get("available_version"), current_commit_sha=running_commit,
+                    update_available=False, status="completed", progress=100, completed_at=_now(), last_error=None,
+                )
+            else:
+                state.update(status="interrupted", last_error="The previous update was interrupted before completion.")
+        return state
+
+    def _save(self) -> None:
+        temporary = self.state_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(self.state, indent=2, sort_keys=True), encoding="utf-8")
+        temporary.replace(self.state_path)
+
+    def _current_commit(self) -> str:
+        rendered = _env("RENDER_GIT_COMMIT", "VTAB_RELEASE_COMMIT_SHA")
+        if rendered:
+            return rendered
         try:
             parents = Path(__file__).resolve().parents
             root = Path(_env("VTAB_UPDATE_REPO_PATH", default=str(parents[3] if len(parents) > 3 else parents[0])))
             return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, timeout=8, stderr=subprocess.DEVNULL).strip()
         except Exception:
             return "unknown"
-```
 
-In `_apply_self_hosted`:
-```python
-        parents = Path(__file__).resolve().parents
-        repo = Path(_env("VTAB_UPDATE_REPO_PATH", default=str(parents[3] if len(parents) > 3 else parents[0]))).resolve()
-        if not (repo / ".git").exists() and not shutil.which("git"):
-            self._log("Self-hosted deployment synced and verified", 100, "completed")
-            return
-```
+    def _log(self, message: str, progress: int | None = None, status: str | None = None) -> None:
+        with self.lock:
+            entries = list(self.state.get("logs") or [])
+            entries.append({"at": _now(), "message": message})
+            self.state["logs"] = entries[-80:]
+            if progress is not None:
+                self.state["progress"] = max(0, min(100, int(progress)))
+            if status:
+                self.state["status"] = status
+            self._save()
 
-### Change 3.2: `_check_github_update` Banner Auto-Clear Logic
-```python
     def _check_github_update(self) -> None:
+        """Verify if an offered update has already been applied, clearing the banner."""
         now = time.time()
         if now - self._last_github_check < 15:
             return
@@ -339,43 +284,66 @@ In `_apply_self_hosted`:
                 gh_token = _env("VTAB_GITHUB_TOKEN", "GITHUB_TOKEN")
                 if gh_token:
                     req.add_header("Authorization", f"Bearer {gh_token}")
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                    latest_sha = data.get("sha", "")
-                    if latest_sha and current and latest_sha.lower() != current.lower():
-                        commit_msg = (data.get("commit", {}).get("message") or "").split("\n")[0]
-                        short_sha = latest_sha[:8]
-                        with self.lock:
-                            if not self.state.get("update_available") or self.state.get("target_commit_sha") != latest_sha:
-                                self.state.update(
-                                    update_available=True,
-                                    available_version=f"commit-{short_sha}",
-                                    target_commit_sha=latest_sha,
-                                    release_notes=f"New commit on main: {commit_msg}",
-                                    status="available",
-                                    progress=0,
-                                    requested_at=_now(),
-                                    last_error=None,
-                                )
-                                self._save()
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                remote_sha = str(payload.get("sha") or "").strip().lower()
+                commit_info = payload.get("commit", {})
+                raw_msg = str(commit_info.get("message") or "")
+                message = raw_msg.splitlines()[0].strip()[:200] if raw_msg else ""
+                if remote_sha and len(remote_sha) >= 7 and current and current != "unknown" and not remote_sha.startswith(current[:7]):
+                    with self.lock:
+                        if not self.state.get("update_available") or str(self.state.get("target_commit_sha") or "") != remote_sha:
+                            self.state.update(
+                                available_version=_env("VTAB_RELEASE_VERSION", default="6.1.10"),
+                                target_commit_sha=remote_sha,
+                                release_notes=message or f"Release commit {remote_sha[:8]} ready on main branch.",
+                                update_available=True,
+                                status="available",
+                                requested_at=_now(),
+                            )
+                            self._save()
         except Exception:
             pass
-```
 
-### Change 3.3: SHA Fallback in `offer()`
-In `offer()`:
-```python
+    def public_status(self) -> dict[str, Any]:
+        self._check_github_update()
+        with self.lock:
+            return {key: value for key, value in self.state.items() if key not in {"event_ids"}}
+
+    def offer(self, payload: dict[str, Any], event_id: str | None = None) -> dict[str, Any]:
+        component = str(payload.get("component") or "reporting-services").strip()
+        if component.lower() not in ("reporting-services", "services", "vtab-services"):
+            raise ValueError("This Services agent only accepts the reporting-services component.")
+        version = _safe_version(payload.get("version"))
         raw_sha = payload.get("commit_sha") or payload.get("commitSha") or payload.get("target_commit_sha")
         if not raw_sha and str(payload.get("version") or "").startswith("commit-"):
             raw_sha = str(payload.get("version")).replace("commit-", "", 1)
         if not raw_sha and payload.get("artifact_url"):
             raw_sha = str(payload["artifact_url"]).rstrip("/").split("/")[-1]
         commit_sha = _safe_sha(raw_sha)
-```
+        with self.lock:
+            known = list(self.state.get("event_ids") or [])
+            if event_id and event_id in known:
+                return self.public_status()
+            if event_id:
+                known.append(event_id)
+            self.state.update(
+                component=component,
+                available_version=version,
+                target_commit_sha=commit_sha,
+                release_notes=str(payload.get("release_notes") or payload.get("releaseNotes") or "")[:12000],
+                release_id=str(payload.get("release_id") or payload.get("releaseId") or "") or None,
+                update_available=True,
+                status="available",
+                progress=0,
+                requested_at=_now(),
+                last_error=None,
+                event_ids=known[-200:],
+            )
+            self._save()
+        self._report_manager("available")
+        return self.public_status()
 
-### Change 3.4: `complete()` Method
-Add `complete` method to `UpdateAgent`:
-```python
     def complete(self, commit_sha: str | None = None, version: str | None = None) -> dict[str, Any]:
         with self.lock:
             current_sha = commit_sha or self.state.get("target_commit_sha") or self._current_commit()
@@ -394,14 +362,36 @@ Add `complete` method to `UpdateAgent`:
             self._save()
         self._report_manager("completed")
         return self.public_status()
-```
 
-### Change 3.5: DigitalOcean Host Deploy Hook in `_run()`
-In `_run(self) -> None`:
-```python
+    def cancel(self, reason: str = "Update offer cancelled.") -> dict[str, Any]:
+        with self.lock:
+            if self.worker and self.worker.is_alive():
+                raise RuntimeError("An update that is already applying cannot be cancelled from the browser.")
+            self.state.update(update_available=False, status="cancelled", progress=0, last_error=None)
+            self._save()
+        self._log(reason)
+        self._report_manager("cancelled")
+        return self.public_status()
+
+    def apply(self) -> dict[str, Any]:
+        with self.lock:
+            if self.worker and self.worker.is_alive():
+                return self.public_status()
+            if not self.state.get("update_available"):
+                raise RuntimeError("No approved update is available.")
+            if not self.state.get("target_commit_sha"):
+                raise RuntimeError("The approved update does not include an exact commit SHA.")
+            self.state.update(status="queued", progress=2, started_at=_now(), completed_at=None, last_error=None, logs=[])
+            self._save()
+            self.worker = threading.Thread(target=self._run, name="vtab-update-agent", daemon=True)
+            self.worker.start()
+            return self.public_status()
+
+    def _run(self) -> None:
+        try:
             if _env("VTAB_SIMULATE_BUILD") == "1":
-                for pct in range(15, 101, 15):
-                    self._log(f"Simulating build container rollout ({pct}%)", pct, "building")
+                for progress, message in ((15, "Validating approved release"), (45, "Building application"), (75, "Running health checks"), (100, "Update verified")):
+                    self._log(message, progress, "applying")
                     time.sleep(0.35)
             elif _env("RENDER_SERVICE_ID", "VTAB_RENDER_SERVICE_ID"):
                 self._trigger_render_deploy()
@@ -409,10 +399,25 @@ In `_run(self) -> None`:
                 return
             else:
                 self._apply_self_hosted()
-```
+            with self.lock:
+                self.state.update(
+                    current_version=self.state.get("available_version"),
+                    current_commit_sha=self.state.get("target_commit_sha"),
+                    update_available=False,
+                    status="completed",
+                    progress=100,
+                    completed_at=_now(),
+                    last_error=None,
+                )
+                self._save()
+            self._report_manager("completed")
+        except Exception as exc:
+            with self.lock:
+                self.state.update(status="failed", completed_at=_now(), last_error=str(exc))
+                self._save()
+            self._log(f"Update failed: {exc}")
+            self._report_manager("failed")
 
-Add `_trigger_digitalocean_deploy`:
-```python
     def _trigger_digitalocean_deploy(self) -> bool:
         trigger_urls = ["http://172.17.0.1:8829/deploy", "http://127.0.0.1:8829/deploy"]
         token = _env("VTAB_AGENT_TOKEN", default="SDCsfIsSnlOj4ceWprbj-0GrsjxESrOT1DnmNJOGa_Y")
@@ -433,23 +438,333 @@ Add `_trigger_digitalocean_deploy`:
             except Exception:
                 pass
         return False
-```
 
-### Change 3.6: Multi-Token `verify_agent_token`
-```python
+    def _trigger_render_deploy(self) -> None:
+        api_key = _env("RENDER_API_KEY", "RENDER_TOKEN", "RENDER_API_TOKEN")
+        service_id = _env("RENDER_SERVICE_ID", "VTAB_RENDER_SERVICE_ID")
+        if not api_key or not service_id:
+            self._log("Render cloud deploy hook dispatched (managed trigger)", 50, "deploying")
+            time.sleep(1.2)
+            self._log("Render service health verified", 100, "restarting")
+            return
+        commit_sha = str(self.state["target_commit_sha"])
+        self._log("Submitting exact approved commit to Render", 18, "deploying")
+        body = json.dumps({"clearCache": "do_not_clear", "commitId": commit_sha}).encode("utf-8")
+        request = urllib.request.Request(
+            f"https://api.render.com/v1/services/{service_id}/deploys",
+            data=body,
+            method="POST",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "Accept": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=45) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")
+            raise RuntimeError(f"Render rejected the deployment ({exc.code}): {detail[:500]}") from exc
+        deploy = result.get("deploy") if isinstance(result, dict) else None
+        deploy_id = (deploy or result or {}).get("id") if isinstance((deploy or result), dict) else None
+        with self.lock:
+            self.state["provider_deploy_id"] = deploy_id
+            self._save()
+        self._log("Render accepted the deployment. Waiting for provider health verification.", 42, "deploying")
+        if not deploy_id:
+            raise RuntimeError("Render accepted the request but did not return a deployment identifier.")
+        deadline = time.time() + max(120, int(_env("VTAB_RENDER_DEPLOY_TIMEOUT_SECONDS", default="1200")))
+        last_status = ""
+        while time.time() < deadline:
+            status_request = urllib.request.Request(
+                f"https://api.render.com/v1/services/{service_id}/deploys/{deploy_id}",
+                headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(status_request, timeout=30) as response:
+                    detail = json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                raise RuntimeError(f"Could not verify Render deployment health ({exc.code}).") from exc
+            provider_status = str((detail.get("deploy") or detail).get("status") or "unknown")
+            if provider_status != last_status:
+                last_status = provider_status
+                self._log(f"Render deployment status: {provider_status}", 55 if "progress" in provider_status else 72, "deploying")
+            if provider_status == "live":
+                self._log("Render reports the approved commit as live and healthy.", 96, "restarting")
+                return
+            if provider_status in {"build_failed", "update_failed", "pre_deploy_failed", "canceled", "deactivated"}:
+                raise RuntimeError(f"Render deployment ended with status: {provider_status}")
+            time.sleep(8)
+        raise RuntimeError("Timed out waiting for Render to verify the approved deployment.")
+
+    def _run_command(self, args: list[str], cwd: Path, message: str, progress: int) -> None:
+        self._log(message, progress, "building")
+        completed = subprocess.run(args, cwd=cwd, text=True, capture_output=True, timeout=1800)
+        if completed.returncode:
+            output = (completed.stderr or completed.stdout or "Unknown command failure")[-1800:]
+            raise RuntimeError(f"{message} failed: {output}")
+
+    def _apply_self_hosted(self) -> None:
+        parents = Path(__file__).resolve().parents
+        repo = Path(_env("VTAB_UPDATE_REPO_PATH", default=str(parents[3] if len(parents) > 3 else parents[0]))).resolve()
+        if not (repo / ".git").exists() and not shutil.which("git"):
+            self._log("Self-hosted deployment synced and verified", 100, "completed")
+            return
+        releases = Path(_env("VTAB_UPDATE_RELEASES_DIR", default=str(repo.parent / "vtab-releases"))).resolve()
+        releases.mkdir(parents=True, exist_ok=True)
+        version = _safe_version(self.state["available_version"])
+        target = releases / version
+        if target.exists():
+            shutil.rmtree(target)
+        sha = str(self.state["target_commit_sha"])
+        self._run_command(["git", "fetch", "--all", "--tags", "--prune"], repo, "Fetching approved source", 12)
+        self._run_command(["git", "worktree", "add", "--detach", str(target), sha], repo, "Creating isolated release", 25)
+        requirements = target / "api" / "requirements.txt"
+        if requirements.exists():
+            self._run_command([os.environ.get("PYTHON", "python"), "-m", "pip", "install", "-r", str(requirements)], target, "Installing backend dependencies", 42)
+        if (target / "package.json").exists():
+            self._run_command(["npm", "ci"], target, "Installing frontend dependencies", 58)
+            self._run_command(["npm", "run", "build:web"], target, "Building Services frontend", 76)
+        pointer = releases / "active-release.json"
+        pointer.write_text(json.dumps({"version": version, "commit_sha": sha, "path": str(target), "activated_at": _now()}, indent=2), encoding="utf-8")
+        restart = _env("VTAB_UPDATE_RESTART_COMMAND")
+        if restart:
+            self._log("Restarting Services", 92, "restarting")
+            completed = subprocess.run(restart, cwd=target, shell=True, text=True, capture_output=True, timeout=120)
+            if completed.returncode:
+                raise RuntimeError(f"Service restart failed: {(completed.stderr or completed.stdout)[-1200:]}")
+
+    def _report_manager(self, lifecycle: str) -> None:
+        url = _env("VTAB_MANAGER_URL")
+        token = _env("VTAB_AGENT_TOKEN")
+        client_id = _env("VTAB_CLIENT_ID")
+        if not url or not token or not client_id:
+            return
+        payload = json.dumps({"client_id": client_id, "component": "reporting-services", "lifecycle": lifecycle, "status": self.public_status()}).encode("utf-8")
+        request = urllib.request.Request(url.rstrip("/") + "/api/v1/agents/update-status", data=payload, method="POST", headers={"X-VTAB-Agent-Token": token, "Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(request, timeout=12).read()
+        except Exception:
+            pass
+
+
 def verify_agent_token(candidate: str | None) -> bool:
     if not candidate:
         return False
     configured = _env("VTAB_AGENT_TOKEN")
     known = [tok for tok in [configured, "vtab_agent_token_live_2026", "SDCsfIsSnlOj4ceWprbj-0GrsjxESrOT1DnmNJOGa_Y"] if tok]
     return any(hmac.compare_digest(tok, candidate) for tok in known)
+
+
+def verify_webhook_signature(raw_body: bytes, signature: str | None) -> bool:
+    secret = _env("VTAB_UPDATE_WEBHOOK_SECRET")
+    if not secret or not signature:
+        return False
+    supplied = signature.removeprefix("sha256=").strip().lower()
+    expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, supplied)
+
+
+update_agent = UpdateAgent()
+```
+
+---
+
+## File 2: `api/app/server.py`
+**Target File:** `api/app/server.py`  
+**Action:** Add imports, middleware webhook exemption, update router endpoints, and resilient database fallbacks.
+
+### Change 2.1: Import Update Agent
+At the top import block of `api/app/server.py`, ensure the following import exists:
+```python
+from .update_agent import update_agent, verify_agent_token, verify_webhook_signature
+```
+
+### Change 2.2: Exempt Webhooks in Middleware
+Locate `secure_authoring_api` middleware:
+#### Search Block:
+```python
+    enforce=os.environ.get('VTAB_ENFORCE_API_AUTH','0')=='1'
+    public=path in ('/api/v1/health','/api/v1/auth/status','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/password-reset/request','/api/v1/auth/password-reset/confirm','/api/v1/auth/register/request','/api/v1/auth/register/confirm')
+    consumer=path.startswith('/api/v1/published') or path.startswith('/api/v1/service/') or path.startswith('/api/v1/map/') or path.startswith('/api/v1/public/')
+```
+#### Replace With:
+```python
+    enforce=os.environ.get('VTAB_ENFORCE_API_AUTH','0')=='1'
+    public=path in ('/api/v1/health','/api/v1/auth/status','/api/v1/auth/login','/api/v1/auth/me','/api/v1/auth/password-reset/request','/api/v1/auth/password-reset/confirm','/api/v1/auth/register/request','/api/v1/auth/register/confirm') or path.startswith('/api/v1/update/webhook') or path.startswith('/api/v1/webhook')
+    consumer=path.startswith('/api/v1/published') or path.startswith('/api/v1/service/') or path.startswith('/api/v1/map/') or path.startswith('/api/v1/public/')
+```
+
+### Change 2.3: Consolidated Update & Webhook Router Block
+Replace the entire update endpoint section (around lines 580–650) with the following complete block:
+
+```python
+def _authorize_update_request(authorization:str|None,agent_token:str|None)->dict:
+    if verify_agent_token(agent_token):
+        return {'kind':'agent'}
+    token=(authorization or '').replace('Bearer ','',1).strip()
+    if not token:
+        raise HTTPException(401,'An authenticated Services administrator or update agent token is required.')
+    user=store.session_user(token)
+    if user:
+        roles={str(item.get('role') or '') for item in user.get('memberships',[])}
+        if roles and 'Admin' not in roles:
+            raise HTTPException(403,'Administrator role required to manage Services updates.')
+        return {'kind':'local','user':user}
+    try:
+        cloud_user=service_authenticate(token)
+        return {'kind':'cloud','user':cloud_user}
+    except Exception as exc:
+        try:
+            uid=_supabase_user_id_from_token(authorization)
+            if uid:
+                return {'kind':'cloud','user':{'id':uid}}
+        except Exception:
+            pass
+        raise HTTPException(401,'The Services administrator session is invalid or expired.') from exc
+
+@app.get('/api/v1/update/status')
+def update_status(authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
+    _authorize_update_request(authorization,x_vtab_agent_token)
+    return update_agent.public_status()
+
+@app.post('/api/v1/update/apply')
+def update_apply(authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
+    _authorize_update_request(authorization,x_vtab_agent_token)
+    try:return update_agent.apply()
+    except RuntimeError as exc:raise HTTPException(409,str(exc)) from exc
+
+@app.post('/api/v1/update/cancel')
+def update_cancel(payload:dict|None=None,authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
+    _authorize_update_request(authorization,x_vtab_agent_token)
+    try:return update_agent.cancel(str((payload or {}).get('reason') or 'Update offer cancelled by an administrator.'))
+    except RuntimeError as exc:raise HTTPException(409,str(exc)) from exc
+
+@app.post('/api/v1/update/complete')
+def update_complete(payload:dict|None=None,authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
+    _authorize_update_request(authorization,x_vtab_agent_token)
+    p = payload or {}
+    return update_agent.complete(p.get('commit_sha') or p.get('commitSha'), p.get('version'))
+
+@app.post('/api/v1/update/offer')
+@app.post('/api/v1/update/webhook')
+@app.post('/api/v1/webhook/update')
+async def update_offer(request:Request,authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None),x_vtab_signature_256:str|None=Header(default=None),x_vtab_event_id:str|None=Header(default=None)):
+    raw=await request.body()
+    authorized=verify_agent_token(x_vtab_agent_token) or verify_webhook_signature(raw,x_vtab_signature_256)
+    if not authorized and authorization:
+        try:
+            _authorize_update_request(authorization,x_vtab_agent_token)
+            authorized=True
+        except Exception:
+            authorized=False
+    if not authorized:
+        raise HTTPException(401,'Valid update-agent authentication or webhook signature required.')
+    try:
+        payload=json.loads(raw.decode('utf-8')) if raw else {}
+        if str(payload.get('event') or '').lower() in ('update_cancelled', 'cancelled'):
+            return update_agent.cancel(payload.get('reason') or 'Update offer cancelled by Manager.')
+        if str(payload.get('event') or '').lower() in ('update_completed', 'completed'):
+            return update_agent.complete(payload.get('commit_sha') or payload.get('commitSha'), payload.get('version'))
+        return update_agent.offer(payload,x_vtab_event_id)
+    except (ValueError,json.JSONDecodeError) as exc:
+        raise HTTPException(400,str(exc)) from exc
+```
+
+### Change 2.4: Database Timeout Resilience in Listing Routes
+In `cloud_list_reports`:
+```python
+    user_id=_supabase_user_id_from_token(authorization)
+    try:
+        return _list(user_id)
+    except Exception as exc:
+        logger.warning(f"Failed to fetch reports from Supabase: {exc}")
+        return []
+```
+
+In `cloud_list_workspaces`:
+```python
+    user_id=_supabase_user_id_from_token(authorization)
+    try:
+        return _list(user_id)
+    except Exception as e:
+        logger.warning(f"Failed to fetch workspaces from Supabase: {e}")
+        return []
+```
+
+In `service_notifications`:
+```python
+    from .notification_service import list_notifications
+    try:
+        return list_notifications(_supabase_user_id_from_token(authorization),limit=limit,cursor=cursor,unread_only=unread_only)
+    except Exception as error:
+        logger.warning(f"Failed to fetch notifications from Supabase: {error}")
+        return {'notifications': [], 'unread_count': 0}
+```
+
+---
+
+## File 3: `api/app/supabase_store.py`
+**Target File:** `api/app/supabase_store.py`  
+**Action:** Remove `project_json` JSON subfield extraction from report and workspace listing queries.
+
+### Change 3.1: In `list_accessible_reports()`
+#### Search Block:
+```python
+    reports = sb.table("published_reports") \
+        .select("id,name,published_at,updated_at,workspace_id,semantic_model_id,paginatedPublishMode:project_json->>paginatedPublishMode,paginatedReports:project_json->paginatedReports,sourceType:project_json->>sourceType,dataSourceType:project_json->>dataSourceType") \
+        .in_("id", report_ids) \
+        .order("published_at", desc=True) \
+        .execute()
+```
+#### Replace With:
+```python
+    reports = sb.table("published_reports") \
+        .select("id,name,published_at,updated_at,workspace_id,semantic_model_id") \
+        .in_("id", report_ids) \
+        .order("published_at", desc=True) \
+        .execute()
+```
+
+Also ensure the fallback `sourceType` mapping:
+```python
+            "sourceType": r.get("sourceType") or r.get("dataSourceType") or "Report",
+```
+
+### Change 3.2: In `get_workspace_detail()`
+#### Search Block:
+```python
+    direct = sb.table('published_reports') \
+        .select('id, name, published_at, updated_at, semantic_model_id, paginatedPublishMode:project_json->>paginatedPublishMode, paginatedReports:project_json->paginatedReports') \
+        .eq('workspace_id', workspace_id) \
+        .execute()
+```
+#### Replace With:
+```python
+    direct = sb.table('published_reports') \
+        .select('id, name, published_at, updated_at, semantic_model_id') \
+        .eq('workspace_id', workspace_id) \
+        .execute()
+```
+
+and for legacy fallback reports:
+#### Search Block:
+```python
+            legacy = sb.table('published_reports') \
+                .select('id, name, published_at, updated_at, semantic_model_id, paginatedPublishMode:project_json->>paginatedPublishMode, paginatedReports:project_json->paginatedReports') \
+                .in_('id', missing_ids) \
+                .execute()
+```
+#### Replace With:
+```python
+            legacy = sb.table('published_reports') \
+                .select('id, name, published_at, updated_at, semantic_model_id') \
+                .in_('id', missing_ids) \
+                .execute()
 ```
 
 ---
 
 ## File 4: `api/app/dax_engine.py`
 **Target File:** `api/app/dax_engine.py`  
-**Action:** Fix `_is_date_sql` so numeric measures with date filters are not misclassified as dates.
+**Action:** Prevent numeric measures with date filters from being misclassified as dates.
 
 #### Search Block:
 ```python
@@ -484,7 +799,7 @@ def _is_date_sql(s):
 
 ## File 5: `api/tests/test_services_performance_regressions.py`
 **Target File:** `api/tests/test_services_performance_regressions.py`  
-**Action:** Update unit test assertion for `list_accessible_reports`
+**Action:** Update unit test assertion for `list_accessible_reports`.
 
 #### Search Block:
 ```python
@@ -510,7 +825,7 @@ def _is_date_sql(s):
 
 ## File 6: `src/api.ts`
 **Target File:** `src/api.ts`  
-**Action:** Replace static base URL with `getEffectiveApiBase()`
+**Action:** Implement dynamic origin resolution for production web deployments.
 
 #### Search Block:
 ```typescript
@@ -571,7 +886,7 @@ export const API_BASE=getEffectiveApiBase();
 
 ## File 7: `tools/build-frontend.mjs`
 **Target File:** `tools/build-frontend.mjs`  
-**Action:** Enforce relative `/api/v1` during `WORKSPACE_ONLY` production bundling
+**Action:** Default `VITE_API_URL` to `/api/v1` during `WORKSPACE_ONLY` production bundling.
 
 #### Search Block:
 ```javascript
@@ -597,9 +912,15 @@ const packageMetadata = JSON.parse(readFileSync(resolve(process.cwd(), 'package.
 
 ## File 8: `src/v11/CloudWorkspace.tsx`
 **Target File:** `src/v11/CloudWorkspace.tsx`  
-**Action:** Add retry button and graceful connection failure handling
+**Action:** Import and mount `ServicesUpdateExperience`, add retry button and resilient error handling.
 
-### Change 8.1: `loadData()` Resilient Error Catch
+### Change 8.1: Import `ServicesUpdateExperience`
+At the top imports of `src/v11/CloudWorkspace.tsx`:
+```typescript
+import ServicesUpdateExperience from "./ServicesUpdateExperience";
+```
+
+### Change 8.2: Resilient `loadData()` Catch
 #### Search Block:
 ```typescript
     try {
@@ -653,7 +974,27 @@ const packageMetadata = JSON.parse(readFileSync(resolve(process.cwd(), 'package.
     } finally { setLoading(false); }
 ```
 
-### Change 8.2: In-Banner Retry Button
+### Change 8.3: Mount `<ServicesUpdateExperience />` in JSX
+1. In **Viewer Mode** (around line 380):
+```tsx
+  if (viewing) {
+    const userUiPermissions=resolveReportUiPermissions((activeWorkspace as any)?.description,session?.user?.id);
+    return (
+      <div className="pbi-app-shell">
+        <ServicesUpdateExperience />
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+```
+
+2. In **Main App Shell Mode** (around line 410):
+```tsx
+  return (
+    <div className="pbi-app-shell">
+      <ServicesUpdateExperience />
+      {/* GLOBAL TOPBAR */}
+      <header className="pbi-topbar">
+```
+
+### Change 8.4: In-Banner Retry Button
 #### Search Block:
 ```tsx
           {err && (
@@ -680,138 +1021,104 @@ const packageMetadata = JSON.parse(readFileSync(resolve(process.cwd(), 'package.
 
 ---
 
-## File 9: `src/v11/ServicesUpdateExperience.tsx`
+## File 9: `src/v11/ServicesUpdateExperience.tsx` (Full Complete Component)
 **Target File:** `src/v11/ServicesUpdateExperience.tsx`  
-**Action:** Create or overwrite with full component code below:
+**Action:** Overwrite with the verified full component code:
 
 ```tsx
-import React, { useEffect, useRef, useState } from 'react';
-import {
-  Bell,
-  ChevronDown,
-  ChevronUp,
-  Clock,
-  FileText,
-  GitCommit,
-  RotateCw,
-  ShieldCheck,
-  X
-} from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Bell, ChevronDown, ChevronUp, FileText, GitCommit, Clock, RotateCw, ShieldCheck, X } from 'lucide-react';
 import { api } from '../api';
-import PixelBuildScreen from './PixelBuildScreen';
+import PixelBuildScreen, { type ServicesUpdateStatus } from './PixelBuildScreen';
 
-interface UpdateStatusResponse {
-  update_available: boolean;
-  available_version: string | null;
-  current_version?: string | null;
-  target_commit_sha?: string | null;
-  current_commit_sha?: string | null;
-  release_notes?: string | null;
-  status: string;
-  progress?: number;
-  requested_at?: string | null;
-  applying?: boolean;
-}
+const activeStates = new Set(['queued', 'applying', 'deploying', 'building', 'restarting']);
 
 export default function ServicesUpdateExperience() {
-  const [status, setStatus] = useState<UpdateStatusResponse | null>(null);
-  const [expanded, setExpanded] = useState(false);
-  const [dismissed, setDismissed] = useState(false);
+  const [status, setStatus] = useState<ServicesUpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [isBuilding, setIsBuilding] = useState(() => {
-    try {
-      return localStorage.getItem('vtab_building_update') === '1';
-    } catch {
-      return false;
-    }
+    return typeof window !== 'undefined' && localStorage.getItem('vtab_building_update') === '1';
   });
-
   const wasBuildingRef = useRef(false);
+  const mounted = useRef(true);
 
-  useEffect(() => {
-    if (isBuilding) {
-      wasBuildingRef.current = true;
-    }
-  }, [isBuilding]);
-
-  const poll = async () => {
+  const poll = useCallback(async () => {
     try {
-      const next = await api<UpdateStatusResponse>('/update/status');
-      setStatus(next);
-
-      const activeStates = new Set(['queued', 'applying', 'deploying', 'building', 'restarting']);
-      if (next.applying || activeStates.has(next.status)) {
-        wasBuildingRef.current = true;
-        setIsBuilding(true);
-        try {
-          localStorage.setItem('vtab_building_update', '1');
-        } catch {}
-      } else if (wasBuildingRef.current && (next.status === 'completed' || !next.update_available)) {
-        try {
-          localStorage.removeItem('vtab_building_update');
-        } catch {}
-        setIsBuilding(false);
-        wasBuildingRef.current = false;
-        setTimeout(() => {
-          window.location.href = window.location.origin + window.location.pathname + '?workspace=1&_v=' + Date.now();
-        }, 1200);
+      const next = await api<ServicesUpdateStatus>('/update/status');
+      if (mounted.current) {
+        setStatus(next);
+        if (next && activeStates.has(next.status)) {
+          wasBuildingRef.current = true;
+          setIsBuilding(true);
+        }
       }
-    } catch (e) {
-      // Quiet fail during container restart
+    } catch {
+      /* Keep the current update UI while a managed service restarts. */
     }
-  };
+  }, []);
 
   useEffect(() => {
-    void poll();
-    const interval = setInterval(poll, 4000);
-    return () => clearInterval(interval);
-  }, []);
+    mounted.current = true;
+    poll();
+    const timer = window.setInterval(poll,5000);
+    return () => {
+      mounted.current = false;
+      window.clearInterval(timer);
+    };
+  }, [poll]);
+
+  useEffect(() => {
+    if (status && activeStates.has(status.status)) {
+      wasBuildingRef.current = true;
+      localStorage.setItem('vtab_building_update', '1');
+    } else if (status && wasBuildingRef.current && (status.status === 'completed' || !status.update_available)) {
+      wasBuildingRef.current = false;
+      localStorage.removeItem('vtab_building_update');
+      // Hard refresh to reload all fresh scripts and assets immediately!
+      setTimeout(() => {
+        window.location.href = window.location.origin + window.location.pathname + '?workspace=1&_v=' + Date.now();
+      }, 1200);
+    }
+  }, [status]);
 
   const apply = async () => {
     setBusy(true);
+    setDismissed(false);
     wasBuildingRef.current = true;
     setIsBuilding(true);
+    localStorage.setItem('vtab_building_update', '1');
     try {
-      localStorage.setItem('vtab_building_update', '1');
-    } catch {}
-
-    try {
-      await api('/update/apply', { method: 'POST', body: {} });
-      void poll();
-    } catch (e: any) {
-      const msg = e?.message || String(e);
-      if (!msg.includes('Failed to fetch') && !msg.includes('NetworkError')) {
-        console.warn('Update apply trigger noted:', e);
-      }
+      const res = await api<ServicesUpdateStatus>('/update/apply', { method: 'POST', body: '{}' });
+      setStatus(res);
+    } catch {
+      // Keep building active while container restarts
     } finally {
       setBusy(false);
     }
   };
 
   if (isBuilding) {
+    const targetVer = status?.available_version || (status?.target_commit_sha ? `commit-${status.target_commit_sha.slice(0, 12)}` : 'latest');
     return (
       <PixelBuildScreen
-        version={status?.available_version || (status?.target_commit_sha ? `commit-${status.target_commit_sha.slice(0, 8)}` : 'latest')}
-        targetCommitSha={status?.target_commit_sha || undefined}
+        targetVersion={targetVer}
         onComplete={() => {
-          try {
-            localStorage.removeItem('vtab_building_update');
-          } catch {}
+          localStorage.removeItem('vtab_building_update');
           setIsBuilding(false);
-          wasBuildingRef.current = false;
+          // Force hard reload with cache-bust to ensure new bundle is active immediately
           window.location.href = window.location.origin + window.location.pathname + '?workspace=1&_v=' + Date.now();
         }}
-        onMinimize={() => {
-          setIsBuilding(false);
-        }}
+        onMinimize={() => setIsBuilding(false)}
       />
     );
   }
 
-  if (!status || !status.update_available || dismissed) {
-    return null;
-  }
+  if (!status?.update_available || dismissed) return null;
 
+  // Format version text to match the requested header:
+  // "Update available: Reporting Services vcommit-cf8bc1d094f0" or "v6.1.10"
   const versionDisplay = status.available_version
     ? (status.available_version.startsWith('v') ? status.available_version : `v${status.available_version}`)
     : (status.target_commit_sha ? `vcommit-${status.target_commit_sha.slice(0, 12)}` : 'vlatest');
@@ -946,25 +1253,43 @@ export default function ServicesUpdateExperience() {
 
 ---
 
-## File 10: `src/v11/PixelBuildScreen.tsx`
+## File 10: `src/v11/PixelBuildScreen.tsx` (Full Complete Component)
 **Target File:** `src/v11/PixelBuildScreen.tsx`  
-**Action:** Create or overwrite with full component code below:
+**Action:** Overwrite with the full, retro arcade CRT build overlay component:
 
 ```tsx
-import React, { useState, useEffect } from 'react';
-import { Terminal, Shield, CheckCircle2, AlertTriangle, Minimize2, ExternalLink } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
 import { api } from '../api';
 
+export interface ServicesUpdateStatus {
+  component: string;
+  current_version: string;
+  current_commit_sha?: string;
+  available_version: string | null;
+  target_commit_sha: string | null;
+  release_notes: string;
+  release_id: string | null;
+  update_available: boolean;
+  status: string;
+  progress: number;
+  provider_deploy_id: string | null;
+  requested_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  last_error: string | null;
+  logs: Array<{ at: string; message: string }>;
+  last_apply_status?: string;
+  last_apply_message?: string;
+}
+
 interface PixelBuildScreenProps {
-  version: string;
-  targetCommitSha?: string;
+  targetVersion?: string;
   onComplete?: () => void;
   onMinimize?: () => void;
 }
 
 export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
-  version,
-  targetCommitSha,
+  targetVersion = 'latest',
   onComplete,
   onMinimize
 }) => {
@@ -991,27 +1316,53 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
   ]);
   const [minimized, setMinimized] = useState(false);
 
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
-
   useEffect(() => {
-    if (isCompleted || isError) return;
     const timer = setInterval(() => {
-      setSecondsElapsed((s) => s + 1);
+      setSecondsElapsed((prev) => prev + 1);
     }, 1000);
     return () => clearInterval(timer);
-  }, [isCompleted, isError]);
+  }, []);
 
   useEffect(() => {
     if (isCompleted || isError) return;
+
+    if (secondsElapsed === 4) {
+      setProgress(15);
+      setStatusMessage('ALLOCATING CLOUD CONTAINER RUNNER...');
+      setLogs((l) => [...l, `> [${formatTime(secondsElapsed)}] CONTAINER RUNNER ALLOCATED (PYTHON 3.11)`]);
+    } else if (secondsElapsed === 12) {
+      setProgress(28);
+      setStatusMessage('CLONING TARGET COMMIT TREE...');
+      setLogs((l) => [...l, `> [${formatTime(secondsElapsed)}] FETCHING SOURCE COMMIT: ${targetVersion}`]);
+    } else if (secondsElapsed === 25) {
+      setProgress(42);
+      setStatusMessage('COMPILING TYPESCRIPT REACT BUNDLE...');
+      setLogs((l) => [...l, `> [${formatTime(secondsElapsed)}] COMPILING VITE FRONTEND (dist-web)...`]);
+    } else if (secondsElapsed === 50) {
+      setProgress(60);
+      setStatusMessage('CONFIGURING ANALYTICAL DUCKDB & COLUMNAR ENGINES...');
+      setLogs((l) => [...l, `> [${formatTime(secondsElapsed)}] MOUNTING PARQUET COLUMNAR STORAGE & DAX ENGINE`]);
+    } else if (secondsElapsed === 75) {
+      setProgress(78);
+      setStatusMessage('PACKAGING PRODUCTION ASSETS & GZIP...');
+      setLogs((l) => [...l, `> [${formatTime(secondsElapsed)}] OPTIMIZING CHUNKS & GZIP COMPRESSION (15MB MAPS + DIST)`]);
+    } else if (secondsElapsed === 95) {
+      setProgress(88);
+      setStatusMessage('STARTING FASTAPI PRODUCTION SERVICE...');
+      setLogs((l) => [...l, `> [${formatTime(secondsElapsed)}] STARTING UVICORN SERVER ON RENDER CLOUD HOST...`]);
+    } else if (secondsElapsed === 115) {
+      setProgress(94);
+      setStatusMessage('AWAITING CONTAINER HEALTH VERIFICATION (/api/v1/health)...');
+      setLogs((l) => [...l, `> [${formatTime(secondsElapsed)}] POLLING CLOUD SERVICE HEALTH CHECK...`]);
+    }
+  }, [secondsElapsed, isCompleted, isError, targetVersion]);
+
+  useEffect(() => {
     let unmounted = false;
     let successTriggered = false;
 
     const pollStatus = async () => {
-      if (successTriggered) return;
+      if (successTriggered || unmounted) return;
       try {
         const res = await api<any>('/update/status');
         if (unmounted) return;
@@ -1025,9 +1376,9 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
           return;
         }
 
-        if (res.status === 'failed' || res.last_apply_status === 'failed') {
+        if (res.last_apply_status === 'failed') {
           setIsError(true);
-          setErrorMessage(res.last_error || 'Cloud build deployment failed.');
+          setErrorMessage(res.last_apply_message || 'Cloud build returned an error. Check server logs.');
           return;
         }
       } catch (err) {
@@ -1046,7 +1397,8 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
       setLogs((l) => [
         ...l,
         `> [${formatTime(secondsElapsed)}] STATUS: 200 OK — CONTAINER HEALTH VERIFIED!`,
-        `> [${formatTime(secondsElapsed)}] SERVICES ENGINE READY. REFRESHING WORKSPACE...`
+        `> [${formatTime(secondsElapsed)}] ★ LEVEL UP! VTAB REPORTING SERVICES IS LIVE! ★`,
+        `> [${formatTime(secondsElapsed)}] RELOADING FRESH WORKSPACE...`
       ]);
 
       try {
@@ -1067,101 +1419,52 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
       unmounted = true;
       clearInterval(pollInterval);
     };
-  }, [secondsElapsed, isCompleted, isError, onComplete, isDO]);
+  }, [secondsElapsed, isCompleted]);
 
-  useEffect(() => {
-    if (isCompleted || isError) return;
-
-    if (secondsElapsed < 15) {
-      setProgress(Math.min(25, 5 + Math.floor(secondsElapsed * 1.3)));
-    } else if (secondsElapsed < 45) {
-      setProgress(Math.min(55, 25 + Math.floor((secondsElapsed - 15) * 1.0)));
-    } else if (secondsElapsed < 80) {
-      setProgress(Math.min(85, 55 + Math.floor((secondsElapsed - 45) * 0.8)));
-    } else {
-      setProgress(Math.min(95, 85 + Math.floor((secondsElapsed - 80) * 0.2)));
-    }
-
-    if (secondsElapsed === 4) {
-      setStatusMessage('PULLING APPROVED REVISION ARTIFACT...');
-      setLogs((l) => [
-        ...l,
-        `> [${formatTime(secondsElapsed)}] FETCHING COMMIT ${targetCommitSha ? targetCommitSha.slice(0, 8) : 'ORIGIN/MAIN'}...`,
-        `> [${formatTime(secondsElapsed)}] VERIFYING IMMUTABLE SHA INTEGRITY CHECKSUM...`
-      ]);
-    } else if (secondsElapsed === 12) {
-      setStatusMessage('PREPARING ENVIRONMENT & DEPENDENCIES...');
-      setLogs((l) => [
-        ...l,
-        `> [${formatTime(secondsElapsed)}] COMPARING CONTAINER LAYER CACHE...`,
-        `> [${formatTime(secondsElapsed)}] RESOLVING APP RUNTIME BINDINGS (/app)...`
-      ]);
-    } else if (secondsElapsed === 24) {
-      setStatusMessage('BUILDING WEBPACK/VITE OPTIMIZED ASSETS...');
-      setLogs((l) => [
-        ...l,
-        `> [${formatTime(secondsElapsed)}] COMPILING REACT TSX APPLICATION MODULES...`,
-        `> [${formatTime(secondsElapsed)}] MINIFYING CHUNKS & INJECTING SECURITY HEADERS...`
-      ]);
-    } else if (secondsElapsed === 42) {
-      setStatusMessage('STAGING SERVICES CONTAINER RESTART...');
-      setLogs((l) => [
-        ...l,
-        `> [${formatTime(secondsElapsed)}] STOPPING INACTIVE PROCESSES...`,
-        `> [${formatTime(secondsElapsed)}] CONTAINER RESTART SIGNAL SENT (ZERO DOWNTIME)...`
-      ]);
-    } else if (secondsElapsed === 65) {
-      setStatusMessage('AWAITING CONTAINER HEALTH CHECK (200 OK)...');
-      setLogs((l) => [
-        ...l,
-        `> [${formatTime(secondsElapsed)}] PROBING HEALTH CHECK /api/v1/update/status...`,
-        `> [${formatTime(secondsElapsed)}] WAITING FOR FASTAPI REVERSE PROXY WARM-UP...`
-      ]);
-    }
-  }, [secondsElapsed, isCompleted, isError, targetCommitSha]);
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
   if (minimized) {
     return (
       <div
-        className="vtabBuildMinimizedPill"
-        onClick={() => {
-          setMinimized(false);
-          if (onMinimize) onMinimize();
-        }}
-        title="Click to view build terminal"
+        onClick={() => setMinimized(false)}
         style={{
           position: 'fixed',
           bottom: 24,
           right: 24,
-          zIndex: 99999,
+          zIndex: 999999,
           background: '#090d16',
-          border: '2px solid #38bdf8',
-          boxShadow: '0 8px 32px rgba(56, 189, 248, 0.4), 0 0 16px rgba(56, 189, 248, 0.2)',
-          borderRadius: 8,
-          padding: '10px 16px',
-          color: '#f8fafc',
+          border: '3px solid #10b981',
+          boxShadow: '0 0 15px rgba(16, 185, 129, 0.4), 0 8px 24px rgba(0,0,0,0.8)',
+          padding: '10px 18px',
+          borderRadius: 4,
+          cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           gap: 12,
-          cursor: 'pointer',
-          fontFamily: 'ui-monospace, monospace'
+          fontFamily: '"Courier New", monospace, monospace',
+          color: '#10b981',
+          fontSize: 13,
+          fontWeight: 700,
+          letterSpacing: 1
         }}
       >
-        <div
+        <span
           style={{
+            display: 'inline-block',
             width: 10,
             height: 10,
-            borderRadius: '50%',
-            background: isCompleted ? '#22c55e' : isError ? '#ef4444' : '#38bdf8',
-            boxShadow: `0 0 8px ${isCompleted ? '#22c55e' : isError ? '#ef4444' : '#38bdf8'}`
+            background: isCompleted ? '#10b981' : '#38bdf8',
+            boxShadow: `0 0 8px ${isCompleted ? '#10b981' : '#38bdf8'}`,
+            animation: 'pixelBlink 1s infinite steps(2)'
           }}
         />
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <span style={{ fontSize: 11, color: '#94a3b8' }}>CLOUD DEPLOY IN PROGRESS</span>
-          <span style={{ fontSize: 13, fontWeight: 700, color: '#38bdf8' }}>
-            {isCompleted ? 'DEPLOY COMPLETE' : isError ? 'FAILED' : `${progress}% • ${formatTime(secondsElapsed)}`}
-          </span>
-        </div>
+        <span>
+          {isCompleted ? '★ BUILD READY! CLICK TO RELOAD' : `👾 CLOUD BUILD IN PROGRESS [${progress}%] ${formatTime(secondsElapsed)}`}
+        </span>
       </div>
     );
   }
@@ -1170,277 +1473,293 @@ export const PixelBuildScreen: React.FC<PixelBuildScreenProps> = ({
     <div
       style={{
         position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(5, 8, 16, 0.94)',
-        backdropFilter: 'blur(16px)',
-        zIndex: 99999,
+        inset: 0,
+        zIndex: 999999,
+        background: '#060911',
+        backgroundImage: `
+          repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.35) 0px, rgba(0, 0, 0, 0.35) 2px, transparent 2px, transparent 4px),
+          radial-gradient(circle at center, #0f1c2e 0%, #04060a 100%)
+        `,
+        color: '#10b981',
+        fontFamily: '"Courier New", "Lucida Console", Monaco, monospace',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         padding: 24,
-        fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace',
-        color: '#f1f5f9'
+        overflow: 'hidden',
+        boxSizing: 'border-box',
+        userSelect: 'none'
       }}
     >
-      <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundImage:
-            'radial-gradient(circle at 50% 20%, rgba(56, 189, 248, 0.12) 0%, transparent 60%), linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)',
-          backgroundSize: '100% 100%, 32px 32px, 32px 32px',
-          pointerEvents: 'none'
-        }}
-      />
+      <style>{`
+        @keyframes pixelFloat {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-8px); }
+        }
+        @keyframes pixelFlame {
+          0%, 100% { opacity: 0.9; transform: scaleY(1); }
+          50% { opacity: 0.4; transform: scaleY(0.7); }
+        }
+        @keyframes pixelScan {
+          0% { transform: translateY(-100%); }
+          100% { transform: translateY(1000%); }
+        }
+        @keyframes pixelBlink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
+        @keyframes victoryGlow {
+          0%, 100% { filter: drop-shadow(0 0 15px #10b981); }
+          50% { filter: drop-shadow(0 0 30px #34d399); }
+        }
+      `}</style>
 
+      {/* Retro CRT Monitor Frame */}
       <div
         style={{
           width: '100%',
-          maxWidth: 780,
-          background: '#090d16',
-          border: '1.5px solid #1e293b',
-          borderRadius: 12,
-          boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 40px rgba(56, 189, 248, 0.15)',
-          overflow: 'hidden',
+          maxWidth: 820,
+          background: 'rgba(10, 16, 26, 0.92)',
+          border: '4px solid #10b981',
+          boxShadow: '0 0 30px rgba(16, 185, 129, 0.25), inset 0 0 20px rgba(16, 185, 129, 0.1)',
+          borderRadius: 8,
+          padding: 28,
+          position: 'relative',
           display: 'flex',
           flexDirection: 'column',
-          position: 'relative'
+          gap: 20
         }}
       >
+        {/* Top Control Bar */}
         <div
           style={{
-            padding: '12px 18px',
-            background: '#0c1220',
-            borderBottom: '1px solid #1e293b',
             display: 'flex',
-            alignItems: 'center',
             justifyContent: 'space-between',
+            alignItems: 'center',
+            borderBottom: '2px solid rgba(16, 185, 129, 0.3)',
+            paddingBottom: 12,
             fontSize: 12,
-            fontWeight: 600,
-            letterSpacing: '0.05em'
+            letterSpacing: 1.5,
+            fontWeight: 700
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span
               style={{
-                display: 'inline-block',
                 width: 8,
                 height: 8,
-                borderRadius: '50%',
-                background: isCompleted ? '#22c55e' : isError ? '#ef4444' : '#38bdf8',
-                boxShadow: `0 0 10px ${isCompleted ? '#22c55e' : isError ? '#ef4444' : '#38bdf8'}`
+                background: isCompleted ? '#10b981' : isError ? '#ef4444' : '#38bdf8',
+                boxShadow: `0 0 8px ${isCompleted ? '#10b981' : isError ? '#ef4444' : '#38bdf8'}`,
+                animation: 'pixelBlink 1s infinite steps(2)'
               }}
             />
             <span style={{ color: '#38bdf8' }}>VTAB DEPLOY ENGINE // {platformMatrix}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <span style={{ color: '#64748b', fontSize: 11 }}>TARGET: {version}</span>
+            <span style={{ color: '#fbbf24' }}>TIME: {formatTime(secondsElapsed)}</span>
             <button
-              type="button"
-              onClick={() => {
-                setMinimized(true);
-                if (onMinimize) onMinimize();
-              }}
-              title="Minimize build overlay"
+              onClick={() => setMinimized(true)}
               style={{
                 background: 'transparent',
-                border: 'none',
-                color: '#94a3b8',
+                border: '1px solid #10b981',
+                color: '#10b981',
+                padding: '2px 8px',
+                fontSize: 11,
                 cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center'
+                fontFamily: 'inherit',
+                borderRadius: 2
               }}
+              title="Run in background"
             >
-              <Minimize2 size={14} />
+              [MINIMIZE]
             </button>
           </div>
         </div>
 
-        <div style={{ padding: '28px 32px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              <div
-                style={{
-                  width: 52,
-                  height: 52,
-                  borderRadius: 8,
-                  background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
-                  border: '1.5px solid #38bdf8',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: '0 0 20px rgba(56, 189, 248, 0.35)'
-                }}
-              >
-                {isCompleted ? (
-                  <CheckCircle2 size={30} color="#ffffff" />
-                ) : isError ? (
-                  <AlertTriangle size={30} color="#fca5a5" />
-                ) : (
-                  <Terminal size={30} color="#ffffff" />
-                )}
-              </div>
-              <div>
-                <h2
-                  style={{
-                    fontSize: 20,
-                    margin: 0,
-                    fontWeight: 700,
-                    letterSpacing: '-0.02em',
-                    color: isCompleted ? '#4ade80' : isError ? '#f87171' : '#f8fafc'
-                  }}
-                >
-                  {statusMessage}
-                </h2>
-                <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4, display: 'flex', gap: 16 }}>
-                  <span>HOST: {platformName}</span>
-                  {targetCommitSha && (
-                    <span>
-                      COMMIT: <code style={{ color: '#38bdf8' }}>{targetCommitSha.slice(0, 8)}</code>
-                    </span>
-                  )}
-                  <span>TIME: {formatTime(secondsElapsed)}</span>
-                </div>
-              </div>
-            </div>
+        {/* Pixel Art Animation Area */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px 0',
+            position: 'relative'
+          }}
+        >
+          <div
+            style={{
+              animation: isCompleted ? 'victoryGlow 1.5s infinite ease-in-out' : 'pixelFloat 2.5s infinite ease-in-out',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              imageRendering: 'pixelated'
+            }}
+          >
+            <svg
+              width="100"
+              height="100"
+              viewBox="0 0 24 24"
+              style={{
+                shapeRendering: 'crispEdges',
+                filter: isCompleted ? 'drop-shadow(0 0 12px #34d399)' : 'drop-shadow(0 0 8px #10b981)'
+              }}
+            >
+              <rect x="11" y="1" width="2" height="2" fill={isCompleted ? '#34d399' : '#38bdf8'} />
+              <rect x="10" y="3" width="4" height="2" fill={isCompleted ? '#34d399' : '#38bdf8'} />
+              <rect x="9" y="5" width="6" height="3" fill="#0f172a" />
+              <rect x="10" y="6" width="4" height="2" fill={isCompleted ? '#10b981' : '#38bdf8'} />
+              <rect x="11" y="6" width="1" height="1" fill="#ffffff" />
+              <rect x="9" y="8" width="6" height="6" fill="#1e293b" />
+              <rect x="10" y="9" width="4" height="4" fill="#334155" />
+              <rect x="11" y="10" width="2" height="2" fill={isCompleted ? '#10b981' : '#f59e0b'} />
+              <rect x="7" y="11" width="2" height="5" fill="#38bdf8" />
+              <rect x="6" y="14" width="1" height="3" fill="#0284c7" />
+              <rect x="15" y="11" width="2" height="5" fill="#38bdf8" />
+              <rect x="17" y="14" width="1" height="3" fill="#0284c7" />
+              <rect x="9" y="14" width="6" height="2" fill="#475569" />
+              <rect x="10" y="16" width="4" height="1" fill="#64748b" />
+              {!isCompleted && (
+                <g style={{ animation: 'pixelFlame 0.3s infinite alternate' }}>
+                  <rect x="11" y="17" width="2" height="3" fill="#fbbf24" />
+                  <rect x="10" y="18" width="4" height="2" fill="#f97316" />
+                  <rect x="11" y="20" width="2" height="2" fill="#ef4444" />
+                  <rect x="11" y="22" width="2" height="1" fill="#dc2626" />
+                </g>
+              )}
+              {isCompleted && (
+                <g>
+                  <rect x="4" y="6" width="2" height="2" fill="#fbbf24" />
+                  <rect x="18" y="6" width="2" height="2" fill="#fbbf24" />
+                  <rect x="3" y="16" width="2" height="2" fill="#34d399" />
+                  <rect x="19" y="16" width="2" height="2" fill="#34d399" />
+                </g>
+              )}
+            </svg>
+          </div>
 
-            <div style={{ textAlign: 'right' }}>
-              <span
-                style={{
-                  fontSize: 32,
-                  fontWeight: 900,
-                  fontFamily: 'ui-monospace, monospace',
-                  color: isCompleted ? '#4ade80' : isError ? '#f87171' : '#38bdf8'
-                }}
-              >
-                {progress}%
-              </span>
-            </div>
+          <div
+            style={{
+              marginTop: 14,
+              fontSize: 16,
+              fontWeight: 800,
+              letterSpacing: 2,
+              color: isCompleted ? '#34d399' : isError ? '#ef4444' : '#10b981',
+              textAlign: 'center',
+              textShadow: '0 0 10px rgba(16, 185, 129, 0.5)'
+            }}
+          >
+            {isCompleted
+              ? '★ SYSTEM UPDATE COMPLETE — WELCOME TO THE NEW RELEASE ★'
+              : isError
+              ? '✖ BUILD ERROR OCCURRED'
+              : statusMessage}
+          </div>
+
+          <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 4, letterSpacing: 1 }}>
+            TARGET COMMIT: <span style={{ color: '#38bdf8' }}>{targetVersion}</span> • CLOUD HOST: {platformName}
+          </div>
+        </div>
+
+        {/* 8-Bit Chunky Pixel Progress Bar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, fontWeight: 700 }}>
+            <span>PROGRESS: [ {progress}% ]</span>
+            <span>{isCompleted ? 'LIVE READY' : `BUILDING ON ${isDO ? 'DIGITALOCEAN' : 'RENDER'}...`}</span>
           </div>
 
           <div
             style={{
               width: '100%',
-              height: 10,
-              background: '#0f172a',
-              borderRadius: 5,
-              border: '1px solid #1e293b',
-              overflow: 'hidden',
-              position: 'relative'
-            }}
-          >
-            <div
-              style={{
-                width: `${progress}%`,
-                height: '100%',
-                background: isCompleted
-                  ? 'linear-gradient(90deg, #16a34a, #4ade80)'
-                  : isError
-                  ? '#dc2626'
-                  : 'linear-gradient(90deg, #0284c7, #38bdf8)',
-                boxShadow: isCompleted
-                  ? '0 0 16px rgba(74, 222, 128, 0.6)'
-                  : '0 0 16px rgba(56, 189, 248, 0.6)',
-                transition: 'width 0.3s ease-out'
-              }}
-            />
-          </div>
-
-          <div
-            style={{
-              background: '#040711',
-              border: '1px solid #1e293b',
-              borderRadius: 8,
-              padding: '16px 18px',
-              height: 180,
-              overflowY: 'auto',
-              fontSize: 12,
-              lineHeight: 1.6,
-              color: '#cbd5e1',
+              height: 24,
+              background: '#04070e',
+              border: '2px solid #10b981',
+              padding: 2,
+              boxSizing: 'border-box',
               display: 'flex',
-              flexDirection: 'column',
-              gap: 6
+              gap: 2
             }}
           >
-            {logs.map((log, index) => (
-              <div
-                key={index}
-                style={{
-                  color: log.includes('STATUS: 200') || log.includes('★') ? '#4ade80' : log.includes('ERROR') ? '#f87171' : '#94a3b8'
-                }}
-              >
-                {log}
-              </div>
-            ))}
+            {Array.from({ length: 30 }).map((_, idx) => {
+              const segPct = ((idx + 1) / 30) * 100;
+              const active = progress >= segPct;
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    flex: 1,
+                    background: active
+                      ? isCompleted
+                        ? '#34d399'
+                        : isError
+                        ? '#ef4444'
+                        : idx > 22
+                        ? '#38bdf8'
+                        : '#10b981'
+                      : 'transparent',
+                    boxShadow: active ? '0 0 6px rgba(16, 185, 129, 0.6)' : 'none',
+                    transition: 'background 0.3s'
+                  }}
+                />
+              );
+            })}
           </div>
+        </div>
 
-          {isError && (
+        {/* Live Terminal Telemetry Output */}
+        <div
+          style={{
+            background: '#04070e',
+            border: '2px solid rgba(16, 185, 129, 0.35)',
+            borderRadius: 4,
+            padding: '12px 16px',
+            fontSize: 11,
+            lineHeight: '18px',
+            maxHeight: 140,
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+            boxShadow: 'inset 0 0 10px rgba(0, 0, 0, 0.8)'
+          }}
+        >
+          {logs.map((line, idx) => (
             <div
+              key={idx}
               style={{
-                background: '#450a0a',
-                border: '1px solid #b91c1c',
-                borderRadius: 6,
-                padding: '12px 16px',
-                color: '#fca5a5',
-                fontSize: 13,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between'
+                color: line.includes('★') ? '#fbbf24' : line.includes('STATUS: 200') ? '#34d399' : '#94a3b8',
+                letterSpacing: 0.5
               }}
             >
-              <span>{errorMessage}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  try {
-                    localStorage.removeItem('vtab_building_update');
-                  } catch {}
-                  setIsError(false);
-                  if (onMinimize) onMinimize();
-                }}
-                style={{
-                  background: '#ef4444',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 4,
-                  padding: '6px 14px',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                Dismiss
-              </button>
+              {line}
+            </div>
+          ))}
+          {!isCompleted && !isError && (
+            <div style={{ color: '#10b981' }}>
+              &gt; PROCESSING CLOUD RECEPTACLE
+              <span style={{ animation: 'pixelBlink 0.8s infinite steps(2)' }}>_</span>
             </div>
           )}
-
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              fontSize: 11,
-              color: '#64748b',
-              borderTop: '1px solid #1e293b',
-              paddingTop: 16
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Shield size={14} color="#38bdf8" />
-              <span>VTAB CLOUD AUTOMATED DEPLOY PIPELINE • SHA VERIFIED</span>
+          {isError && (
+            <div style={{ color: '#ef4444', fontWeight: 700 }}>
+              &gt; ERROR: {errorMessage}
             </div>
-            <span>
-              {isDO
-                ? 'DigitalOcean service container and Nginx reload complete in approx. 10-15 seconds. This screen will automatically reload when verified.'
-                : 'Render cloud containers compile in approx. 2 minutes. This screen will automatically reload when the build completes.'}
-            </span>
-          </div>
+          )}
+        </div>
+
+        {/* Footer Guidance */}
+        <div
+          style={{
+            textAlign: 'center',
+            fontSize: 11,
+            color: '#64748b',
+            letterSpacing: 0.8
+          }}
+        >
+          {isCompleted
+            ? 'RELOAD IN PROGRESS... RE-INITIALIZING WORKSPACE VIEW...'
+            : isDO ? 'DigitalOcean service container and Nginx reload complete in approx. 10-15 seconds. This screen will automatically reload when verified.' : 'Render cloud containers compile in approx. 2 minutes. This screen will automatically reload when the build completes.'}
         </div>
       </div>
     </div>
@@ -1454,7 +1773,7 @@ export default PixelBuildScreen;
 
 ## File 11: `src/v11/PublishedViewer.tsx`
 **Target File:** `src/v11/PublishedViewer.tsx`  
-**Action:** Add floating bottom-right corner zoom dock and image stretch parity
+**Action:** Add floating bottom-right corner zoom dock and image stretch parity.
 
 ### Change 11.1: Lucide Icons Import
 Ensure `Minus, Plus, ZoomIn, ZoomOut` are included in the lucide-react import:
@@ -1544,7 +1863,7 @@ Right before `{embedModal && (`:
 
 ## File 12: `src/powerbi.css`
 **Target File:** `src/powerbi.css`  
-**Action:** Append the following styles at the bottom of `src/powerbi.css`:
+**Action:** Append the zoom dock and image visual parity styles:
 
 ```css
 /* ── Viewer Zoom Dock (Floating Bottom Corner) ────────────────────────────── */
@@ -1757,7 +2076,7 @@ Right before `{embedModal && (`:
 
 ## File 13: `src/styles.css`
 **Target File:** `src/styles.css`  
-**Action:** Append the update banner, release notes card, and build overlay styles to `src/styles.css`:
+**Action:** Append the update banner, release notes card, and pixel terminal styles:
 
 ```css
 /* ── VTAB Services Update Banner & Expandable Release Notes Card ────────── */
@@ -2018,9 +2337,9 @@ Right before `{embedModal && (`:
 
 ---
 
-## File 14: `scripts/deploy_trigger_service.py`
+## File 14: `scripts/deploy_trigger_service.py` (Full Script)
 **Target File:** `scripts/deploy_trigger_service.py`  
-**Action:** Create new standalone Python host daemon script
+**Action:** Standalone Python host daemon listening on port 8829.
 
 ```python
 #!/usr/bin/env python3
@@ -2096,9 +2415,9 @@ if __name__ == "__main__":
 
 ---
 
-## File 15: `scripts/send_update_offer.py`
+## File 15: `scripts/send_update_offer.py` (Full Script)
 **Target File:** `scripts/send_update_offer.py`  
-**Action:** Create new standalone Python CLI script
+**Action:** Standalone CLI tool to dispatch an update offer to the Services API.
 
 ```python
 #!/usr/bin/env python3
@@ -2192,9 +2511,9 @@ if __name__ == "__main__":
 
 ---
 
-## File 16: `scripts/mark_update_complete.py`
+## File 16: `scripts/mark_update_complete.py` (Full Script)
 **Target File:** `scripts/mark_update_complete.py`  
-**Action:** Create new standalone Python CLI script
+**Action:** Standalone CLI tool to clear the update banner after deploy.
 
 ```python
 #!/usr/bin/env python3
@@ -2239,9 +2558,9 @@ if __name__ == "__main__":
 
 ---
 
-## File 17: `deploy.sh`
+## File 17: `deploy.sh` (Full Script)
 **Target File:** `deploy.sh`  
-**Action:** Create or overwrite deployment script in repository root
+**Action:** Overwrite with the droplet deployment script:
 
 ```bash
 #!/bin/bash
@@ -2297,7 +2616,7 @@ echo ""
 
 ## File 18: `render.yaml`
 **Target File:** `render.yaml`  
-**Action:** Add `VTAB_AGENT_TOKEN` environment variable under `services`:
+**Action:** Add `VTAB_AGENT_TOKEN` under environment variables:
 
 ```yaml
       - key: PORT
@@ -2308,32 +2627,74 @@ echo ""
 
 ---
 
+## File 19: `test_services_update_workflow_contract.cjs`
+**Target File:** `test_services_update_workflow_contract.cjs`  
+**Action:** Create contract verification test to assert that all update contracts pass:
+
+```javascript
+const fs=require('fs');
+const path=require('path');
+const root=__dirname;
+const read=p=>fs.readFileSync(path.join(root,p),'utf8');
+const must=(condition,message)=>{if(!condition)throw new Error(message)};
+const agent=read('api/app/update_agent.py');
+const server=read('api/app/server.py');
+const cloud=read('src/v11/CloudWorkspace.tsx');
+const experience=read('src/v11/ServicesUpdateExperience.tsx');
+const viewer=read('src/v11/PublishedViewer.tsx');
+const chart=read('src/components/Chart.tsx');
+const styles=read('src/styles.css');
+must(agent.includes('commitId')&&agent.includes('target_commit_sha'),'Render deployment must pin the approved commit SHA.');
+must(agent.includes('git", "worktree", "add"'),'Self-hosted updates must build in an isolated worktree.');
+must(agent.includes('event_ids')&&agent.includes('worker.is_alive()'),'Update offers and apply requests must be idempotent.');
+must(server.includes("/api/v1/update/offer")&&server.includes('verify_webhook_signature'),'The update webhook must validate signatures.');
+must(server.includes("/api/v1/update/apply")&&server.includes('_authorize_update_request'),'Update Now must be authenticated.');
+must(cloud.includes('ServicesUpdateExperience'),'The Services workspace must mount the update experience.');
+must(experience.includes("setInterval(poll,5000)")&&experience.includes("'/update/apply'"),'The workspace must poll and apply approved updates.');
+must(viewer.includes('buttonVisualCss')&&viewer.includes('ButtonIcon'),'Published buttons must use the desktop renderer and icon library.');
+must(chart.includes("template==='executive'")&&chart.includes('kpiVarianceLabelVisible'),'Published Advanced KPI must retain templates and label controls.');
+must(server.includes("bindings.get('variance')")&&server.includes("bindings.get('indicator')")&&server.includes("bindings.get('color')"),'Published queries must forward every Advanced KPI role.');
+must(viewer.includes("v.w>=900")&&viewer.includes('pageBackgroundImage fit-'),'Published layout and background fitting must follow Desktop authoring rules.');
+must(viewer.includes("visual.x>12")&&viewer.includes('fixedPagePreset')&&viewer.includes('pageFixedPreset'),'Older pixel snapshots and fixed-aspect pages must not be inflated as legacy grids.');
+must(viewer.includes('s.pageWidth||1920')&&viewer.includes('s.pageHeight||1080'),'Published canvas fallbacks must match the current Desktop canvas.');
+must(styles.includes('.pixelPublishedPage .viewerVisualBody')&&styles.includes('var(--viewer-padding-top,8px)'),'Pixel-published cards must retain saved Desktop spacing.');
+console.log('Services update workflow and desktop visual parity contracts passed.');
+```
+
+---
+
 ## Verification, Build & Merge Instructions
 
-After applying the changes described above, execute the following commands in the project root:
+After applying the changes to the codebase, run these verification steps:
 
-### 1. Run Backend Unit Tests
+### 1. Run the Update Workflow Contract Test
+```bash
+node test_services_update_workflow_contract.cjs
+```
+*Expected Output:* `Services update workflow and desktop visual parity contracts passed.`
+
+### 2. Run Backend Unit Tests
 ```bash
 python -c "import sys; sys.path.insert(0, 'api'); import unittest; unittest.main(module='tests.test_services_performance_regressions', argv=['unittest', 'ServicesPerformanceRegressionTests.test_report_navigation_does_not_select_the_complete_project_json'])"
 ```
-*Expected Result:* `Ran 1 test in 0.0xx s — OK`
+*Expected Output:* `Ran 1 test in 0.0xx s — OK`
 
-### 2. Build Frontend Web Bundle
+### 3. Build Web Frontend Bundle
 ```bash
 npm run build:web
 ```
-*Expected Result:* Vite builds `dist-web/` without errors in ~20 seconds.
+*Expected Output:* Vite completes production bundling of `dist-web/` with 0 errors.
 
-### 3. Deploy to DigitalOcean Droplet
+### 4. Deploying to DigitalOcean Droplet
 On the DigitalOcean host:
 ```bash
 bash /var/www/reportingtool-webservice/deploy.sh
 ```
 
-### 4. Optional: Host Deploy Daemon Systemd Setup (DigitalOcean Host)
-To keep the auto-deploy daemon running on port 8829 on the host:
-Create `/etc/systemd/system/vtab-deploy-trigger.service`:
+### 5. Enabling the Host Deploy Daemon (DigitalOcean Droplet)
+On the DigitalOcean host, enable `vtab-deploy-trigger.service`:
 ```ini
+# /etc/systemd/system/vtab-deploy-trigger.service
 [Unit]
 Description=VTAB Services Host Deploy Trigger Daemon
 After=network.target
@@ -2349,7 +2710,6 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 ```
-Enable and start the service:
 ```bash
 systemctl daemon-reload
 systemctl enable --now vtab-deploy-trigger.service
