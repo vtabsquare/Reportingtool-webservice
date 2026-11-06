@@ -23,9 +23,10 @@ echo ""
 
 cd "$REPO_DIR"
 
-echo "[1/3] Pulling latest code from GitHub..."
+TARGET_COMMIT="${1:-origin/main}"
+echo "[1/3] Pulling latest code from GitHub and checking out $TARGET_COMMIT..."
 git fetch origin
-git reset --hard origin/main
+git reset --hard "$TARGET_COMMIT"
 NEW_SHA=$(git rev-parse HEAD)
 echo "       Commit: $NEW_SHA"
 echo ""
