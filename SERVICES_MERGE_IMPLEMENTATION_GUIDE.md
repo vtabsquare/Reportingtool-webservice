@@ -1019,6 +1019,47 @@ import ServicesUpdateExperience from "./ServicesUpdateExperience";
           )}
 ```
 
+### Change 8.5: Admin Portal Button Yellow Accent Styling
+In `src/v11/CloudWorkspace.tsx` (topbar header and avatar popup):
+```tsx
+          <a
+            href="http://admin-reporting.139.59.32.39.nip.io/"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open Admin Portal"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              height: 30,
+              padding: '0 12px',
+              borderRadius: 4,
+              border: '1px solid #ca8a04',
+              background: '#fde047',
+              color: '#713f12',
+              fontSize: 12,
+              fontWeight: 700,
+              textDecoration: 'none',
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+              marginRight: 4,
+              boxShadow: '0 1px 3px rgba(202, 138, 4, 0.3)',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = '#facc15';
+              e.currentTarget.style.borderColor = '#a16207';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = '#fde047';
+              e.currentTarget.style.borderColor = '#ca8a04';
+            }}
+          >
+            <Shield size={14} color="#713f12" />
+            <span>Admin Portal</span>
+            <ExternalLink size={12} style={{ opacity: 0.85, color: '#713f12' }} />
+          </a>
+```
+
 ---
 
 ## File 9: `src/v11/ServicesUpdateExperience.tsx` (Full Complete Component)
