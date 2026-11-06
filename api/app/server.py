@@ -992,7 +992,10 @@ def cloud_list_reports(authorization:str|None=Header(default=None)):
         from .supabase_store import list_accessible_reports as _list
     except ImportError:
         raise HTTPException(503,'supabase package not installed')
-    user_id=_supabase_user_id_from_token(authorization)
+    try:
+        user_id=_supabase_user_id_from_token(authorization)
+    except Exception:
+        return []
     try:
         return _list(user_id)
     except Exception as exc:
@@ -3048,7 +3051,22 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
     if not visual:
         raise ValueError('Published visual was not found in this report definition.')
     bindings = visual.get('bindings') or {}
-    dimensions = list(dict.fromkeys([*(bindings.get('axis') or []), *(bindings.get('legend') or [])]))
+    axis_fields = [f for f in (bindings.get('axis') or []) if f]
+    drill_level = visual.get('drillLevel') or 0
+    if visual.get('type') == 'table':
+        active_axis = axis_fields
+    elif axis_fields:
+        active_axis = [axis_fields[drill_level]] if drill_level < len(axis_fields) else [axis_fields[0]]
+    else:
+        active_axis = []
+
+    known_measures = set(((project.get('model') or {}).get('measures') or {}).keys())
+    is_measure_field = lambda f: '::' in str(f) or str(f) in known_measures or (str(f).split('.', 1)[1] if '.' in str(f) else str(f)) in known_measures or str(f).startswith('measure:')
+
+    axis_dims = [f for f in active_axis if not is_measure_field(f)]
+    axis_meas = [f for f in active_axis if is_measure_field(f)]
+
+    dimensions = list(dict.fromkeys([*axis_dims, *(bindings.get('legend') or [])]))
     measures = [] if visual.get('type') == 'slicer' else list(dict.fromkeys([
         *(bindings.get('values') or []),
         *(bindings.get('target') or []),
@@ -3059,15 +3077,9 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
         *(bindings.get('min') or []),
         *(bindings.get('max') or []),
         *(bindings.get('x') or []),
-        *(bindings.get('size') or [])
+        *(bindings.get('size') or []),
+        *axis_meas
     ]))
-    if visual.get('type') == 'table':
-        known_measures = set(((project.get('model') or {}).get('measures') or {}).keys())
-        is_measure_field = lambda f: '::' in f or f in known_measures or (f.split('.', 1)[1] if '.' in f else f) in known_measures
-        axis_dims = [f for f in (bindings.get('axis') or []) if not is_measure_field(f)]
-        axis_meas = [f for f in (bindings.get('axis') or []) if is_measure_field(f)]
-        dimensions = list(dict.fromkeys([*axis_dims, *(bindings.get('legend') or [])]))
-        measures = list(dict.fromkeys([*measures, *axis_meas]))
     if visual.get('type') == 'map':
         map_fields = list(dict.fromkeys([
             *(bindings.get('location') or []), *(bindings.get('latitude') or []),
@@ -3091,14 +3103,28 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
             if field not in target:target.append(field)
 
     configured_filters = [*(visual.get('filters') or []), *(request.filters or [])]
-    filters = [
-        f for f in configured_filters if isinstance(f, dict) and (
-            (f.get('operator') == 'top_n' and f.get('value') and f.get('rankingField')) or
-            (f.get('operator') == 'in' and f.get('value')) or
-            (f.get('operator') in ('is_blank', 'is_not_blank')) or
-            (f.get('operator') not in ('is_blank', 'is_not_blank', 'top_n', 'in') and f.get('value') not in ('', None))
-        )
-    ]
+    filters = []
+    for f in configured_filters:
+        if not isinstance(f, dict):
+            continue
+        if f.get('_visualId') and str(f.get('_visualId')) == visual_id:
+            continue
+        op = f.get('operator')
+        val = f.get('value')
+        if op == 'top_n' and val and f.get('rankingField'):
+            filters.append(f)
+        elif op == 'in' and val:
+            filters.append(f)
+        elif op in ('is_blank', 'is_not_blank'):
+            filters.append(f)
+        elif op not in ('is_blank', 'is_not_blank', 'top_n', 'in') and val not in ('', None):
+            if op == 'equals' and isinstance(val, (list, tuple)):
+                if len(val) == 1:
+                    filters.append({**f, 'value': val[0]})
+                elif len(val) > 1:
+                    filters.append({**f, 'operator': 'in'})
+            else:
+                filters.append(f)
     if visual.get('type') == 'slicer':
         axis_fields = set(bindings.get('axis') or [])
         filters = [

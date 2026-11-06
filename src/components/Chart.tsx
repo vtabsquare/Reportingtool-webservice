@@ -118,6 +118,16 @@ function resolveBoundNumber(row:any,field?:string):number|undefined{
   return undefined;
 }
 
+export function resolveRowValue(row:any,field?:string):any{
+  if(!row||!field)return undefined;
+  if(row[field]!==undefined)return row[field];
+  const cleanKey=field.replace(/^(field:|numericField:|hierarchy:|measure:)/,'');
+  if(row[cleanKey]!==undefined)return row[cleanKey];
+  const fieldLower=field.toLowerCase(),cleanLower=cleanKey.toLowerCase();
+  const matched=Object.keys(row).find(key=>{const lower=key.toLowerCase();return lower===fieldLower||lower===cleanLower||lower.endsWith('.'+fieldLower)||lower.endsWith('.'+cleanLower)||fieldLower.endsWith('.'+lower)||cleanLower.endsWith('.'+lower)});
+  return matched!==undefined?row[matched]:undefined;
+}
+
 // ─── ChartScrollerWrapper ────────────────────────────────────────────────────
 // Fix: own localStart state + drive ECharts zoom via dispatchAction() directly,
 // bypassing the React render cycle entirely. The thumb drags freely at 60 fps.
@@ -561,9 +571,9 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
 
   if (visual.type === 'kpi') {
     const template=visual.format.kpiTemplate||'trendCard';
-    const kpiScale=Math.max(.5,Math.min(1,Math.min(visualW/420,visualH/240)));
+    const kpiScale=Math.max(.85,Math.min(1,Math.min(visualW/420,visualH/240)));
     const kpiFont=(preferred:number,minimum:number)=>Math.max(minimum,Math.round(preferred*kpiScale));
-    const kpiCompact=visualW<340||visualH<185;
+    const kpiCompact=visualW<240||visualH<120;
     const kpiCardClass='premiumKpiCard'+(kpiCompact?' compact':'');
     const primary=valueField||'';
     const targetFields=visual.bindings.target||[];
@@ -572,12 +582,23 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
     const colorFields=visual.bindings.color||[];
     const varianceField=varianceFields[0];
     const indicatorField=indicatorFields[0];
-    const axisValue=(row:any)=>axis?row?.[axis]:undefined;
+    const axisValue=(row:any)=>axis?resolveRowValue(row,axis):undefined;
     const dateNumber=(value:any)=>{const parsed=value instanceof Date?value.getTime():new Date(value).getTime();return Number.isFinite(parsed)?parsed:Number.NaN};
     const ordered=[...rows].sort((a,b)=>{if(!axis)return 0;const ad=dateNumber(axisValue(a)),bd=dateNumber(axisValue(b));if(Number.isFinite(ad)&&Number.isFinite(bd))return ad-bd;const an=Number(axisValue(a)),bn=Number(axisValue(b));return Number.isFinite(an)&&Number.isFinite(bn)?an-bn:0});
-    const validRows=ordered.filter(row=>Number.isFinite(Number(row?.[primary])));
-    const currentRow=(template==='categoryInsight'?[...validRows].sort((a,b)=>Number(b?.[primary])-Number(a?.[primary]))[0]:validRows[validRows.length-1])||ordered[ordered.length-1]||{};
-    const current=Number(currentRow?.[primary]);
+    const hasVal=(val:any)=>val!==undefined&&val!==null&&val!=='';
+    const validRows=ordered.filter(row=>hasVal(resolveRowValue(row,primary)??row?.[primary]));
+    const isNumericPrimary=validRows.some(row=>{const v=resolveRowValue(row,primary)??row?.[primary];return Number.isFinite(Number(v))});
+    const currentRow=(template==='categoryInsight' && isNumericPrimary
+      ? [...validRows].sort((a,b)=>Number(resolveRowValue(b,primary)??b?.[primary])-Number(resolveRowValue(a,primary)??a?.[primary]))[0]
+      : validRows[validRows.length-1])||ordered[ordered.length-1]||{};
+    const currentRaw=resolveRowValue(currentRow,primary)??currentRow?.[primary];
+    const current=Number.isFinite(Number(currentRaw))&&currentRaw!==''&&currentRaw!==null?Number(currentRaw):currentRaw;
+    const renderCallout=(val:any)=>{
+      if(val===undefined||val===null||val==='')return '—';
+      if(typeof val==='number')return fmt(val);
+      const num=Number(val);
+      return Number.isFinite(num)?fmt(num):String(val);
+    };
     const currentIndex=Math.max(0,ordered.indexOf(currentRow));
     const comparisonMode=visual.format.kpiComparisonMode||'target';
     const findPreviousIndex=()=>{
@@ -590,11 +611,11 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
       for(let i=currentIndex-1;i>=0;i--){const candidate=new Date(axisValue(ordered[i]));if(!Number.isNaN(candidate.getTime())&&candidate.getFullYear()===wantedYear&&candidate.getMonth()===wantedMonth)return i}
       return currentIndex-1;
     };
-    const explicitTarget=targetField?Number(currentRow?.[targetField]):Number.NaN;
+    const explicitTarget=targetField?Number(resolveRowValue(currentRow,targetField)??currentRow?.[targetField]):Number.NaN;
     const previousRow=ordered[findPreviousIndex()]||{};
-    const previous=Number(previousRow?.[primary]);
+    const previous=Number(resolveRowValue(previousRow,primary)??previousRow?.[primary]);
     const compare=comparisonMode==='target'?explicitTarget:previous;
-    const diff=Number.isFinite(current)&&Number.isFinite(compare)?current-compare:Number.NaN;
+    const diff=typeof current==='number'&&Number.isFinite(current)&&Number.isFinite(compare)?current-compare:Number.NaN;
     const pct=Number.isFinite(diff)&&compare!==0?diff/Math.abs(compare)*100:Number.NaN;
     const varianceMode=visual.format.kpiVarianceMode||'measure';
     const arrowMode=visual.format.kpiArrowMode||'measure';
@@ -611,15 +632,15 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
       const varianceName=varianceMode==='measure'?varianceFields[index]:undefined;
       const indicatorName=arrowMode==='measure'?indicatorFields[index]:undefined;
       const colorName=colorFields[index]||colorFields[0];
-      const boundVariance=varianceName?currentRow?.[varianceName]:undefined;
+      const boundVariance=varianceName?resolveRowValue(currentRow,varianceName)??currentRow?.[varianceName]:undefined;
       const varianceText=varianceMode==='hidden'?'':varianceMode==='measure'
         ?(varianceName&&boundVariance!==undefined&&boundVariance!==null&&boundVariance!==''?formatForField(boundVariance,varianceName,formats):'')
         :(index===0&&Number.isFinite(pct)?`${Math.abs(pct).toFixed(1)}%`:'');
-      const indicatorSign=arrowMode==='hidden'?0:arrowMode==='measure'?parseIndicator(indicatorName?currentRow?.[indicatorName]:undefined):(index===0?automaticSign:0);
+      const indicatorSign=arrowMode==='hidden'?0:arrowMode==='measure'?parseIndicator(indicatorName?resolveRowValue(currentRow,indicatorName)??currentRow?.[indicatorName]:undefined):(index===0?automaticSign:0);
       const good=indicatorSign!==0&&((favorable==='up'&&indicatorSign>0)||(favorable==='down'&&indicatorSign<0));
       const bad=indicatorSign!==0&&((favorable==='up'&&indicatorSign<0)||(favorable==='down'&&indicatorSign>0));
       const fallbackColor=good?(visual.format.positiveColor||'#16a34a'):bad?(visual.format.negativeColor||'#dc2626'):(visual.format.neutralColor||'#64748b');
-      const indicatorColor=validMeasureColor(colorName?currentRow?.[colorName]:undefined)||fallbackColor;
+      const indicatorColor=validMeasureColor(colorName?resolveRowValue(currentRow,colorName)??currentRow?.[colorName]:undefined)||fallbackColor;
       const arrow=arrowMode==='hidden'?'':indicatorSign>0?'↑':indicatorSign<0?'↓':(arrowMode==='automatic'&&index===0&&Number.isFinite(diff)?'→':'');
       return {index,varianceName,indicatorName,colorName,varianceText,indicatorSign,indicatorColor,arrow};
     }).filter(item=>item.varianceText||item.arrow);
@@ -627,23 +648,24 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
     const varianceText=primaryStatus?.varianceText||'';
     const indicatorColor=primaryStatus?.indicatorColor||visual.format.neutralColor||'#64748b';
     const arrow=primaryStatus?.arrow||'';
-    const seriesValues=validRows.map(r=>Number(r?.[primary]));
+    const seriesValues=validRows.map(r=>Number(resolveRowValue(r,primary)??r?.[primary])).filter(Number.isFinite);
     const spark=seriesValues.slice(-18);
     const min=Math.min(...spark,0),max=Math.max(...spark,1),range=max-min||1;
     const points=spark.map((v,i)=>`${spark.length===1?50:(i/(spark.length-1))*100},${34-((v-min)/range)*26}`).join(' ');
     const canonicalBinding=(field?:string)=>String(field||'').replace(/^(field:|numericField:|hierarchy:|measure:)/,'').split('::')[0].trim().toLowerCase();
     const cleanLabel=(field?:string)=>visual.format.fieldDisplayNames?.[String(field||'')]||String(field||'Metric').replace(/^(field:|numericField:|hierarchy:|measure:)/,'').replace(/^.*\./,'').replace(/::.*$/,'').replace(/_/g,' ');
     const metricLabel=cleanLabel(primary);
-    const targetRows=targetFields.map(field=>({field,label:cleanLabel(field),value:currentRow?.[field]})).filter(item=>item.value!==undefined&&item.value!==null&&item.value!=='').map(item=>({...item,display:formatForField(item.value,item.field,formats)}));
+    const targetRows=targetFields.map(field=>({field,label:cleanLabel(field),value:resolveRowValue(currentRow,field)??currentRow?.[field]})).filter(item=>item.value!==undefined&&item.value!==null&&item.value!=='').map(item=>({...item,display:formatForField(item.value,item.field,formats)}));
     const reservedFields=new Set([primary,...targetFields,...varianceFields,...indicatorFields,...colorFields].filter(Boolean).map(canonicalBinding));
     const detailFields=(visual.bindings.tooltips||[]).filter((field,index,list)=>field&&!reservedFields.has(canonicalBinding(field))&&list.findIndex(other=>canonicalBinding(other)===canonicalBinding(field))===index);
-    const detailRows=detailFields.map(field=>({field,label:cleanLabel(field),value:currentRow?.[field]})).filter(item=>item.value!==undefined&&item.value!==null&&item.value!=='').map(item=>({...item,display:formatForField(item.value,item.field,formats)}));
+    const detailRows=detailFields.map(field=>({field,label:cleanLabel(field),value:resolveRowValue(currentRow,field)??currentRow?.[field]})).filter(item=>item.value!==undefined&&item.value!==null&&item.value!=='').map(item=>({...item,display:formatForField(item.value,item.field,formats)}));
     const compareLabel=comparisonMode==='target'?(Number.isFinite(explicitTarget)?cleanLabel(targetField):''):comparisonMode.replace('previous','Previous ');
     const firstAxis=ordered.length?axisValue(ordered[0]):undefined,lastAxis=ordered.length?axisValue(ordered[ordered.length-1]):undefined;
     const dateRange=axis&&firstAxis!==undefined&&lastAxis!==undefined?`${String(firstAxis)} – ${String(lastAxis)}`:'';
     const kpiAccent=visual.format.kpiAccentColor||accent;
     const surfaceStyle={'--kpi-surface':visual.format.kpiSurfaceColor||'#ffffff','--kpi-header':visual.format.kpiHeaderColor||'#60a5fa','--kpi-accent':kpiAccent,'--kpi-scale':kpiScale} as any;
-    const header=<div className="advancedKpiHeader"><b style={{fontSize:kpiFont(11,8)}}>{visual.title||metricLabel}</b>{visual.format.kpiShowDateRange!==false&&!kpiCompact&&dateRange&&<small>{dateRange}</small>}</div>;
+    const headerTitleSize=visual.format.titleFontSize||12;
+    const header=<div className="advancedKpiHeader"><b style={{fontSize:`${headerTitleSize}px`}}>{visual.title||metricLabel}</b>{visual.format.kpiShowDateRange!==false&&dateRange&&<small>{dateRange}</small>}</div>;
     const iconSize=kpiFont(18,12);
     const icon=visual.format.kpiShowIcon===false?null:<span className="premiumKpiIcon" style={{background:`${kpiAccent}18`,color:kpiAccent,width:kpiFont(34,22),height:kpiFont(34,22)}}><ButtonIcon name={visual.format.kpiIcon||'chart'} size={iconSize}/></span>;
     const labeledStatusRows=statusRows.map(item=>({
@@ -657,24 +679,24 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
     const calloutStyle={fontWeight:calloutWeight,fontStyle:visual.format.calloutItalic?'italic':'normal'} as const;
     const varianceAlignment=visual.format.kpiVarianceAlignment||'right';
     const variancePositionStyle=varianceAlignment==='left'?{marginRight:'auto'}:varianceAlignment==='center'?{marginLeft:'auto',marginRight:'auto'}:{marginLeft:'auto'};
-    const delta=visual.format.indicatorEnabled!==false&&primaryStatusRow?<span className="advancedKpiDeltaBadge" style={{color:primaryStatusRow.indicatorColor,fontSize:kpiFont(10,7),...variancePositionStyle}}>{primaryStatusRow.display}</span>:null;
+    const delta=visual.format.indicatorEnabled!==false&&primaryStatusRow?<span className="advancedKpiDeltaBadge" style={{color:primaryStatusRow.indicatorColor,fontSize:kpiFont(10,8),...variancePositionStyle}}>{primaryStatusRow.display}</span>:null;
     const secondaryStatusRows=visual.format.indicatorEnabled===false?labeledStatusRows:labeledStatusRows.slice(primaryStatusRow?1:0);
     const supplementalRows=[
       ...targetRows.map(item=>({...item,role:'comparison' as const,key:`target:${item.field}`,color:undefined})),
-      ...secondaryStatusRows.map(item=>({role:'variance' as const,field:item.varianceName||item.indicatorName||`status-${item.index}`,value:item.varianceName?currentRow?.[item.varianceName]:item.indicatorName?currentRow?.[item.indicatorName]:undefined,key:`status:${item.index}:${item.varianceName||''}:${item.indicatorName||''}`,label:item.label,display:item.display,color:item.indicatorColor})),
+      ...secondaryStatusRows.map(item=>({role:'variance' as const,field:item.varianceName||item.indicatorName||`status-${item.index}`,value:item.varianceName?resolveRowValue(currentRow,item.varianceName)??currentRow?.[item.varianceName]:item.indicatorName?resolveRowValue(currentRow,item.indicatorName)??currentRow?.[item.indicatorName]:undefined,key:`status:${item.index}:${item.varianceName||''}:${item.indicatorName||''}`,label:item.label,display:item.display,color:item.indicatorColor})),
       ...detailRows.map(item=>({...item,role:'detail' as const,key:`detail:${item.field}`,color:undefined})),
     ];
-    const detailLimit=kpiCompact?3:8;
-    const details=visual.format.kpiShowDetails!==false&&supplementalRows.length?<div className="advancedKpiDetails" style={{fontSize:kpiFont(9,7)}}>{supplementalRows.slice(0,detailLimit).map(item=>{const conditional:any=tableConditionalStyle(visual,item.field,item.value,conditionalValues);const background=conditional['--cell-bg'];const color=conditional.__textColor||conditional['--cell-text']||item.color;const showLabel=item.role==='comparison'?visual.format.kpiComparisonLabelVisible!==false:item.role==='variance'?visual.format.kpiVarianceLabelVisible!==false:visual.format.kpiDetailLabelVisible!==false;const alignment=item.role==='comparison'?(visual.format.kpiComparisonAlignment||'right'):item.role==='variance'?(visual.format.kpiVarianceAlignment||'right'):(visual.format.kpiDetailAlignment||'right');return <div className={'advancedKpiDetail align-'+alignment} key={item.key} style={{background,color,borderRadius:background?5:undefined,padding:background?'2px 5px':undefined,textAlign:alignment}}>{showLabel&&<span>{item.label}</span>}<b style={{color,marginLeft:alignment==='right'?'auto':undefined,marginRight:alignment==='left'?'auto':undefined}}>{item.display}</b></div>})}</div>:null;
+    const detailLimit=kpiCompact?4:8;
+    const details=visual.format.kpiShowDetails!==false&&supplementalRows.length?<div className="advancedKpiDetails" style={{fontSize:kpiFont(10,8)}}>{supplementalRows.slice(0,detailLimit).map(item=>{const conditional:any=tableConditionalStyle(visual,item.field,item.value,conditionalValues);const background=conditional['--cell-bg'];const color=conditional.__textColor||conditional['--cell-text']||item.color;const showLabel=item.role==='comparison'?visual.format.kpiComparisonLabelVisible!==false:item.role==='variance'?visual.format.kpiVarianceLabelVisible!==false:visual.format.kpiDetailLabelVisible!==false;const alignment=item.role==='comparison'?(visual.format.kpiComparisonAlignment||'right'):item.role==='variance'?(visual.format.kpiVarianceAlignment||'right'):(visual.format.kpiDetailAlignment||'right');return <div className={'advancedKpiDetail align-'+alignment} key={item.key} style={{background,color,borderRadius:background?5:undefined,padding:background?'2px 5px':undefined,textAlign:alignment}}>{showLabel&&<span>{item.label}</span>}<b style={{color,marginLeft:alignment==='right'?'auto':undefined,marginRight:alignment==='left'?'auto':undefined}}>{item.display}</b></div>})}</div>:null;
     const sparkline=visual.format.kpiShowTrend!==false&&!kpiCompact&&spark.length>1?<div className="premiumSparkline"><svg viewBox="0 0 100 38" preserveAspectRatio="none">{visual.format.kpiTrendStyle!=='line'&&<polyline points={`0,38 ${points} 100,38`} fill={`${kpiAccent}18`} stroke="none"/>}<polyline points={points} fill="none" stroke={kpiAccent} strokeWidth="2.6" vectorEffect="non-scaling-stroke"/></svg></div>:null;
     if(template==='periodGrid'){
       const periods=validRows.slice(-Math.max(2,visual.format.kpiPeriodCount||4));
-      return <div className={kpiCardClass} style={{...surfaceStyle,'--kpi-period-count':periods.length} as any}>{header}<div className="advancedKpiPeriods">{periods.map((row,index)=><div className="advancedKpiPeriod" key={`${axisValue(row)}-${index}`}><small>{String(axisValue(row)??`Period ${index+1}`)}</small><b style={{fontSize:kpiFont(15,10)}}>{fmt(row?.[primary])}</b>{targetFields.map(field=>row?.[field]!==undefined&&row?.[field]!==null&&row?.[field]!==''?<span key={field}>{visual.format.kpiComparisonLabelVisible!==false&&<>{cleanLabel(field)}: </>}{formatForField(row?.[field],field,formats)}</span>:null)}</div>)}</div></div>;
+      return <div className={kpiCardClass} style={{...surfaceStyle,'--kpi-period-count':periods.length} as any}>{header}<div className="advancedKpiPeriods">{periods.map((row,index)=><div className="advancedKpiPeriod" key={`${axisValue(row)}-${index}`}><small>{String(axisValue(row)??`Period ${index+1}`)}</small><b style={{fontSize:kpiFont(15,11)}}>{renderCallout(resolveRowValue(row,primary)??row?.[primary])}</b>{targetFields.map(field=>{const tv=resolveRowValue(row,field)??row?.[field];return tv!==undefined&&tv!==null&&tv!==''?<span key={field}>{visual.format.kpiComparisonLabelVisible!==false&&<>{cleanLabel(field)}: </>}{formatForField(tv,field,formats)}</span>:null})}</div>)}</div></div>;
     }
-    if(template==='categoryInsight')return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="advancedKpiOperational"><div className="advancedKpiCategory"><span>{axis?cleanLabel(axis):'Category'}</span><strong style={{fontSize:kpiFont(18,12)}}>{String(axisValue(currentRow)??metricLabel)}</strong>{visual.format.calloutVisible!==false&&<b style={{fontSize:kpiFont(visual.format.fontSize||30,16),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{fmt(current)}</b>}{delta}</div>{details}</div>{sparkline}</div>;
-    if(template==='operational')return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="advancedKpiOperational"><div><div className="premiumKpiTop">{icon}<div><small style={{fontSize:kpiFont(10,7)}}>{metricLabel}</small>{(visual.format.subtitle||compareLabel)&&<span>{visual.format.subtitle||compareLabel}</span>}</div></div><div className="premiumKpiMain">{visual.format.calloutVisible!==false&&<b style={{fontSize:kpiFont(visual.format.fontSize||38,17),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{fmt(current)}</b>}{delta}</div></div>{details}</div>{sparkline}</div>;
-    if(template==='executive')return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="premiumKpiMain"><div><div className="premiumKpiTop">{icon}<div><small style={{fontSize:kpiFont(10,7)}}>{metricLabel}</small></div></div>{visual.format.calloutVisible!==false&&<b style={{display:'block',marginTop:kpiCompact?3:8,fontSize:kpiFont(visual.format.fontSize||38,17),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{fmt(current)}</b>}{delta&&<div className={'premiumKpiDelta align-'+varianceAlignment} style={{color:primaryStatusRow?.indicatorColor||indicatorColor,...variancePositionStyle}}>{delta}{statusLabel&&visual.format.kpiVarianceLabelVisible!==false&&<span>{statusLabel}</span>}</div>}</div>{details}</div>{sparkline}</div>;
-    return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="premiumKpiTop">{icon}<div><small style={{fontSize:kpiFont(10,7)}}>{metricLabel}</small>{visual.format.subtitleVisible&&visual.format.subtitle&&<span>{visual.format.subtitle}</span>}</div></div><div className="premiumKpiMain">{visual.format.calloutVisible!==false&&<b style={{fontSize:kpiFont(visual.format.fontSize||38,17),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{fmt(current)}</b>}{delta&&<div className={'premiumKpiDelta align-'+varianceAlignment} style={{color:indicatorColor,...variancePositionStyle}}>{delta}{statusLabel&&visual.format.kpiVarianceLabelVisible!==false&&<span>{statusLabel}</span>}</div>}</div>{details}{sparkline}</div>;
+    if(template==='categoryInsight')return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="advancedKpiOperational"><div className="advancedKpiCategory"><span>{axis?cleanLabel(axis):'Category'}</span><strong style={{fontSize:kpiFont(18,13)}}>{String(axisValue(currentRow)??metricLabel)}</strong>{visual.format.calloutVisible!==false&&<b style={{fontSize:kpiFont(visual.format.fontSize||30,16),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{renderCallout(current)}</b>}{delta}</div>{details}</div>{sparkline}</div>;
+    if(template==='operational')return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="advancedKpiOperational"><div><div className="premiumKpiTop">{icon}<div><small style={{fontSize:kpiFont(10,8)}}>{metricLabel}</small>{(visual.format.subtitle||compareLabel)&&<span>{visual.format.subtitle||compareLabel}</span>}</div></div><div className="premiumKpiMain">{visual.format.calloutVisible!==false&&<b style={{fontSize:kpiFont(visual.format.fontSize||38,18),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{renderCallout(current)}</b>}{delta}</div></div>{details}</div>{sparkline}</div>;
+    if(template==='executive')return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="premiumKpiMain"><div><div className="premiumKpiTop">{icon}<div><small style={{fontSize:kpiFont(10,8)}}>{metricLabel}</small></div></div>{visual.format.calloutVisible!==false&&<b style={{display:'block',marginTop:kpiCompact?3:8,fontSize:kpiFont(visual.format.fontSize||38,18),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{renderCallout(current)}</b>}{delta&&<div className={'premiumKpiDelta align-'+varianceAlignment} style={{color:primaryStatusRow?.indicatorColor||indicatorColor,...variancePositionStyle}}>{delta}{statusLabel&&visual.format.kpiVarianceLabelVisible!==false&&<span>{statusLabel}</span>}</div>}</div>{details}</div>{sparkline}</div>;
+    return <div className={kpiCardClass} style={surfaceStyle}>{header}<div className="premiumKpiTop">{icon}<div><small style={{fontSize:kpiFont(10,8)}}>{metricLabel}</small>{visual.format.subtitleVisible&&visual.format.subtitle&&<span>{visual.format.subtitle}</span>}</div></div><div className="premiumKpiMain">{visual.format.calloutVisible!==false&&<b style={{fontSize:kpiFont(visual.format.fontSize||38,18),color:visual.format.labelColor||'#0f172a',...calloutStyle}}>{renderCallout(current)}</b>}{delta&&<div className={'premiumKpiDelta align-'+varianceAlignment} style={{color:indicatorColor,...variancePositionStyle}}>{delta}{statusLabel&&visual.format.kpiVarianceLabelVisible!==false&&<span>{statusLabel}</span>}</div>}</div>{details}{sparkline}</div>;
   }
 
   if (visual.type === 'card') {
@@ -779,8 +801,11 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
 
   // For pie/donut the category field is placed in bindings.legend (not axis).
   // Fall back to legendField so every chart type works regardless of which pane was used.
-  const names = rows.map((row) => row[effectiveAxis || '']);
-  const values = rows.map((row) => row[valueField || '']);
+  const names = rows.map((row) => {
+    const val = resolveRowValue(row, effectiveAxis);
+    return val !== undefined && val !== null ? String(val) : '';
+  });
+  const values = rows.map((row) => resolveRowValue(row, valueField));
   const globalMaxCatW = Math.max(0, ...(names.length ? names : ['']).map(c => String(fmtCategoryLabel(c)).length)) * (axisSize * 0.6);
   const globalXNameGap = globalMaxCatW > 40 ? globalMaxCatW * 0.7 + 25 : 35;
   const estValLabelWFromNums=(nums:any[],field=valueField)=>{
@@ -1525,13 +1550,44 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
   const activeValues=visual.bindings.values&&visual.bindings.values.length>0?visual.bindings.values:[valueField||''];
   const multiValue=activeValues.length>1;
   const hasLegend=multiValue||Boolean(legendField)||visual.format.legendVisible===true;
+
+  // Group and aggregate rows by effectiveAxis for deterministic visual parity:
+  // If rows contain duplicate categories (e.g. unaggregated query records or multiple dimension levels),
+  // aggregate them by category so each category is unique on the axis and values are correctly summed.
+  const categoryMap = new Map<string, { catLabel: string; values: Record<string, number>; rawValues: Record<string, any>; count: number }>();
+  const categoryOrder: string[] = [];
+
+  for (const row of rows) {
+    const rawCat = resolveRowValue(row, effectiveAxis);
+    const cat = rawCat !== undefined && rawCat !== null ? String(rawCat) : '';
+    if (!cat && rows.length > 1) continue;
+    if (!categoryMap.has(cat)) {
+      categoryMap.set(cat, { catLabel: cat, values: {}, rawValues: {}, count: 0 });
+      categoryOrder.push(cat);
+    }
+    const entry = categoryMap.get(cat)!;
+    entry.count++;
+    for (const vf of activeValues) {
+      const val = resolveRowValue(row, vf);
+      const num = Number(val);
+      if (Number.isFinite(num)) {
+        entry.values[vf] = (entry.values[vf] || 0) + num;
+      }
+      if (entry.rawValues[vf] === undefined && val !== undefined) {
+        entry.rawValues[vf] = val;
+      }
+    }
+  }
+
+  const effectiveCategories = categoryOrder.length ? categoryOrder : (names.length ? names : ['']);
+
   const barLabelMaxW=Math.min(130,Math.max(75,Math.round((visual.w||380)*.22)));
   const catRotation=Number(visual.format.xAxisLabelRotation)||0,catRotRad=Math.abs(catRotation)*Math.PI/180;
-  const maxCatW=Math.max(0,...names.map(c=>String(fmtCategoryLabel(c)).length))*(axisSize*.6);
+  const maxCatW=Math.max(0,...effectiveCategories.map(c=>String(fmtCategoryLabel(c)).length))*(axisSize*.6);
   const catLabelH=catRotRad>0?Math.min(60,Math.max(14,Math.sin(catRotRad)*maxCatW)):Math.max(12,axisSize+2);
-  const allNumericVals=rows.flatMap(row=>activeValues.map(field=>Number(row?.[field||'']))).filter(Number.isFinite);
-  const estValLabelW=Math.min(estValLabelWFromNums(allNumericVals,valueField),valLabelMaxW);
-  const maxCatLen=Math.max(0,...names.map(c=>String(fmtCategoryLabel(c)).length));
+  const allNumericVals=Array.from(categoryMap.values()).flatMap(e=>activeValues.map(vf=>e.values[vf])).filter(Number.isFinite);
+  const estValLabelW=Math.min(estValLabelWFromNums(allNumericVals.length ? allNumericVals : rows.flatMap(row=>activeValues.map(field=>Number(resolveRowValue(row,field)))).filter(Number.isFinite),valueField),valLabelMaxW);
+  const maxCatLen=Math.max(0,...effectiveCategories.map(c=>String(fmtCategoryLabel(c)).length));
   const estCatLabelW=Math.min(barLabelMaxW,Math.max(24,maxCatLen*(axisSize*.65)));
   const {yNameGap,yMargin}=getYAxisLayout(horizontal?estCatLabelW:estValLabelW,horizontal);
   const xNameGap=horizontal?Math.round(Math.max(12,axisSize+2)+(isTiny?5:isCompact?7:9)):Math.round(catLabelH+(isTiny?5:isCompact?7:9));
@@ -1542,7 +1598,8 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
   const categoryAxis: any = {
     show: horizontal ? (showYAxis || showYAxisTitle) : (showXAxis || showXAxisTitle),
     type: 'category',
-    data: names,
+    data: effectiveCategories,
+    inverse: horizontal,
     name:(horizontal ? showYAxisTitle : showXAxisTitle) ? ((horizontal?visual.format.yAxisTitle:visual.format.xAxisTitle)||axis||'Category') : '',
     nameTextStyle:axisTitleStyle,
     nameLocation:'middle',nameGap:horizontal?yNameGap:xNameGap,
@@ -1592,7 +1649,7 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
       bottom:legendFooterSpace
     },
     toolbox: { show: false },
-    dataZoom: categoryZoom(names, horizontal),
+    dataZoom: categoryZoom(effectiveCategories, horizontal),
     xAxis: horizontal ? valueAxis : categoryAxis,
     yAxis: horizontal ? categoryAxis : valueAxis,
     series: []
@@ -1647,18 +1704,28 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
   base.series = activeValues.map((vf, si) => {
     const seriesColor = configuredSeriesColor(vf,si,multiValue?palette[si%palette.length]:accent);
     const isBar = chartType === 'bar';
+    const seriesData = categoryMap.size > 0
+      ? effectiveCategories.map(cat => {
+          const entry = categoryMap.get(cat);
+          const v = entry?.values[vf] ?? (entry?.rawValues[vf] !== undefined ? Number(entry.rawValues[vf]) : 0);
+          return {
+            value: v,
+            itemStyle: { color: multiValue ? seriesColor : valueColor(v) }
+          };
+        })
+      : rows.map((row) => {
+          const v = resolveRowValue(row, vf);
+          return {
+            value: v,
+            itemStyle: { color: multiValue ? seriesColor : valueColor(v) }
+          };
+        });
     return {
       name: formatColumnHeader(vf, false, (visual.format as any).fieldDisplayNames),
       type: chartType,
       clip:true,
       yAxisIndex: multiValue && !horizontal && !stacked ? si : 0,
-      data: rows.map((row) => {
-        const v = row[vf];
-        return {
-          value: v,
-          itemStyle: { color: multiValue ? seriesColor : valueColor(v) }
-        };
-      }),
+      data: seriesData,
       smooth,
       barMaxWidth: visual.format.barWidth || 38,
       areaStyle: visual.type === 'area' ? { opacity: (visual.format.areaOpacity??18)/100 } : undefined,
@@ -1691,7 +1758,7 @@ function Chart({ visual, rows, model={}, onPointClick, conditionalValues={}, kpi
   return <ChartScrollerWrapper 
     echartsKey={formatRefreshKey} 
     events={chartEvents} 
-    categories={names} 
+    categories={effectiveCategories} 
     horizontal={horizontal} 
     visibleCount={visual.format.visibleCategoryCount||12} 
     option={base}

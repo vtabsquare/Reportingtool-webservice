@@ -230,15 +230,98 @@ def verify_api_contract(api_host: str, api_port: int) -> None:
 
 
 class SpaHandler(SimpleHTTPRequestHandler):
+    target_api_base: str = "http://127.0.0.1:8830"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(DIST_WEB), **kwargs)
 
+    def _proxy_to_api(self) -> None:
+        target_url = f"{self.target_api_base}{self.path}"
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length) if content_length > 0 else None
+
+        req = urllib.request.Request(target_url, data=body, method=self.command)
+        for key, value in self.headers.items():
+            if key.lower() not in ("host", "content-length", "accept-encoding"):
+                req.add_header(key, value)
+
+        try:
+            with urllib.request.urlopen(req, timeout=60.0) as resp:
+                self.send_response(resp.status)
+                for header, val in resp.getheaders():
+                    if header.lower() not in ("transfer-encoding", "content-length", "connection"):
+                        self.send_header(header, val)
+                content = resp.read()
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(content)
+        except urllib.error.HTTPError as err:
+            self.send_response(err.code)
+            for header, val in err.headers.items():
+                if header.lower() not in ("transfer-encoding", "content-length", "connection"):
+                    self.send_header(header, val)
+            content = err.read()
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(content)
+        except Exception as err:
+            self.send_response(502)
+            self.send_header("Content-Type", "application/json")
+            err_body = json.dumps({"error": f"Bad Gateway: {err}"}).encode("utf-8")
+            self.send_header("Content-Length", str(len(err_body)))
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(err_body)
+
     def do_GET(self) -> None:
+        if self.path.startswith("/api/"):
+            self._proxy_to_api()
+            return
         relative = unquote(urlsplit(self.path).path).lstrip("/")
         requested = (DIST_WEB / relative).resolve()
         if not relative or DIST_WEB.resolve() not in requested.parents or not requested.is_file():
             self.path = "/index.html"
         super().do_GET()
+
+    def do_POST(self) -> None:
+        if self.path.startswith("/api/"):
+            self._proxy_to_api()
+            return
+        self.send_error(405, "Method Not Allowed")
+
+    def do_PUT(self) -> None:
+        if self.path.startswith("/api/"):
+            self._proxy_to_api()
+            return
+        self.send_error(405, "Method Not Allowed")
+
+    def do_DELETE(self) -> None:
+        if self.path.startswith("/api/"):
+            self._proxy_to_api()
+            return
+        self.send_error(405, "Method Not Allowed")
+
+    def do_PATCH(self) -> None:
+        if self.path.startswith("/api/"):
+            self._proxy_to_api()
+            return
+        self.send_error(405, "Method Not Allowed")
+
+    def do_OPTIONS(self) -> None:
+        if self.path.startswith("/api/"):
+            self._proxy_to_api()
+            return
+        self.send_response(204)
+        self.send_header("Allow", "GET, HEAD, POST, PUT, DELETE, PATCH, OPTIONS")
+        self.end_headers()
+
+    def do_HEAD(self) -> None:
+        if self.path.startswith("/api/"):
+            self._proxy_to_api()
+            return
+        super().do_HEAD()
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -278,6 +361,7 @@ def main() -> int:
         wait_for_api(health_url, api_process, expected_version)
         verify_api_contract(api_host, api_port)
 
+        SpaHandler.target_api_base = f"http://{api_host}:{api_port}"
         server = ThreadingHTTPServer((web_host, web_port), SpaHandler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         web_url = f"http://{web_host}:{web_port}"

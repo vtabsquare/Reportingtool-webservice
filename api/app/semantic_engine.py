@@ -481,6 +481,12 @@ def compile_query(model,req,rls=()):
     wh=[];params=[]
     for f in filters:
         f_field=f.get('field','')
+        if not f_field:continue
+        if '.' not in f_field:
+            for t_name_candidate, t_def in model.get('tables', {}).items():
+                if f_field in t_def.get('columns', {}):
+                    f_field = f'{t_name_candidate}.{f_field}'
+                    break
         if not f_field or '.' not in f_field:continue
         t_name = resolve_table_name(model,f_field.split('.')[0])
         if f_field in override_fields or f"{t_name}.*" in override_fields:continue

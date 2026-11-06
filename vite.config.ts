@@ -5,12 +5,12 @@ export default defineConfig({
   server:{
     port:4173,
     host:true,
-    proxy:{'/api':'http://127.0.0.1:8820'}
+    proxy:{'/api':'http://127.0.0.1:8830'}
   },
   preview:{
     port:4173,
     host:true,
-    proxy:{'/api':'http://127.0.0.1:8820'}
+    proxy:{'/api':'http://127.0.0.1:8830'}
   },
   build:{outDir:'dist-web'}
 });
