@@ -804,7 +804,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
        </button>
        <div className="pbi-cmd-divider" />
        <a
-         href="http://admin-reporting.139.59.32.39.nip.io/"
+         href="https://admin-reporting.vtabsquare.com"
          target="_blank"
          rel="noopener noreferrer"
          className="pbi-cmd-btn"
@@ -812,9 +812,32 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
          tabIndex={allowed('can_home')?0:-1}
          onClick={event=>{if(!allowed('can_home'))event.preventDefault()}}
          title="Open Admin Portal in new tab"
-         style={{ textDecoration: 'none',pointerEvents:allowed('can_home')?'auto':'none',opacity:allowed('can_home')?1:.45 }}
+         style={{
+           textDecoration: 'none',
+           pointerEvents: allowed('can_home') ? 'auto' : 'none',
+           opacity: allowed('can_home') ? 1 : 0.45,
+           background: '#fde047',
+           border: '1px solid #ca8a04',
+           color: '#713f12',
+           fontWeight: 700,
+           borderRadius: 4,
+           padding: '0 10px',
+           display: 'inline-flex',
+           alignItems: 'center',
+           gap: 6,
+         }}
+         onMouseEnter={e => {
+           e.currentTarget.style.background = '#facc15';
+           e.currentTarget.style.borderColor = '#a16207';
+         }}
+         onMouseLeave={e => {
+           e.currentTarget.style.background = '#fde047';
+           e.currentTarget.style.borderColor = '#ca8a04';
+         }}
        >
-         <ShieldCheck size={15} color="#0f6cbd" /> Admin Portal
+         <ShieldCheck size={15} color="#713f12" />
+         <span>Admin Portal</span>
+         <ExternalLink size={12} style={{ opacity: 0.85, color: "#713f12" }} />
        </a>
        {interactionFilters.length > 0 && (
          <button className="pbi-cmd-btn" onClick={() => setInteractionFilterMap({})}>

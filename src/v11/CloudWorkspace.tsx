@@ -443,9 +443,10 @@ export default function CloudWorkspace({ session }: { session: any }) {
         {/* Right header actions */}
         <div className="pbi-header-actions">
           <a
-            href="http://admin-reporting.139.59.32.39.nip.io/"
+            href="https://admin-reporting.vtabsquare.com"
             target="_blank"
             rel="noopener noreferrer"
+            className="pbi-cmd-btn pbi-admin-btn"
             title="Open Admin Portal in new tab"
             style={{
               display: 'inline-flex',
@@ -454,28 +455,28 @@ export default function CloudWorkspace({ session }: { session: any }) {
               height: 30,
               padding: '0 12px',
               borderRadius: 4,
-              border: '1px solid #cce4f7',
-              background: '#f0f7fc',
-              color: '#0f6cbd',
+              border: '1px solid #ca8a04',
+              background: '#fde047',
+              color: '#713f12',
               fontSize: 12,
-              fontWeight: 600,
+              fontWeight: 700,
               textDecoration: 'none',
               cursor: 'pointer',
               transition: 'all 0.15s ease',
               marginRight: 4,
             }}
             onMouseEnter={e => {
-              e.currentTarget.style.background = '#e0f0fb';
-              e.currentTarget.style.borderColor = '#99d0f5';
+              e.currentTarget.style.background = '#facc15';
+              e.currentTarget.style.borderColor = '#a16207';
             }}
             onMouseLeave={e => {
-              e.currentTarget.style.background = '#f0f7fc';
-              e.currentTarget.style.borderColor = '#cce4f7';
+              e.currentTarget.style.background = '#fde047';
+              e.currentTarget.style.borderColor = '#ca8a04';
             }}
           >
-            <Shield size={14} color="#0f6cbd" />
+            <Shield size={14} color="#713f12" />
             <span>Admin Portal</span>
-            <ExternalLink size={12} style={{ opacity: 0.7, color: '#0f6cbd' }} />
+            <ExternalLink size={12} style={{ opacity: 0.85, color: '#713f12' }} />
           </a>
 
           <NotificationCenter userId={session?.user?.id}/>
@@ -514,20 +515,20 @@ export default function CloudWorkspace({ session }: { session: any }) {
                 </div>
                 <div style={{ height: 1, background: '#edebe9', margin: '8px 0 10px' }} />
                 <a
-                  href="http://admin-reporting.139.59.32.39.nip.io/"
+                  href="https://admin-reporting.vtabsquare.com"
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
                     width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '8px 10px', border: '1px solid #cce4f7', background: '#f0f7fc',
-                    color: '#0f6cbd', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                    padding: '8px 10px', border: '1px solid #ca8a04', background: '#fde047',
+                    color: '#713f12', borderRadius: 6, fontSize: 13, fontWeight: 700,
                     textDecoration: 'none', marginBottom: 8, cursor: 'pointer', boxSizing: 'border-box'
                   }}
                 >
                   <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Shield size={15} color="#0f6cbd" /> Admin Portal
+                    <Shield size={15} color="#713f12" /> Admin Portal
                   </span>
-                  <ExternalLink size={13} color="#0f6cbd" />
+                  <ExternalLink size={13} color="#713f12" />
                 </a>
                 <button 
                   onClick={signOut}
@@ -611,15 +612,26 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
           <div style={{ marginTop: 'auto', paddingBottom: 6, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
             <a
-              href="http://admin-reporting.139.59.32.39.nip.io/"
+              href="https://admin-reporting.vtabsquare.com"
               target="_blank"
               rel="noopener noreferrer"
               className="pbi-rail-item"
               title="Admin Portal (opens in new tab)"
-              style={{ textDecoration: 'none', height: 42, width: 44, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}
+              style={{
+                textDecoration: 'none',
+                height: 42,
+                width: 44,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: '#fde047',
+                border: '1px solid #ca8a04',
+                borderRadius: 6,
+              }}
             >
-              <Shield size={18} color="#0f6cbd" />
-              <span className="pbi-rail-label" style={{ fontSize: 9, color: '#0f6cbd', fontWeight: 600 }}>Admin</span>
+              <Shield size={18} color="#713f12" />
+              <span className="pbi-rail-label" style={{ fontSize: 9, color: '#713f12', fontWeight: 700 }}>Admin</span>
             </a>
             <PowerBiLogo />
             <span className="pbi-rail-label" style={{ fontSize: 9, color: '#616161' }}>VTAB</span>
