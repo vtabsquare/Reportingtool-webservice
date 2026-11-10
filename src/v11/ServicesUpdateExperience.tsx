@@ -110,7 +110,7 @@ export default function ServicesUpdateExperience() {
   const notesText = status.release_notes?.trim() || '';
 
   return (
-    <div className="vtabUpdateBannerContainer">
+    <div className="vtabUpdateBannerContainer" style={{ flexShrink: 0, width: '100%', position: 'relative', zIndex: 10050 }}>
       <aside className="vtabUpdateBanner">
         <div className="vtabUpdateBannerLeft">
           <span className="vtabUpdateBellIcon" aria-hidden="true">
