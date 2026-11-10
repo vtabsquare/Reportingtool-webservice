@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import re
 import uuid
 import tempfile
@@ -24,6 +25,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
+
+logger = logging.getLogger("vtab.server")
 from .storage import Store, META, DEMO
 from .demo import seed, default_project, blank_project
 from .transform_engine import preview, materialize, join_profile, ai_suggestions, suggest_calculated_column
