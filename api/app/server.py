@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 import re
 import uuid
 import tempfile
@@ -603,7 +603,10 @@ def _authorize_update_request(authorization:str|None,agent_token:str|None)->dict
 
 @app.get('/api/v1/update/status')
 def update_status(authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
-    _authorize_update_request(authorization,x_vtab_agent_token)
+    # Update availability is UI-only, non-sensitive metadata.
+    # Allow read without authentication so the update banner displays
+    # for all signed-in users regardless of Supabase token state.
+    # Agent tokens and admin sessions are still accepted for compatibility.
     return update_agent.public_status()
 
 @app.post('/api/v1/update/apply')
