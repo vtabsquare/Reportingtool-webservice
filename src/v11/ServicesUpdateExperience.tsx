@@ -35,9 +35,21 @@ export default function ServicesUpdateExperience() {
     mounted.current = true;
     poll();
     const timer = window.setInterval(poll,5000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        poll();
+      }
+    };
+    const onFocus = () => {
+      poll();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onFocus);
     return () => {
       mounted.current = false;
       window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onFocus);
     };
   }, [poll]);
 
