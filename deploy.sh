@@ -30,13 +30,28 @@ chmod -R 755 "$REPO_DIR/dist-web" 2>/dev/null || true
 echo "       dist-web assets verified"
 echo ""
 
-echo "[3/5] Updating release commit SHA in web.env..."
+echo "[3/5] Updating release commit SHA and version in web.env..."
 # Remove any stale VTAB_RELEASE_COMMIT_SHA and VTAB_AUTO_OFFER_GITHUB lines
 sed -i '/^VTAB_RELEASE_COMMIT_SHA=/d' "$REPO_DIR/web.env"
 sed -i '/^VTAB_AUTO_OFFER_GITHUB=/d' "$REPO_DIR/web.env"
 # Write fresh values
 echo "VTAB_RELEASE_COMMIT_SHA=${NEW_SHA:0:8}" >> "$REPO_DIR/web.env"
 echo "VTAB_AUTO_OFFER_GITHUB=false" >> "$REPO_DIR/web.env"
+
+# If package.json has a version, keep VTAB_RELEASE_VERSION synchronized
+if [ -f "$REPO_DIR/package.json" ]; then
+    PKG_VER=$(grep '"version"' "$REPO_DIR/package.json" | head -1 | awk -F '"' '{print $4}')
+    if [ -n "$PKG_VER" ]; then
+        sed -i '/^VTAB_RELEASE_VERSION=/d' "$REPO_DIR/web.env"
+        echo "VTAB_RELEASE_VERSION=$PKG_VER" >> "$REPO_DIR/web.env"
+        echo "       web.env updated with VTAB_RELEASE_VERSION=$PKG_VER"
+    fi
+fi
+
+# Ensure essential manager and token vars exist in web.env
+grep -q "^VTAB_AGENT_TOKEN=" "$REPO_DIR/web.env" || echo "VTAB_AGENT_TOKEN=SDCsfIsSnlOj4ceWprbj-0GrsjxESrOT1DnmNJOGa_Y" >> "$REPO_DIR/web.env"
+grep -q "^VTAB_MANAGER_URL=" "$REPO_DIR/web.env" || echo "VTAB_MANAGER_URL=https://manager.139.59.32.39.nip.io" >> "$REPO_DIR/web.env"
+grep -q "^VTAB_WEB_URL=" "$REPO_DIR/web.env" || echo "VTAB_WEB_URL=https://reportservices.vtabsquare.com" >> "$REPO_DIR/web.env"
 echo "       web.env updated with VTAB_RELEASE_COMMIT_SHA=${NEW_SHA:0:8}"
 echo ""
 
