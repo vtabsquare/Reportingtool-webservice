@@ -294,10 +294,10 @@ class UpdateAgent:
                 for progress, message in ((15, "Validating approved release"), (45, "Building application"), (75, "Running health checks"), (100, "Update verified")):
                     self._log(message, progress, "applying")
                     time.sleep(0.35)
-            elif _env("RENDER_SERVICE_ID", "VTAB_RENDER_SERVICE_ID"):
-                self._trigger_render_deploy()
             elif self._trigger_digitalocean_deploy():
                 return
+            elif _env("RENDER_SERVICE_ID", "VTAB_RENDER_SERVICE_ID"):
+                self._trigger_render_deploy()
             else:
                 self._apply_self_hosted()
             with self.lock:
