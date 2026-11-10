@@ -30,8 +30,8 @@ chmod -R 755 "$REPO_DIR/dist-web" 2>/dev/null || true
 echo "       dist-web assets verified"
 echo ""
 
-echo "[3/4] Updating backend container and reloading nginx..."
-docker cp "$REPO_DIR/api/app/." vtab-reporting-api:/app/app/ 2>/dev/null && docker restart vtab-reporting-api >/dev/null 2>&1 || true
+echo "[3/4] Restarting backend container and reloading nginx..."
+docker restart vtab-reporting-api >/dev/null 2>&1 || true
 sleep 4
 nginx -t && systemctl reload nginx
 echo "       backend and nginx reloaded OK"
