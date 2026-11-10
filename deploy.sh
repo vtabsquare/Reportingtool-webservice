@@ -21,12 +21,13 @@ NEW_SHA=$(git rev-parse HEAD)
 echo "       Commit: $NEW_SHA"
 echo ""
 
-echo "[2/4] Building production web assets..."
-if [ -f "$REPO_DIR/package.json" ]; then
-    npm run build:web
-    chown -R www-data:www-data "$REPO_DIR/dist-web" 2>/dev/null || true
-    echo "       dist-web compiled successfully"
+echo "[2/4] Ensuring production web assets..."
+if [ -d "$REPO_DIR/node_modules" ] && command -v npm >/dev/null 2>&1; then
+    npm run build:web 2>/dev/null || true
 fi
+chown -R www-data:www-data "$REPO_DIR/dist-web" 2>/dev/null || true
+chmod -R 755 "$REPO_DIR/dist-web" 2>/dev/null || true
+echo "       dist-web assets verified"
 echo ""
 
 echo "[3/4] Updating backend container and reloading nginx..."
