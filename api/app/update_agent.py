@@ -200,7 +200,16 @@ class UpdateAgent:
     def public_status(self) -> dict[str, Any]:
         self._check_github_update()
         with self.lock:
-            return {key: value for key, value in self.state.items() if key not in {"event_ids"}}
+            result = {key: value for key, value in self.state.items() if key not in {"event_ids"}}
+            # Always reflect live running commit SHA (env may have been set after state was written)
+            live_sha = self._current_commit()
+            if live_sha and live_sha != "unknown":
+                result["current_commit_sha"] = live_sha
+            if result.get("current_version") in (None, "unknown"):
+                live_ver = _env("VTAB_RELEASE_VERSION", default=None)
+                if live_ver:
+                    result["current_version"] = live_ver
+            return result
 
     def offer(self, payload: dict[str, Any], event_id: str | None = None) -> dict[str, Any]:
         component = str(payload.get("component") or "reporting-services").strip()
