@@ -605,7 +605,10 @@ def _authorize_update_request(authorization:str|None,agent_token:str|None)->dict
         raise HTTPException(401,'The Services administrator session is invalid or expired.') from exc
 
 @app.get('/api/v1/update/status')
-def update_status(authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
+def update_status(response: Response, authorization:str|None=Header(default=None),x_vtab_agent_token:str|None=Header(default=None)):
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
     # Update availability is UI-only, non-sensitive metadata.
     # Allow read without authentication so the update banner displays
     # for all signed-in users regardless of Supabase token state.

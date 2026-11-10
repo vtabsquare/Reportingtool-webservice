@@ -18,6 +18,30 @@ export default function ServicesUpdateExperience() {
 
   const poll = useCallback(async () => {
     try {
+      // Direct cache-busting fetch so browser memory/disk cache never returns stale update status
+      const res = await fetch(`/api/v1/update/status?_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache'
+        }
+      });
+      if (res.ok) {
+        const next: ServicesUpdateStatus = await res.json();
+        if (mounted.current) {
+          setStatus(next);
+          if (next && activeStates.has(next.status)) {
+            wasBuildingRef.current = true;
+            setIsBuilding(true);
+          }
+        }
+        return;
+      }
+    } catch {
+      /* Fallback to managed api helper if relative fetch fails (e.g. desktop env) */
+    }
+
+    try {
       const next = await api<ServicesUpdateStatus>('/update/status');
       if (mounted.current) {
         setStatus(next);
