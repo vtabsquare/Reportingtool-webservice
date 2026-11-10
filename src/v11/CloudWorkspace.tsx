@@ -455,9 +455,9 @@ export default function CloudWorkspace({ session }: { session: any }) {
               height: 30,
               padding: '0 12px',
               borderRadius: 4,
-              border: '1px solid #facc15',
-              background: '#fef08a',
-              color: '#854d0e',
+              border: '1px solid #cce4f7',
+              background: '#f0f7fc',
+              color: '#0f6cbd',
               fontSize: 12,
               fontWeight: 600,
               textDecoration: 'none',
@@ -466,17 +466,17 @@ export default function CloudWorkspace({ session }: { session: any }) {
               marginRight: 4,
             }}
             onMouseEnter={e => {
-              e.currentTarget.style.background = '#fde047';
-              e.currentTarget.style.borderColor = '#ca8a04';
+              e.currentTarget.style.background = '#e0f0fb';
+              e.currentTarget.style.borderColor = '#99d0f5';
             }}
             onMouseLeave={e => {
-              e.currentTarget.style.background = '#fef08a';
-              e.currentTarget.style.borderColor = '#facc15';
+              e.currentTarget.style.background = '#f0f7fc';
+              e.currentTarget.style.borderColor = '#cce4f7';
             }}
           >
-            <Shield size={14} color="#854d0e" />
+            <Shield size={14} color="#0f6cbd" />
             <span>Admin Portal</span>
-            <ExternalLink size={12} style={{ opacity: 0.8, color: '#854d0e' }} />
+            <ExternalLink size={12} style={{ opacity: 0.7, color: '#0f6cbd' }} />
           </a>
 
           <NotificationCenter userId={session?.user?.id}/>
