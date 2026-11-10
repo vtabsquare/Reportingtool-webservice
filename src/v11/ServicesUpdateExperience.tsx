@@ -113,11 +113,11 @@ export default function ServicesUpdateExperience() {
     <div className="vtabUpdateBannerContainer" style={{ flexShrink: 0, width: '100%', position: 'relative', zIndex: 10050 }}>
       <aside className="vtabUpdateBanner">
         <div className="vtabUpdateBannerLeft">
-          <span className="vtabUpdateBellIcon" aria-hidden="true">
+          <span className="vtabUpdateBellIcon" aria-hidden="true" style={{ animation: 'vtabBellPulse 2s ease-in-out infinite' }}>
             <Bell size={16} />
           </span>
           <span className="vtabUpdateBannerText">
-            Update available: Reporting Services {versionDisplay}
+            🔔 Update available: Reporting Services {versionDisplay}
           </span>
         </div>
 
