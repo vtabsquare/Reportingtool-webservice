@@ -816,9 +816,9 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
            textDecoration: 'none',
            pointerEvents: allowed('can_home') ? 'auto' : 'none',
            opacity: allowed('can_home') ? 1 : 0.45,
-           background: '#f0f7fc',
-           border: '1px solid #cce4f7',
-           color: '#0f6cbd',
+           background: '#fef08a',
+           border: '1px solid #facc15',
+           color: '#854d0e',
            fontWeight: 600,
            borderRadius: 4,
            padding: '0 10px',
@@ -827,17 +827,17 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
            gap: 6,
          }}
          onMouseEnter={e => {
-           e.currentTarget.style.background = '#e0f0fb';
-           e.currentTarget.style.borderColor = '#99d0f5';
+           e.currentTarget.style.background = '#fde047';
+           e.currentTarget.style.borderColor = '#ca8a04';
          }}
          onMouseLeave={e => {
-           e.currentTarget.style.background = '#f0f7fc';
-           e.currentTarget.style.borderColor = '#cce4f7';
+           e.currentTarget.style.background = '#fef08a';
+           e.currentTarget.style.borderColor = '#facc15';
          }}
        >
-         <ShieldCheck size={15} color="#0f6cbd" />
+         <ShieldCheck size={15} color="#854d0e" />
          <span>Admin Portal</span>
-         <ExternalLink size={12} style={{ opacity: 0.7, color: "#0f6cbd" }} />
+         <ExternalLink size={12} style={{ opacity: 0.8, color: "#854d0e" }} />
        </a>
        {interactionFilters.length > 0 && (
          <button className="pbi-cmd-btn" onClick={() => setInteractionFilterMap({})}>
