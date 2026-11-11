@@ -341,7 +341,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
     void loadRegisteredUsers();
   };
 
-  const userEmail = session?.user?.email || '';
+  const userEmail = session?.user?.email || 'vtabdemouser@gmail.com';
   const userDisplay = session?.user?.user_metadata?.display_name || userEmail.split('@')[0];
 
   // Filtering for Home View

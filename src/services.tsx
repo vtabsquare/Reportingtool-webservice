@@ -29,17 +29,19 @@ export default function Services(){
  },[]);
  if(!ready)return <div className="loading"><div className="brandMark">V</div><span>Loading workspace…</span></div>;
  if(isEmbed && embedReportId){
-  return (
-   <div className="pbi-app-shell" style={{width:'100vw',height:'100vh',overflow:'hidden',display:'flex',flexDirection:'column'}}>
-    <PublishedViewer 
-      reportId={embedReportId} 
-      embedded={true} 
-      cloudMode={true} 
-      userRole="Viewer"
-    />
-   </div>
-  );
- }
+   const embedUser = params?.get('user') || 'vtabdemouser@gmail.com';
+   return (
+    <div className="pbi-app-shell" style={{width:'100vw',height:'100vh',overflow:'hidden',display:'flex',flexDirection:'column'}}>
+     <PublishedViewer 
+       reportId={embedReportId} 
+       embedded={true} 
+       cloudMode={true} 
+       userRole="Viewer"
+       currentUserEmail={embedUser}
+     />
+    </div>
+   );
+  }
 
  if(!session)return <SupabaseAuthGate onSignedIn={setSession}/>;
  return <CloudWorkspace session={session}/>;

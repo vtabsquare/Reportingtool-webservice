@@ -66,7 +66,7 @@ async function jsonResponse<T>(response:Response,base:string,path:string):Promis
 // Supabase is authoritative for Reporting Service calls. A legacy local
 // workspace token may remain after upgrading an existing Desktop install, so
 // never let it shadow the current Supabase session.
-export function authHeaders():Record<string,string>{const token=localStorage.getItem('vtab_supabase_token')||localStorage.getItem('vtab_workspace_token');return token?{'Authorization':`Bearer ${token}`}:{}}
+export function authHeaders():Record<string,string>{const token=localStorage.getItem('vtab_supabase_token')||localStorage.getItem('vtab_workspace_token');const headers:Record<string,string>={'X-Vtab-User':'vtabdemouser@gmail.com'};if(token)headers['Authorization']=`Bearer ${token}`;return headers;}
 function mergeHeaders(base:Record<string,string>,extra?:HeadersInit){const h=new Headers(extra||{});Object.entries(base).forEach(([k,v])=>h.set(k,v));return h}
 async function refreshSupabaseToken():Promise<string>{
   try{

@@ -17,7 +17,7 @@ type Mode = "login" | "register" | "register-verify" | "register-setpass" | "for
 
 export default function SupabaseAuthGate({ onSignedIn }: Props) {
   const [mode, setMode] = useState<Mode>("login");
-  const [form, setForm] = useState({ email: "", password: "", name: "", otp: "", newPassword: "" });
+  const [form, setForm] = useState({ email: "vtabdemouser@gmail.com", password: "", name: "", otp: "", newPassword: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [info, setInfo] = useState("");

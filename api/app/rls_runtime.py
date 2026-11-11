@@ -27,7 +27,7 @@ def _replace_identity(value: Any, user: dict[str, Any]) -> Any:
         return value
     token = value.strip().upper()
     if token in {"CURRENT_USER_EMAIL()", "USERPRINCIPALNAME()", "USERNAME()"}:
-        return str(user.get("email") or "").strip().lower()
+        return str(user.get("email") or "vtabdemouser@gmail.com").strip().lower()
     if token == "CURRENT_USER_ID()":
         return str(user.get("id") or "")
     if token == "CURRENT_USER_NAME()":
@@ -120,7 +120,7 @@ def _resolve_published_rls_impl(report_id: str, project: dict[str, Any], access_
     role_defs = _roles(project)
     context = {
         "userId": user_id,
-        "email": str(user.get("email") or "").strip().lower(),
+        "email": str(user.get("email") or "vtabdemouser@gmail.com").strip().lower(),
         "applicationRole": application_role,
         "semanticModelId": str(report.get("semantic_model_id") or ""),
         "rlsRoleIds": [],

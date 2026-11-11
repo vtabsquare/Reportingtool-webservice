@@ -3171,14 +3171,14 @@ def _published_query_context(report_id:str,authorization:str|None):
             token = authorization.split(' ', 1)[1].strip()
         if not token:
             p = hydrate_snapshot_sources(p, access_token="", skip_auth_check=True)
-            return p, {'context': {'userId': 'public-viewer', 'applicationRole': 'Viewer'}, 'rules': []}
+            return p, {'context': {'userId': 'public-viewer', 'email': 'vtabdemouser@gmail.com', 'applicationRole': 'Viewer'}, 'rules': []}
         try:
             resolved=resolve_published_rls(report_id,p,token)
             p = hydrate_snapshot_sources(p, token, skip_auth_check=True)
             return p,resolved
         except (PermissionError, Exception):
             p = hydrate_snapshot_sources(p, access_token="", skip_auth_check=True)
-            return p, {'context': {'userId': 'public-viewer', 'applicationRole': 'Viewer'}, 'rules': []}
+            return p, {'context': {'userId': 'public-viewer', 'email': 'vtabdemouser@gmail.com', 'applicationRole': 'Viewer'}, 'rules': []}
     except PermissionError as e:raise HTTPException(403,str(e))
     except ServiceValidationError as e:raise HTTPException(400,str(e))
     except HTTPException:raise

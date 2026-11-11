@@ -1,4 +1,4 @@
-import{useCallback,useEffect,useMemo,useRef,useState}from'react';
+﻿import{useCallback,useEffect,useMemo,useRef,useState}from'react';
 import{createPortal}from'react-dom';
 import{ChevronLeft,ChevronRight,ChevronDown,RefreshCcw,Maximize2,Minimize2,Home,CalendarDays,ShieldCheck,MonitorUp,Expand,Scaling,Eraser,BarChart3,PieChart,Table2,LayoutGrid,Filter,TrendingUp,MousePointerClick,FileDown,Presentation,Mail,FileText,Printer,Code2,QrCode,Star,Settings2,Share2,ArrowLeft,Download,FileArchive,Check,Copy,ExternalLink,Globe,Users,BellRing,Search,X,Minus,Plus,ZoomIn,ZoomOut}from'lucide-react';
 import Chart from'../components/Chart';
@@ -46,10 +46,10 @@ async function fetchReportFromSupabase(reportId:string):Promise<any>{
 }
 
 type VisualQueryResult={rows:any[];error?:string;conditionalValues?:Record<string,any>;conditionalError?:string};
-async function queryPageVisuals(reportId:string,visualIds:string[],extraFilters:VisualFilter[]=[],signal?:AbortSignal){
+async function queryPageVisuals(reportId:string,visualIds:string[],extraFilters:VisualFilter[]=[],signal?:AbortSignal,userEmail:string='vtabdemouser@gmail.com'){
  // One page request replaces the previous N-request waterfall. The service
  // resolves authorization, RLS and private snapshots only once for the page.
- return api<{results:Record<string,VisualQueryResult>;durationMs:number}>(`/published/${reportId}/query-batch`,{method:'POST',body:JSON.stringify({visualIds,filters:extraFilters}),signal});
+ return api<{results:Record<string,VisualQueryResult>;durationMs:number}>(`/published/${reportId}/query-batch`,{method:'POST',headers:{'X-Vtab-User':userEmail},body:JSON.stringify({visualIds,filters:extraFilters}),signal});
 }
 function visualTitleIcon(type:string){
  if(['pie','donut'].includes(type))return <PieChart size={15}/>;
@@ -379,8 +379,12 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
   </div>;
   return <>{card}{focus&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>setFocus(false)}><div className="visualFocusPanel viewerFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>FOCUS MODE</small><b>{v.title}</b></div><button onClick={()=>setFocus(false)}>Close</button></div><div className="visualFocusBody">{content}</div></div></div>,document.body)}</>;
 }
-export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId,userRole,onBack,onManageAccess,workspacePermissions}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string,userRole?:string,onBack?:()=>void,onManageAccess?:()=>void,workspacePermissions?:Partial<ReportUiPermissions>}){
- const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(false),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'|'custom'>('fitPage'),[scale,setScale]=useState(1),[isZoomDragging,setIsZoomDragging]=useState(false),[interactionFilterMap,setInteractionFilterMap]=useState<Record<string,VisualFilter>>({}),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
+export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId,userRole,onBack,onManageAccess,workspacePermissions,currentUserEmail="vtabdemouser@gmail.com"}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string,userRole?:string,onBack?:()=>void,onManageAccess?:()=>void,workspacePermissions?:Partial<ReportUiPermissions>,currentUserEmail?:string}){
+ // Detect iframe/embed context from either the prop or the URL param
+ const isEmbedContext = embedded || (typeof window !== 'undefined' && (new URLSearchParams(window.location.search).get('embed') === '1' || new URLSearchParams(window.location.search).get('public') === '1'));
+ // Style helper: fades and disables an element when in embed/iframe context
+ const embedFade = isEmbedContext ? { opacity: 0.35, pointerEvents: 'none' as const, cursor: 'not-allowed' as const } : {};
+ const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(false),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'|'custom'>('fitPage'),[scale,setScale]=useState(1),[isZoomDragging,setIsZoomDragging]=useState(false),[interactionFilterMap,setInteractionFilterMap]=useState<Record<string,VisualFilter>>({}),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'vtabdemouser@gmail.com',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
  const[publishedMode,setPublishedMode]=useState<'interactive'|'paginated'>(initialPaginatedId?'paginated':'interactive');
  const[activeRibbonTab,setActiveRibbonTab]=useState<'Home'|'File'|'View'>('Home');
  const permissions=useMemo(()=>({...DEFAULT_REPORT_UI_PERMISSIONS,...(workspacePermissions||{})}),[workspacePermissions]);
@@ -466,7 +470,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    if(!queryVisualIds.length){setVisualResults({});setVisualLoadError('');setVisualLoading(false);return}
    const controller=new AbortController();
    setVisualLoading(true);setVisualLoadError('');
-   queryPageVisuals(reportId,queryVisualIds,combinedFilters,controller.signal)
+   queryPageVisuals(reportId,queryVisualIds,combinedFilters,controller.signal,currentUserEmail)
     .then(response=>{if(!controller.signal.aborted)setVisualResults(response.results||{})})
     .catch((error:any)=>{if(!controller.signal.aborted)setVisualLoadError(error?.message||String(error))})
     .finally(()=>{if(!controller.signal.aborted)setVisualLoading(false)});
@@ -641,7 +645,13 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    <div className="pbi-report-topbar">
      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
        {(onBack || embedded) && (
-         <button onClick={onBack || (() => { location.href = '/?workspace=1'; })} className="pbi-btn-back" title="Back to workspace">
+         <button 
+           onClick={isEmbedContext ? undefined : (onBack || (() => { location.href = '/?workspace=1'; }))} 
+           className="pbi-btn-back" 
+           style={embedFade}
+           disabled={isEmbedContext}
+           title={isEmbedContext ? undefined : "Back to workspace"}
+         >
            <ArrowLeft size={14} /> Back
          </button>
        )}
@@ -659,11 +669,11 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
          <ShieldCheck size={14} /> Governed
        </span>
        {onManageAccess ? (
-         <button disabled={!allowed('can_share')} onClick={onManageAccess} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d6257', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+         <button disabled={isEmbedContext || !allowed('can_share')} onClick={isEmbedContext ? undefined : onManageAccess} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d6257', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600, fontSize: 12, cursor: isEmbedContext ? 'not-allowed' : 'pointer', ...embedFade }}>
            <Share2 size={14} /> Share
          </button>
        ) : (
-         <button disabled={!allowed('can_share')} onClick={shareEmail} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d6257', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+         <button disabled={isEmbedContext || !allowed('can_share')} onClick={isEmbedContext ? undefined : shareEmail} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#0d6257', color: '#fff', border: 'none', borderRadius: 4, padding: '6px 14px', fontWeight: 600, fontSize: 12, cursor: isEmbedContext ? 'not-allowed' : 'pointer', ...embedFade }}>
            <Share2 size={14} /> Share
          </button>
        )}
@@ -676,85 +686,87 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    <div className="pbi-report-ribbon-tabs">
      <div ref={fileMenuRef} style={{ position: 'relative' }}>
        <button 
-         className={`pbi-ribbon-tab-btn ${fileDropdownOpen ? 'active' : ''}`}
-         disabled={!allowed('can_file')}
-         onClick={() => allowed('can_file')&&setFileDropdownOpen(!fileDropdownOpen)}
-       >
-         File <ChevronDown size={12} style={{ marginLeft: 2 }} />
+          className={`pbi-ribbon-tab-btn ${fileDropdownOpen ? 'active' : ''}`}
+          disabled={isEmbedContext || !allowed('can_file')}
+          onClick={() => !isEmbedContext && allowed('can_file') && setFileDropdownOpen(!fileDropdownOpen)}
+          style={embedFade}
+          title={isEmbedContext ? "File menu is disabled in embedded view" : undefined}
+        >
+          File <ChevronDown size={12} style={{ marginLeft: 2 }} />
        </button>
        {fileDropdownOpen && (
-         <div className="pbi-dropdown-menu" onMouseLeave={() => { setExportSubmenuOpen(false); setEmbedSubmenuOpen(false); }}>
-           <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setSaveAsName(`${report.name} - Copy`); setSaveAsModalOpen(true); }}>
-             <div className="pbi-menu-item-left"><Copy size={15} /> Save as...</div>
-           </button>
-           {canExport && (
-             <>
-               <button className="pbi-menu-item" disabled={!allowed('can_download')} onClick={() => { setFileDropdownOpen(false); void downloadThisFile(); }}>
-                 <div className="pbi-menu-item-left"><Download size={15} /> Download this file</div>
-               </button>
-               <div style={{ position: 'relative' }} onMouseEnter={() => { setExportSubmenuOpen(true); setEmbedSubmenuOpen(false); }}>
-                 <button className="pbi-menu-item">
-                   <div className="pbi-menu-item-left"><FileDown size={15} /> Export</div>
-                   <ChevronRight size={14} className="pbi-menu-chevron" />
-                 </button>
-                 {exportSubmenuOpen && (
-                   <div className="pbi-submenu">
-                      {publishedMode !== 'paginated' && (
-                        <button className="pbi-menu-item" disabled={!allowed('can_ppt')} onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pptx'); }}>
-                          <div className="pbi-menu-item-left"><Presentation size={15} /> PowerPoint</div>
-                        </button>
-                      )}
-                     <button className="pbi-menu-item" disabled={!allowed('can_pdf')} onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pdf'); }}>
-                       <div className="pbi-menu-item-left"><FileDown size={15} /> PDF</div>
-                     </button>
-                   </div>
-                 )}
-               </div>
-             </>
-           )}
-           <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); window.print(); }}>
-             <div className="pbi-menu-item-left"><Printer size={15} /> Print this page</div>
-           </button>
-           <div style={{ position: 'relative' }} onMouseEnter={() => { setEmbedSubmenuOpen(true); setExportSubmenuOpen(false); }}>
-             <button className="pbi-menu-item">
-               <div className="pbi-menu-item-left"><Code2 size={15} /> Embed report</div>
-               <ChevronRight size={14} className="pbi-menu-chevron" />
-             </button>
-             {embedSubmenuOpen && (
-               <div className="pbi-submenu">
-                 <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setEmbedSubmenuOpen(false); setEmbedModal('sharepoint'); }}>
-                   <div className="pbi-menu-item-left"><Globe size={15} /> SharePoint online</div>
-                 </button>
-                 <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setEmbedSubmenuOpen(false); setEmbedModal('portal'); }}>
-                   <div className="pbi-menu-item-left"><Code2 size={15} /> Website or portal</div>
-                 </button>
-                 <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setEmbedSubmenuOpen(false); setEmbedModal('web'); }}>
-                   <div className="pbi-menu-item-left"><ExternalLink size={15} /> Publish to web (public)</div>
-                 </button>
-                 <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setEmbedSubmenuOpen(false); setEmbedModal('developer'); }}>
-                   <div className="pbi-menu-item-left"><FileArchive size={15} /> Developer Playground</div>
-                 </button>
-               </div>
-             )}
-           </div>
-           <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setQrModalOpen(true); }}>
-             <div className="pbi-menu-item-left"><QrCode size={15} /> Generate QR code</div>
-           </button>
-           <div className="pbi-menu-divider" />
-           <button className="pbi-menu-item" onClick={() => { toggleFavorite(); setFileDropdownOpen(false); }}>
-             <div className="pbi-menu-item-left">
-               <Star size={15} fill={isFavorite ? '#d97706' : 'none'} color={isFavorite ? '#d97706' : '#616161'} /> 
-               {isFavorite ? 'Remove from favorites' : 'Add to favorites'}
-             </div>
-           </button>
-           <button className="pbi-menu-item" disabled={!allowed('can_share')} onClick={() => { setFileDropdownOpen(false); if (onManageAccess) onManageAccess(); else shareEmail(); }}>
-             <div className="pbi-menu-item-left"><Users size={15} /> Manage access</div>
-           </button>
-           <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setSettingsModalOpen(true); }}>
-             <div className="pbi-menu-item-left"><Settings2 size={15} /> Settings</div>
-           </button>
-         </div>
-       )}
+          <div className="pbi-dropdown-menu" style={embedFade} onMouseLeave={() => { setExportSubmenuOpen(false); setEmbedSubmenuOpen(false); }}>
+            <button className="pbi-menu-item" style={embedFade} disabled={isEmbedContext} onClick={() => { if(isEmbedContext) return; setFileDropdownOpen(false); setSaveAsName(`${report.name} - Copy`); setSaveAsModalOpen(true); }}>
+              <div className="pbi-menu-item-left"><Copy size={15} /> Save as...</div>
+            </button>
+            {(canExport || isEmbedContext) && (
+              <>
+                <button className="pbi-menu-item" style={embedFade} disabled={isEmbedContext || !allowed('can_download')} onClick={() => { if(isEmbedContext) return; setFileDropdownOpen(false); void downloadThisFile(); }}>
+                  <div className="pbi-menu-item-left"><Download size={15} /> Download this file</div>
+                </button>
+                <div style={{ position: 'relative' }} onMouseEnter={() => { if(!isEmbedContext) { setExportSubmenuOpen(true); setEmbedSubmenuOpen(false); } }}>
+                  <button className="pbi-menu-item" style={embedFade} disabled={isEmbedContext}>
+                    <div className="pbi-menu-item-left"><FileDown size={15} /> Export</div>
+                    <ChevronRight size={14} className="pbi-menu-chevron" />
+                  </button>
+                  {exportSubmenuOpen && !isEmbedContext && (
+                    <div className="pbi-submenu">
+                       {publishedMode !== 'paginated' && (
+                         <button className="pbi-menu-item" disabled={!allowed('can_ppt')} onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pptx'); }}>
+                           <div className="pbi-menu-item-left"><Presentation size={15} /> PowerPoint</div>
+                         </button>
+                       )}
+                      <button className="pbi-menu-item" disabled={!allowed('can_pdf')} onClick={() => { setFileDropdownOpen(false); setExportSubmenuOpen(false); exportFile('pdf'); }}>
+                        <div className="pbi-menu-item-left"><FileDown size={15} /> PDF</div>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+            <button className="pbi-menu-item" style={embedFade} disabled={isEmbedContext} onClick={() => { if(isEmbedContext) return; setFileDropdownOpen(false); window.print(); }}>
+              <div className="pbi-menu-item-left"><Printer size={15} /> Print this page</div>
+            </button>
+            <div style={{ position: 'relative' }} onMouseEnter={() => { if(!isEmbedContext) { setEmbedSubmenuOpen(true); setExportSubmenuOpen(false); } }}>
+              <button className="pbi-menu-item" style={embedFade} disabled={isEmbedContext}>
+                <div className="pbi-menu-item-left"><Code2 size={15} /> Embed report</div>
+                <ChevronRight size={14} className="pbi-menu-chevron" />
+              </button>
+              {embedSubmenuOpen && !isEmbedContext && (
+                <div className="pbi-submenu">
+                  <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setEmbedSubmenuOpen(false); setEmbedModal('sharepoint'); }}>
+                    <div className="pbi-menu-item-left"><Globe size={15} /> SharePoint online</div>
+                  </button>
+                  <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setEmbedSubmenuOpen(false); setEmbedModal('portal'); }}>
+                    <div className="pbi-menu-item-left"><Code2 size={15} /> Website or portal</div>
+                  </button>
+                  <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setEmbedSubmenuOpen(false); setEmbedModal('web'); }}>
+                    <div className="pbi-menu-item-left"><ExternalLink size={15} /> Publish to web (public)</div>
+                  </button>
+                  <button className="pbi-menu-item" onClick={() => { setFileDropdownOpen(false); setEmbedSubmenuOpen(false); setEmbedModal('developer'); }}>
+                    <div className="pbi-menu-item-left"><FileArchive size={15} /> Developer Playground</div>
+                  </button>
+                </div>
+              )}
+            </div>
+            <button className="pbi-menu-item" style={embedFade} disabled={isEmbedContext} onClick={() => { if(isEmbedContext) return; setFileDropdownOpen(false); setQrModalOpen(true); }}>
+              <div className="pbi-menu-item-left"><QrCode size={15} /> Generate QR code</div>
+            </button>
+            <div className="pbi-menu-divider" />
+            <button className="pbi-menu-item" style={embedFade} disabled={isEmbedContext} onClick={() => { if(isEmbedContext) return; toggleFavorite(); setFileDropdownOpen(false); }}>
+              <div className="pbi-menu-item-left">
+                <Star size={15} fill={isFavorite ? '#d97706' : 'none'} color={isFavorite ? '#d97706' : '#616161'} /> 
+                {isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+              </div>
+            </button>
+            <button className="pbi-menu-item" style={embedFade} disabled={isEmbedContext || !allowed('can_share')} onClick={() => { if(isEmbedContext) return; setFileDropdownOpen(false); if (onManageAccess) onManageAccess(); else shareEmail(); }}>
+              <div className="pbi-menu-item-left"><Users size={15} /> Manage access</div>
+            </button>
+            <button className="pbi-menu-item" style={embedFade} disabled={isEmbedContext} onClick={() => { if(isEmbedContext) return; setFileDropdownOpen(false); setSettingsModalOpen(true); }}>
+              <div className="pbi-menu-item-left"><Settings2 size={15} /> Settings</div>
+            </button>
+          </div>
+        )}
      </div>
 
      <button 
@@ -775,70 +787,72 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    )}
 
    {/* Home Ribbon Command Bar */}
-   {!full && activeRibbonTab === 'Home' && (
-     <div className="pbi-ribbon-command-bar">
-       {canExport && (
-         <>
-           <button className="pbi-cmd-btn" onClick={() => exportFile('pdf')} disabled={!!exporting||!allowed('can_pdf')}>
-             <FileDown size={15} color="#dc2626" /> PDF
-           </button>
-           {publishedMode !== 'paginated' && (
-             <button className="pbi-cmd-btn" onClick={() => exportFile('pptx')} disabled={!!exporting||!allowed('can_ppt')}>
-               <Presentation size={15} color="#ea580c" /> PPT
-             </button>
-           )}
-           <div className="pbi-cmd-divider" />
-         </>
-       )}
-       <button className="pbi-cmd-btn" disabled={!allowed('can_share')} onClick={onManageAccess || shareEmail}>
-         <Share2 size={15} color="#0f6cbd" /> Share
-       </button>
-       <button className="pbi-cmd-btn" disabled={!allowed('can_refresh')} onClick={load}>
-         <RefreshCcw size={15} color="#16a34a" /> Refresh
-       </button>
-       <button className="pbi-cmd-btn" disabled={!allowed('can_subscribe')} onClick={()=>setAutomationMode('subscription')}>
-         <Mail size={15} color="#0f6cbd" /> Subscribe
-       </button>
-       <button className="pbi-cmd-btn" disabled={!allowed('can_alert')} onClick={()=>setAutomationMode('alert')}>
-         <BellRing size={15} color="#b45309" /> Set alert
-       </button>
-       <div className="pbi-cmd-divider" />
-       <a
-         href="https://admin-reporting.vtabsquare.com"
-         target="_blank"
-         rel="noopener noreferrer"
-         className="pbi-cmd-btn"
-         aria-disabled={!allowed('can_home')}
-         tabIndex={allowed('can_home')?0:-1}
-         onClick={event=>{if(!allowed('can_home'))event.preventDefault()}}
-         title="Open Admin Portal in new tab"
-         style={{
-           textDecoration: 'none',
-           pointerEvents: allowed('can_home') ? 'auto' : 'none',
-           opacity: allowed('can_home') ? 1 : 0.45,
-           background: '#f0f7fc',
-           border: '1px solid #cce4f7',
-           color: '#0f6cbd',
-           fontWeight: 600,
-           borderRadius: 4,
-           padding: '0 10px',
-           display: 'inline-flex',
-           alignItems: 'center',
-           gap: 6,
-         }}
-         onMouseEnter={e => {
-           e.currentTarget.style.background = '#e0f0fb';
-           e.currentTarget.style.borderColor = '#99d0f5';
-         }}
-         onMouseLeave={e => {
-           e.currentTarget.style.background = '#f0f7fc';
-           e.currentTarget.style.borderColor = '#cce4f7';
-         }}
-       >
-         <ShieldCheck size={15} color="#0f6cbd" />
-         <span>Admin Portal</span>
-         <ExternalLink size={12} style={{ opacity: 0.7, color: "#0f6cbd" }} />
-       </a>
+    {!full && activeRibbonTab === 'Home' && (
+      <div className="pbi-ribbon-command-bar">
+        {(canExport || isEmbedContext) && (
+          <>
+            <button className="pbi-cmd-btn" style={embedFade} onClick={() => !isEmbedContext && exportFile('pdf')} disabled={isEmbedContext || !!exporting || !allowed('can_pdf')} title={isEmbedContext ? "Export is disabled in embedded view" : undefined}>
+              <FileDown size={15} color="#dc2626" /> PDF
+            </button>
+            {publishedMode !== 'paginated' && (
+              <button className="pbi-cmd-btn" style={embedFade} onClick={() => !isEmbedContext && exportFile('pptx')} disabled={isEmbedContext || !!exporting || !allowed('can_ppt')} title={isEmbedContext ? "Export is disabled in embedded view" : undefined}>
+                <Presentation size={15} color="#ea580c" /> PPT
+              </button>
+            )}
+            <div className="pbi-cmd-divider" />
+          </>
+        )}
+        <button className="pbi-cmd-btn" style={embedFade} disabled={isEmbedContext || !allowed('can_share')} onClick={isEmbedContext ? undefined : (onManageAccess || shareEmail)} title={isEmbedContext ? "Share is disabled in embedded view" : undefined}>
+          <Share2 size={15} color="#0f6cbd" /> Share
+        </button>
+        <button className="pbi-cmd-btn" style={embedFade} disabled={isEmbedContext || !allowed('can_refresh')} onClick={isEmbedContext ? undefined : load} title={isEmbedContext ? "Refresh is disabled in embedded view" : undefined}>
+          <RefreshCcw size={15} color="#16a34a" /> Refresh
+        </button>
+        <button className="pbi-cmd-btn" style={embedFade} disabled={isEmbedContext || !allowed('can_subscribe')} onClick={isEmbedContext ? undefined : ()=>setAutomationMode('subscription')} title={isEmbedContext ? "Subscribe is disabled in embedded view" : undefined}>
+          <Mail size={15} color="#0f6cbd" /> Subscribe
+        </button>
+        <button className="pbi-cmd-btn" style={embedFade} disabled={isEmbedContext || !allowed('can_alert')} onClick={isEmbedContext ? undefined : ()=>setAutomationMode('alert')} title={isEmbedContext ? "Alerts are disabled in embedded view" : undefined}>
+          <BellRing size={15} color="#b45309" /> Set alert
+        </button>
+        <div className="pbi-cmd-divider" />
+        <a
+          href="https://admin-reporting.vtabsquare.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="pbi-cmd-btn"
+          aria-disabled={!allowed('can_home') || isEmbedContext}
+          tabIndex={(allowed('can_home') && !isEmbedContext) ? 0 : -1}
+          onClick={event=>{if(!allowed('can_home') || isEmbedContext)event.preventDefault()}}
+          title={isEmbedContext ? "Admin portal is disabled in embedded view" : "Open Admin Portal in new tab"}
+          style={{
+            textDecoration: 'none',
+            pointerEvents: (allowed('can_home') && !isEmbedContext) ? 'auto' : 'none',
+            opacity: !allowed('can_home') ? 0.45 : isEmbedContext ? 0.35 : 1,
+            cursor: isEmbedContext ? 'not-allowed' : 'pointer',
+            background: '#f0f7fc',
+            border: '1px solid #cce4f7',
+            color: '#0f6cbd',
+            fontWeight: 600,
+            borderRadius: 4,
+            padding: '0 10px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+          }}
+          onMouseEnter={e => {
+            if(isEmbedContext) return;
+            e.currentTarget.style.background = '#e0f0fb';
+            e.currentTarget.style.borderColor = '#99d0f5';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.background = '#f0f7fc';
+            e.currentTarget.style.borderColor = '#cce4f7';
+          }}
+        >
+          <ShieldCheck size={15} color="#0f6cbd" />
+          <span>Admin Portal</span>
+          <ExternalLink size={12} style={{ opacity: 0.7, color: "#0f6cbd" }} />
+        </a>
        {interactionFilters.length > 0 && (
          <button className="pbi-cmd-btn" onClick={() => setInteractionFilterMap({})}>
            <Eraser size={15} color="#b45309" /> Reset filters
