@@ -376,11 +376,176 @@ def _enforce_viewer_block(authorization: str | None, report_id: str):
         except Exception as e:
             print(f"Error in _enforce_viewer_block: {e}", flush=True)
 
+# ── Embed-permissions helper ──────────────────────────────────────────────────
+# The designated public viewer account whose Admin Console UI-permission
+# settings are enforced for every iframe-embedded report view.
+_EMBED_VIEWER_EMAIL = 'vtabpublicuser@gmail.com'
+
+# Permission keys and their defaults (all enabled by default).
+_EMBED_PERMISSION_DEFAULTS: dict = {
+    'all_commands': True,
+    'can_file': True,
+    'can_home': True,
+    'can_view': True,
+    'can_share': True,
+    'can_pdf': True,
+    'can_ppt': True,
+    'can_refresh': True,
+    'can_subscribe': True,
+    'can_alert': True,
+    'can_download': True,
+}
+
+# Alias map: canonical key → legacy keys that may appear in older workspace data
+_EMBED_PERMISSION_ALIASES: dict = {
+    'can_file':      ('file_menu', 'file_ribbon'),
+    'can_home':      ('home_ribbon',),
+    'can_view':      ('view_ribbon',),
+    'can_share':     ('share',),
+    'can_pdf':       ('pdf',),
+    'can_ppt':       ('ppt', 'powerpoint'),
+    'can_refresh':   ('refresh',),
+    'can_subscribe': ('subscribe',),
+    'can_alert':     ('alerts', 'alert'),
+    'can_download':  ('download_project', 'download'),
+}
+
+def _resolve_member_ui_permissions(description: dict, user_id: str = '', user_email: str = '') -> dict:
+    """Resolve one member's flags without using the summary switch as a deny-all."""
+    permission_map = description.get('member_ui_permissions') or {}
+    configured: dict = {}
+    if user_id and isinstance(permission_map.get(user_id), dict):
+        configured = permission_map[user_id]
+    if not configured and user_email:
+        wanted = user_email.strip().lower()
+        for key, value in permission_map.items():
+            if str(key).strip().lower() == wanted and isinstance(value, dict):
+                configured = value
+                break
+    normalized = dict(configured)
+    for canonical, legacy_keys in _EMBED_PERMISSION_ALIASES.items():
+        if canonical not in normalized:
+            for legacy_key in legacy_keys:
+                if legacy_key in normalized:
+                    normalized[canonical] = normalized[legacy_key]
+                    break
+    resolved = {key: bool(normalized.get(key, default)) for key, default in _EMBED_PERMISSION_DEFAULTS.items()}
+    command_keys = [key for key in resolved if key != 'all_commands']
+    resolved['all_commands'] = all(resolved[key] for key in command_keys)
+    return resolved
+
+@app.get('/api/v1/published/{report_id}/embed-permissions')
+def published_embed_permissions(report_id: str):
+    """Return UI-permission settings for the public embed viewer account.
+
+    Uses the service-role key internally so no user Bearer token is needed.
+    This lets unauthenticated iframe viewers (Edge, Chrome, Safari) inherit
+    exactly the permissions configured in the Admin Console for
+    vtabpublicuser@gmail.com in the report's workspace.
+
+    Non-embed (direct portal) flows never call this endpoint and are
+    completely unaffected by this implementation.
+    """
+    defaults = {**_EMBED_PERMISSION_DEFAULTS}
+    try:
+        from .supabase_store import _admin_client
+        sb = _admin_client()
+
+        # 1. Look up the embed account's vtab_users row by email (case-insensitive).
+        user_rows = (
+            sb.table('vtab_users')
+            .select('id')
+            .ilike('email', _EMBED_VIEWER_EMAIL)
+            .limit(1)
+            .execute()
+            .data or []
+        )
+        embed_user_id = str(user_rows[0].get('id') or '') if user_rows else ''
+
+        # 2. Find the report and its workspace.
+        report_rows = (
+            sb.table('published_reports')
+            .select('workspace_id,owner_id')
+            .eq('id', report_id)
+            .limit(1)
+            .execute()
+            .data or []
+        )
+        if not report_rows:
+            return defaults
+
+        workspace_id = report_rows[0].get('workspace_id')
+        if not workspace_id:
+            return defaults
+
+        # 3. Read workspace description → member_ui_permissions.
+        ws_rows = (
+            sb.table('workspaces')
+            .select('description')
+            .eq('id', workspace_id)
+            .limit(1)
+            .execute()
+            .data or []
+        )
+        if not ws_rows:
+            return defaults
+
+        try:
+            description = json.loads(ws_rows[0].get('description') or '{}')
+        except Exception:
+            description = {}
+
+        return _resolve_member_ui_permissions(description, embed_user_id, _EMBED_VIEWER_EMAIL)
+
+    except Exception as exc:
+        logger.warning('embed-permissions lookup failed for %s: %s', report_id, exc)
+        return defaults
+
+
+@app.get('/api/v1/published/{report_id}/ui-permissions')
+def published_ui_permissions(report_id: str, authorization: str | None = Header(default=None)):
+    """Return the authenticated user's authoritative command permissions."""
+    token = _service_access_token(authorization)
+    try:
+        authenticated_user = service_authenticate(token)
+        user_id = str(authenticated_user.get('id') or '')
+        user_email = str(authenticated_user.get('email') or '')
+        from .supabase_store import _admin_client
+        sb = _admin_client()
+        report_rows = sb.table('published_reports').select('workspace_id,owner_id').eq('id', report_id).limit(1).execute().data or []
+        if not report_rows:
+            raise HTTPException(404, 'Published report not found')
+        report_row = report_rows[0]
+        if str(report_row.get('owner_id') or '') == user_id:
+            return {**_EMBED_PERMISSION_DEFAULTS}
+        workspace_id = report_row.get('workspace_id')
+        if not workspace_id:
+            return {**_EMBED_PERMISSION_DEFAULTS}
+        workspace_rows = sb.table('workspaces').select('description,owner_id,created_by').eq('id', workspace_id).limit(1).execute().data or []
+        if not workspace_rows:
+            raise HTTPException(404, 'Workspace not found')
+        workspace = workspace_rows[0]
+        if str(workspace.get('owner_id') or workspace.get('created_by') or '') == user_id:
+            return {**_EMBED_PERMISSION_DEFAULTS}
+        try:
+            description = json.loads(workspace.get('description') or '{}')
+        except Exception:
+            description = {}
+        return _resolve_member_ui_permissions(description, user_id, user_email)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning('ui-permissions lookup failed for %s: %s', report_id, exc)
+        raise HTTPException(403, 'Unable to verify report command permissions.') from exc
+
+
 def _enforce_report_ui_permission(authorization: str | None, report_id: str, permission: str):
     """Enforce the same per-user command policy used by the Services ribbon."""
     token = _service_access_token(authorization)
     try:
-        user_id = str(service_authenticate(token).get('id') or '')
+        authenticated_user = service_authenticate(token)
+        user_id = str(authenticated_user.get('id') or '')
+        user_email = str(authenticated_user.get('email') or '')
         from .supabase_store import _admin_client
         sb = _admin_client()
         report_rows = sb.table('published_reports').select('workspace_id,owner_id').eq('id', report_id).limit(1).execute().data or []
@@ -402,8 +567,8 @@ def _enforce_report_ui_permission(authorization: str | None, report_id: str, per
             description = json.loads(workspace.get('description') or '{}')
         except Exception:
             description = {}
-        configured = (description.get('member_ui_permissions') or {}).get(user_id) or {}
-        if configured.get('all_commands', True) is False or configured.get(permission, True) is False:
+        configured = _resolve_member_ui_permissions(description, user_id, user_email)
+        if configured.get(permission, True) is False:
             raise HTTPException(403, 'This command is disabled for your workspace role.')
     except HTTPException:
         raise

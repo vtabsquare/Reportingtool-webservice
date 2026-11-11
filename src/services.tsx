@@ -28,16 +28,20 @@ export default function Services(){
   return()=>unsubscribe();
  },[]);
  if(!ready)return <div className="loading"><div className="brandMark">V</div><span>Loading workspace…</span></div>;
+ // ── Embed / iframe check runs BEFORE the session gate ───────────────────────
+ // Always uses vtabpublicuser@gmail.com so the Admin Console UI-permission
+ // settings for that account are enforced in every embedded report view.
+ // Non-embed (direct portal) flow is completely unaffected.
  if(isEmbed && embedReportId){
-   const embedUser = params?.get('user') || 'vtabdemouser@gmail.com';
+   const EMBED_VIEWER_EMAIL = 'vtabpublicuser@gmail.com';
    return (
     <div className="pbi-app-shell" style={{width:'100vw',height:'100vh',overflow:'hidden',display:'flex',flexDirection:'column'}}>
-     <PublishedViewer 
-       reportId={embedReportId} 
-       embedded={true} 
-       cloudMode={true} 
+     <PublishedViewer
+       reportId={embedReportId}
+       embedded={true}
+       cloudMode={true}
        userRole="Viewer"
-       currentUserEmail={embedUser}
+       currentUserEmail={EMBED_VIEWER_EMAIL}
      />
     </div>
    );

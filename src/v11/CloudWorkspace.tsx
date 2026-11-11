@@ -10,7 +10,7 @@ import NotificationCenter from "./NotificationCenter";
 import NotificationSettingsDialog from "./NotificationSettingsDialog";
 import ServicesUpdateExperience from "./ServicesUpdateExperience";
 import HelpSupportView from "./HelpSupportView";
-import { resolveReportUiPermissions } from '../uiPermissions';
+import { resolveReportUiPermissions, DEFAULT_REPORT_UI_PERMISSIONS } from '../uiPermissions';
 import { 
   Home, Plus, Compass, Layers, User, Search, Settings, HelpCircle, 
   X, ChevronDown, Star, Share2, RefreshCw, Trash2, 
@@ -375,7 +375,14 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
   // ─── VIEWER MODE ─────────────────────────────────────────────────────────────
   if (viewing) {
-    const userUiPermissions=resolveReportUiPermissions((activeWorkspace as any)?.description,session?.user?.id);
+    const viewingWorkspace = activeWorkspace?.id === viewing.workspace_id ? activeWorkspace : null;
+    // Only the workspace Owner retains all commands unconditionally.
+    // Admins, Members, Contributors, and Viewers have their permissions resolved
+    // from member_ui_permissions configured in the Admin Console.
+    const isOwner = viewingWorkspace?.role === 'Owner' || (viewingWorkspace as any)?.owner_id === session?.user?.id || (viewingWorkspace as any)?.created_by === session?.user?.id;
+    const userUiPermissions = isOwner
+      ? { ...DEFAULT_REPORT_UI_PERMISSIONS }
+      : resolveReportUiPermissions((viewingWorkspace as any)?.description, session?.user?.id, session?.user?.email);
     return (
       <div className="pbi-app-shell">
         <ServicesUpdateExperience />
@@ -383,7 +390,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
           <PublishedViewer 
             reportId={viewing.id} 
             userRole={viewing.role} 
-            initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project, role: viewing.role, workspace_id: viewing.workspace_id || activeWorkspace?.id }} 
+            initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project, role: viewing.role, workspace_id: viewing.workspace_id || viewingWorkspace?.id }} 
             embedded 
             cloudMode 
             initialPaginatedId={viewing.paginatedId}
