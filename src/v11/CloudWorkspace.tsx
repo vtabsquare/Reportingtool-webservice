@@ -194,18 +194,19 @@ export default function CloudWorkspace({ session }: { session: any }) {
       if (target.share && canShare) setSharing(report);
       return;
     }
-    if (!supabase) return;
-    supabase.from('published_reports').select('id, name, published_at, project_json')
-      .eq('id', target.reportId).eq('owner_id', session?.user?.id).maybeSingle()
-      .then(({ data }) => {
-        if (!data) { if (!loading) setTargetDenied('This report is not shared with the signed-in account.'); return; }
+    api<any>(`/published/${target.reportId}/definition`)
+      .then(item => {
+        if (!item?.project) { if (!loading) setTargetDenied('This report is not shared with the signed-in account.'); return; }
         const r: Report = {
-          id: data.id, name: data.name, published_at: data.published_at, role: 'Owner',
-          pages: parseProjectJson(data.project_json)?.report?.pages?.length || 1,
-          project: parseProjectJson(data.project_json)
+          id: item.id || target.reportId, name: item.name || 'Report', published_at: item.published_at || new Date().toISOString(), role: item.role || 'Viewer',
+          pages: item.project?.report?.pages?.length || 1,
+          project: item.project
         };
         setTargetDenied(''); setViewing(r);
         if (target.share) setSharing(r);
+      })
+      .catch(() => {
+        if (!loading) setTargetDenied('This report is not shared with the signed-in account.');
       });
   }, [loading, reports, viewing]);
 
