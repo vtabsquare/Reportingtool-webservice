@@ -28,25 +28,26 @@ function parseProjectJson(value:any):any{
 }
 
 async function fetchReportFromSupabase(reportId:string):Promise<any>{
-  const{supabase}=await import('../supabase');
-  if(!supabase)throw new Error('Supabase not configured');
-  
-  const{data,error}=await supabase
-    .from('published_reports')
-    .select('id,name,published_at,updated_at,project_json,workspace_id')
-    .eq('id',reportId)
-    .maybeSingle();
-  // maybeSingle() returns null instead of throwing PGRST116 when no row is found.
-  // This fixes "Cannot coerce the result to a single JSON object" in Edge/Safari
-  // when the report isn't yet accessible under the current RLS policy.
-  if(error)throw error;
-  if(!data)throw new Error('Published report not found or access denied.');
+  try{
+    const{supabase}=await import('../supabase');
+    if(supabase){
+      const{data,error}=await supabase
+        .from('published_reports')
+        .select('id,name,published_at,updated_at,project_json,workspace_id')
+        .eq('id',reportId)
+        .maybeSingle();
+      if(!error && data?.project_json){
+        return {...data,project:parseProjectJson(data.project_json)};
+      }
+    }
+  }catch{}
 
-  // Supabase RLS is the single source of truth. If this row was returned, the
-  // signed-in owner, direct grantee, workspace member, or service account is
-  // authorized. A second client-side grants check would incorrectly reject
-  // workspace access that is valid under RLS.
-  return{...data,project:parseProjectJson(data.project_json)};
+  // Reliable fallback: load definition through the Services backend (uses service-role key, avoids anon RLS timeouts)
+  const backendItem = await api<any>(`/published/${reportId}/definition`);
+  if(backendItem?.project){
+    return backendItem;
+  }
+  throw new Error('Published report not found or access denied.');
 }
 
 type VisualQueryResult={rows:any[];error?:string;conditionalValues?:Record<string,any>;conditionalError?:string};
@@ -485,6 +486,12 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  const actionPageHistoryRef=useRef<number[]>([]),runtimeVisibilityDefaultsRef=useRef<Record<string,boolean>>({});
  const load=()=>{
   if(initialItem && initialItem.project){setItem(initialItem);setError('');return;}
+  if(isExternalEmbed){
+   api<any>(`/published/${reportId}/definition`)
+     .then(x=>{setItem({...x, role: userRole || initialItem?.role || x?.role || 'Viewer'});setError('')})
+     .catch(()=>fetchReportFromSupabase(reportId).then(x=>{setItem({...x, role: userRole || initialItem?.role || x?.role || 'Viewer'});setError('')}).catch(e=>setError(e.message||String(e))));
+   return;
+  }
   if(WORKSPACE_ONLY){
    fetchReportFromSupabase(reportId).then(x=>{setItem({...x, role: userRole || initialItem?.role || x?.role});setError('')}).catch(e=>setError(e.message||String(e)));
    return;

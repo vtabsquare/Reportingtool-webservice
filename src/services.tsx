@@ -11,8 +11,8 @@ import PublishedViewer from'./v11/PublishedViewer';
 export default function Services(){
  const[session,setSession]=useState<any>(null),[ready,setReady]=useState(false);
  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
- const isEmbed = params?.get('embed') === '1' || params?.get('public') === '1';
- const embedReportId = params?.get('report');
+ const isEmbed = params?.get('embed') === '1' || params?.get('public') === '1' || params?.get('embedded') === 'true';
+ const embedReportId = params?.get('report') || params?.get('viewer');
  useEffect(()=>{document.documentElement.dataset.theme='vtab';document.documentElement.dataset.colorMode='light';document.documentElement.style.colorScheme='light';document.documentElement.dataset.density='comfortable'},[]);
  useEffect(()=>{
   let unsubscribe=()=>{};

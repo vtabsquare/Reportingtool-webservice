@@ -1099,9 +1099,40 @@ def list_published_reports(authorization:str|None=Header(default=None)):
 
 @app.get('/api/v1/published/{report_id}')
 def get_published_report(report_id:str,authorization:str|None=Header(default=None)):
-    _workspace_user(authorization);item=store.get_published(report_id)
-    if not item:raise HTTPException(404,'Published report not found')
-    return item
+    try:
+        _workspace_user(authorization)
+    except HTTPException:
+        pass
+    item=store.get_published(report_id)
+    if item and item.get('project'):
+        return item
+    cloud_project=_get_cloud_project(report_id)
+    if cloud_project:
+        report_name=(cloud_project.get('report') or {}).get('name') or cloud_project.get('name') or 'Published Report'
+        return {
+            'id': report_id,
+            'name': report_name,
+            'project': cloud_project,
+            'role': 'Viewer'
+        }
+    raise HTTPException(404,'Published report not found')
+
+@app.get('/api/v1/published/{report_id}/definition')
+def published_report_definition(report_id:str):
+    """Return published report definition for viewers and iframe embeds."""
+    item=store.get_published(report_id)
+    if item and item.get('project'):
+        return item
+    cloud_project=_get_cloud_project(report_id)
+    if cloud_project:
+        report_name=(cloud_project.get('report') or {}).get('name') or cloud_project.get('name') or 'Published Report'
+        return {
+            'id': report_id,
+            'name': report_name,
+            'project': cloud_project,
+            'role': 'Viewer'
+        }
+    raise HTTPException(404,'Published report not found')
 
 @app.post('/api/v1/publish')
 def publish_current_project():
