@@ -114,12 +114,27 @@ export default function HelpSupportView({
     );
   }, [requests, search]);
 
-  const openNewRequestModal = (initialTitle = '') => {
-    setNewTitle(initialTitle || briefSearch || '');
-    setNewDesc('');
+  const openNewRequestModal = async (initialTitle = '') => {
+    setSubmitting(true);
     setErrorMsg('');
-    setSuccessMsg('');
-    setModalOpen(true);
+    try {
+      const result = await api<{url:string}>('/service/ticket-center/link', {
+        method:'POST',
+        body:JSON.stringify({
+          email:userEmail||'',
+          workspace_id:activeWorkspaceId||activeWorkspaceName||null,
+          os_info:{platform:navigator.platform,userAgent:navigator.userAgent},
+          recent_errors:initialTitle||briefSearch||null,
+          source:'services',
+          open_view:'submit',
+        }),
+      });
+      window.open(result.url,'_blank','noopener,noreferrer');
+    } catch (error:any) {
+      setErrorMsg(error?.message||'VTAB Ticket Center could not be opened.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const submitRequest = async (e?: React.FormEvent) => {

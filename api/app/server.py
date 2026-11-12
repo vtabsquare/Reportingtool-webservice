@@ -73,6 +73,37 @@ except Exception as exc:
 # or needs recovery. Data/Transform/Model endpoints initialize it lazily.
 store=Store(); app=FastAPI(title='VTAB Reporting Studio API',version=PRODUCT_VERSION)
 
+def _ticket_center_link(payload: dict) -> dict:
+    base = os.environ.get('VTAB_TICKET_CENTER_URL', 'http://127.0.0.1:8860').rstrip('/')
+    key = os.environ.get('VTAB_TICKET_INTEGRATION_KEY', '').strip()
+    if not key:
+        raise HTTPException(503, 'VTAB Ticket Center integration is not configured.')
+    request = urllib.request.Request(base + '/api/integrations/link', data=json.dumps(payload).encode('utf-8'), method='POST', headers={'Content-Type': 'application/json', 'X-VTAB-Integration-Key': key})
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            return json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode('utf-8', errors='replace')
+        raise HTTPException(error.code, f'Ticket Center rejected the handoff: {detail}') from error
+    except Exception as error:
+        raise HTTPException(502, 'VTAB Ticket Center is currently unavailable.') from error
+
+@app.post('/api/v1/service/ticket-center/link')
+def service_ticket_center_link(payload: dict, authorization: str | None = Header(default=None)):
+    user = _workspace_user(authorization)
+    email = str(user.get('email') or payload.get('email') or 'services-user@vtab.local').strip().lower()
+    return _ticket_center_link({
+        'user_id': str(user.get('id') or email),
+        'email': email,
+        'role': 'user',
+        'app_version': PRODUCT_VERSION,
+        'os_info': payload.get('os_info') or {},
+        'workspace_id': payload.get('workspace_id'),
+        'recent_errors': payload.get('recent_errors'),
+        'source': str(payload.get('source') or 'services'),
+        'open_view': payload.get('open_view') or 'submit',
+    })
+
 app.include_router(data_bridge_router)
 # Compress larger API responses (report definitions, visual rows and export
 # metadata) before they cross the public network. Static assets should also be
@@ -2279,6 +2310,105 @@ def service_get_support_config():
     }
 
 
+def _map_ticket_to_support_request(row: dict) -> dict:
+    return {
+        'id': str(row.get('id') or ''),
+        'request_number': f"#{row.get('ticket_number')}" if row.get('ticket_number') is not None else str(row.get('id') or ''),
+        'issue_title': row.get('title') or '',
+        'description': row.get('description') or '',
+        'service': row.get('source') or row.get('category') or 'Reporting Services',
+        'severity': str(row.get('severity') or 'medium').capitalize(),
+        'status': row.get('status') or 'NEW',
+        'owner_email': row.get('reporter_email') or '',
+        'owner_id': row.get('reporter_user_id'),
+        'workspace_id': row.get('workspace_id'),
+        'workspace_name': row.get('workspace_id') or 'Workspace',
+        'created_at': row.get('created_at') or '',
+        'updated_at': row.get('updated_at') or '',
+    }
+
+
+def _sb_tickets_client():
+    if not (os.environ.get('VITE_SUPABASE_URL') and os.environ.get('SUPABASE_SERVICE_ROLE_KEY')):
+        return None
+    from .supabase_store import _admin_client
+    return _admin_client()
+
+
+def _sb_create_ticket(req_data: dict) -> dict | None:
+    sb = _sb_tickets_client()
+    if not sb:
+        return None
+    try:
+        max_row = sb.table('tickets').select('ticket_number').order('ticket_number', desc=True).limit(1).execute().data or []
+        next_num = (int(max_row[0]['ticket_number']) + 1) if max_row and max_row[0].get('ticket_number') else 1001
+        if next_num <= 1000:
+            next_num = 1001
+        sev = str(req_data.get('severity') or 'medium').strip().lower()
+        if sev not in ('low', 'medium', 'high', 'critical'):
+            sev = 'medium'
+        now_iso = datetime.now(timezone.utc).isoformat()
+        row = {
+            'id': str(uuid.uuid4()),
+            'ticket_number': next_num,
+            'title': str(req_data.get('issue_title') or '').strip()[:255],
+            'description': str(req_data.get('description') or '').strip(),
+            'category': 'bug',
+            'severity': sev,
+            'status': 'NEW',
+            'source': 'services',
+            'app_version': PRODUCT_VERSION,
+            'os_info': {},
+            'workspace_id': req_data.get('workspace_id') or req_data.get('workspace_name'),
+            'reporter_user_id': str(req_data.get('owner_id') or req_data.get('owner_email') or 'services-user@vtab.local'),
+            'reporter_email': str(req_data.get('owner_email') or 'services-user@vtab.local').strip().lower(),
+            'created_at': now_iso,
+            'updated_at': now_iso,
+        }
+        inserted = sb.table('tickets').insert(row).execute().data or [row]
+        created_row = inserted[0]
+        try:
+            sb.table('ticket_timeline').insert({
+                'id': str(uuid.uuid4()),
+                'ticket_id': created_row['id'],
+                'actor_id': row['reporter_user_id'],
+                'actor_role': 'user',
+                'event_type': 'created',
+                'old_status': None,
+                'new_status': 'NEW',
+                'notes': 'Ticket submitted from Reporting Services',
+                'created_at': now_iso,
+            }).execute()
+        except Exception:
+            pass
+        return _map_ticket_to_support_request(created_row)
+    except Exception:
+        return None
+
+
+def _sb_list_tickets(owner_email: str | None = None, status_filter: str | None = None) -> list[dict] | None:
+    sb = _sb_tickets_client()
+    if not sb:
+        return None
+    try:
+        query = sb.table('tickets').select('*').order('updated_at', desc=True)
+        if owner_email:
+            query = query.ilike('reporter_email', owner_email.strip())
+        rows = query.execute().data or []
+        mapped = [_map_ticket_to_support_request(r) for r in rows]
+        if status_filter:
+            sf = status_filter.strip().lower()
+            if sf == 'open':
+                mapped = [r for r in mapped if str(r.get('status') or '').lower() not in ('closed', 'resolved')]
+            elif sf == 'closed':
+                mapped = [r for r in mapped if str(r.get('status') or '').lower() in ('closed', 'resolved')]
+            else:
+                mapped = [r for r in mapped if str(r.get('status') or '').lower() == sf]
+        return mapped
+    except Exception:
+        return None
+
+
 @app.post('/api/v1/service/support-requests')
 def service_create_support_request(payload: dict, authorization: str | None = Header(default=None)):
     title = str(payload.get('issue_title') or '').strip()
@@ -2324,7 +2454,7 @@ def service_create_support_request(payload: dict, authorization: str | None = He
         'admin_email': admin_recipient,
     }
 
-    created = store.create_support_request(req_data)
+    created = _sb_create_ticket(req_data) or store.create_support_request(req_data)
 
     try:
         from .notification_service import enqueue_email
@@ -2394,12 +2524,21 @@ def service_list_support_requests(tab: str = 'my', status: str | None = None, us
     owner_filter = email if (tab == 'my' and email) else None
     status_filter = status or ('open' if tab == 'open' else ('closed' if tab == 'closed' else None))
 
-    requests = store.list_support_requests(owner_email=owner_filter, status=status_filter)
+    sb_requests = _sb_list_tickets(owner_email=owner_filter, status_filter=status_filter)
+    requests = sb_requests if sb_requests is not None else store.list_support_requests(owner_email=owner_filter, status=status_filter)
     return {'requests': requests, 'total': len(requests)}
 
 
 @app.get('/api/v1/service/support-requests/{request_id}')
 def service_get_support_request(request_id: str):
+    sb = _sb_tickets_client()
+    if sb:
+        try:
+            rows = sb.table('tickets').select('*').eq('id', request_id).limit(1).execute().data or []
+            if rows:
+                return {'request': _map_ticket_to_support_request(rows[0])}
+        except Exception:
+            pass
     item = store.get_support_request(request_id)
     if not item:
         raise HTTPException(404, "Support request not found.")

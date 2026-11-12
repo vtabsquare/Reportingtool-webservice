@@ -137,7 +137,35 @@ export default function CloudWorkspace({ session }: { session: any }) {
   // Action Menu for rows
   const [menuReportId, setMenuReportId] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [helpMenuOpen, setHelpMenuOpen] = useState(false);
   const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!helpMenuOpen) return;
+    const close = () => setHelpMenuOpen(false);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [helpMenuOpen]);
+
+  const openReportIssue = async () => {
+    setHelpMenuOpen(false);
+    const fallbackUrl = `${(import.meta as any).env?.VITE_TICKET_CENTER_URL || 'http://127.0.0.1:8860'}/?view=submit&source=services`;
+    try {
+      const result = await api<{ url: string }>('/service/ticket-center/link', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: session?.user?.email || '',
+          workspace_id: activeWorkspace?.id || activeWorkspace?.name || null,
+          os_info: { platform: navigator.platform, userAgent: navigator.userAgent },
+          source: 'services',
+          open_view: 'submit',
+        }),
+      });
+      window.open(result.url || fallbackUrl, '_blank', 'noopener,noreferrer');
+    } catch {
+      window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
 
   // Add Member modal state
   const [addMemberOpen, setAddMemberOpen] = useState(false);
@@ -491,14 +519,55 @@ export default function CloudWorkspace({ session }: { session: any }) {
           <button className="pbi-header-icon-btn" title="Settings" onClick={() => setNotificationSettingsOpen(true)}>
             <Settings size={17} />
           </button>
-          <button 
-            className={`pbi-header-icon-btn ${viewMode === 'help_support' ? 'active' : ''}`} 
-            title="Help + support"
-            onClick={() => setViewMode('help_support')}
-            style={viewMode === 'help_support' ? { background: '#f0f0f0', borderRadius: 4 } : undefined}
-          >
-            <HelpCircle size={17} color={viewMode === 'help_support' ? '#0f6cbd' : undefined} />
-          </button>
+          <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
+            <button
+              className={`pbi-header-icon-btn ${viewMode === 'help_support' || helpMenuOpen ? 'active' : ''}`}
+              title="Help & Report an issue"
+              onClick={() => { setUserMenuOpen(false); setHelpMenuOpen(open => !open); }}
+              style={viewMode === 'help_support' || helpMenuOpen ? { background: '#f0f0f0', borderRadius: 4 } : undefined}
+            >
+              <HelpCircle size={17} color={viewMode === 'help_support' || helpMenuOpen ? '#0f6cbd' : undefined} />
+            </button>
+            {helpMenuOpen && (
+              <div style={{
+                position: 'absolute', right: 0, top: 38, width: 220, background: '#fff',
+                borderRadius: 8, boxShadow: '0 8px 30px rgba(0,0,0,0.14)', border: '1px solid #e1e1e1',
+                padding: 6, zIndex: 200, color: '#242424'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => void openReportIssue()}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: 8, padding: '8px 10px', border: 'none', background: 'transparent',
+                    color: '#0f172a', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer', textAlign: 'left'
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#f0f7fc'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <HelpCircle size={15} color="#0f6cbd" />
+                    Report an issue
+                  </span>
+                  <ExternalLink size={12} color="#64748b" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setHelpMenuOpen(false); setViewMode('help_support'); }}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
+                    border: 'none', background: 'transparent', color: '#475569', borderRadius: 6,
+                    fontSize: 13, fontWeight: 500, cursor: 'pointer', textAlign: 'left'
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+                >
+                  <FileText size={15} color="#64748b" />
+                  Help + support
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* User profile avatar */}
           <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
