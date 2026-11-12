@@ -74,7 +74,7 @@ except Exception as exc:
 store=Store(); app=FastAPI(title='VTAB Reporting Studio API',version=PRODUCT_VERSION)
 
 def _ticket_center_link(payload: dict) -> dict:
-    base = os.environ.get('VTAB_TICKET_CENTER_URL', 'http://127.0.0.1:8860').rstrip('/')
+    base = os.environ.get('VTAB_TICKET_CENTER_URL', 'https://ticketing.vtabsquare.com').rstrip('/')
     key = os.environ.get('VTAB_TICKET_INTEGRATION_KEY', '').strip()
     if not key:
         raise HTTPException(503, 'VTAB Ticket Center integration is not configured.')

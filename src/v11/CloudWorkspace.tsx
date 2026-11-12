@@ -149,7 +149,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
   const openReportIssue = async () => {
     setHelpMenuOpen(false);
-    const fallbackUrl = `${(import.meta as any).env?.VITE_TICKET_CENTER_URL || 'http://127.0.0.1:8860'}/?view=submit&source=services`;
+    const fallbackUrl = `${(import.meta as any).env?.VITE_TICKET_CENTER_URL || 'https://ticketing.vtabsquare.com'}/?view=submit&source=services`;
     try {
       const result = await api<{ url: string }>('/service/ticket-center/link', {
         method: 'POST',
