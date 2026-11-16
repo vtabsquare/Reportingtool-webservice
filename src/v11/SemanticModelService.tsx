@@ -59,7 +59,7 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
   return (
     <div>
       {/* Power BI Workspace Action Toolbar (Reference Images 1 & 5) */}
-      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'10px 28px',background:'#ffffff',borderBottom:'1px solid #e1e1e1',flexWrap:'wrap'}}>
+      <div className="pbi-workspace-toolbar" style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'10px 28px',background:'#ffffff',borderBottom:'1px solid #e1e1e1',flexWrap:'wrap'}}>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           {onNewItem && workspace.access_scope !== 'report' && canManage(workspace.role) && (
             <button onClick={onNewItem} className="pbi-btn-tool" style={{fontWeight:600}}>
@@ -110,10 +110,10 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                   </td>
                   <td>
                     <div style={{display:'flex',alignItems:'center',gap:10}}>
-                      <span style={item.type==='Report'?reportIcon:paginated?paginatedIcon:modelIcon}>
+                      <span className={`pbi-item-icon ${item.type === 'Report' ? 'pbi-item-icon-report' : paginated ? 'pbi-item-icon-paginated' : 'pbi-item-icon-model'}`} style={item.type==='Report'?reportIcon:paginated?paginatedIcon:modelIcon}>
                         {item.type==='Report'?<BarChart2 size={15}/>:paginated?<FileText size={15}/>:<Database size={15}/>}
                       </span>
-                      <b style={{color:'#242424',fontWeight:600}}>{item.name}</b>
+                      <b className="pbi-item-name" style={{color:'var(--pbi-text, #242424)',fontWeight:600}}>{item.name}</b>
                       {item.report && !paginated && canManage(item.report.role || workspace.role) && (
                         <button
                           title="Share / Manage permissions"
@@ -135,7 +135,7 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                     </div>
                   </td>
                   <td>
-                    <span style={{color:isReady?'#166534':'#b45309',fontWeight:600,fontSize:12}}>
+                    <span className="pbi-model-status" data-status={item.model ? (isReady ? 'ready' : 'setup') : 'active'} style={{color:isReady?'#166534':'#b45309',fontWeight:600,fontSize:12}}>
                       {item.model?(isReady?'Ready':'Setup required'):'Active'}
                     </span>
                   </td>
@@ -148,7 +148,7 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                       <MoreHorizontal size={16}/>
                     </button>
                     {menu===item.id&&item.report&&(
-                      <div style={menuStyle}>
+                      <div className="pbi-table-row-menu" style={menuStyle}>
                         <Menu label={paginated?'Open paginated report':'Open report'} onClick={()=>{setMenu(null);onOpenReport(item.report!)}}/>
                         {!paginated&&(
                           <>
@@ -165,7 +165,7 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                       </div>
                     )}
                     {menu===item.id&&item.model&&canAccessSemanticModel(workspace.role)&&(
-                      <div style={menuStyle}>
+                      <div className="pbi-table-row-menu" style={menuStyle}>
                         <Menu label="Open Unified Data Model" onClick={()=>void open(item.model!,'model')}/>
                         <Menu label="Refresh now" disabled={!readiness[item.model.id]?.refresh_ready} title={readiness[item.model.id]?.blockers?.join(' ')||''} onClick={()=>void refreshNow(item.model!)}/>
                         <Menu label="Refresh history" onClick={()=>void open(item.model!,'history')}/>
@@ -185,11 +185,11 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
             })}
             {!busy&&!items.length&&(
               <tr>
-                <td colSpan={8} style={{padding:'56px 24px',textAlign:'center',color:'#616161'}}>
-                  <b style={{display:'block',fontSize:15,color:'#242424',marginBottom:6}}>No content in {workspace.name}</b>
-                  <p style={{margin:'0 0 16px',fontSize:13,color:'#616161'}}>Publish from Desktop or click <b>+ New item</b> to import a package into this workspace.</p>
+                <td colSpan={8} style={{padding:'56px 24px',textAlign:'center',color:'var(--pbi-text-subtle, #616161)'}}>
+                  <b style={{display:'block',fontSize:15,color:'var(--pbi-text, #242424)',marginBottom:6}}>No content in {workspace.name}</b>
+                  <p style={{margin:'0 0 16px',fontSize:13,color:'var(--pbi-text-subtle, #616161)'}}>Publish from Desktop or click <b>+ New item</b> to import a package into this workspace.</p>
                   {otherWorkspaces && otherWorkspaces.length > 0 && onSelectWorkspace && (
-                    <div style={{marginTop:20,display:'inline-flex',flexDirection:'column',alignItems:'center',gap:10,padding:'14px 20px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8}}>
+                    <div className="pbi-switch-workspace-box" style={{marginTop:20,display:'inline-flex',flexDirection:'column',alignItems:'center',gap:10,padding:'14px 20px',background:'#f8fafc',border:'1px solid #e2e8f0',borderRadius:8}}>
                       <span style={{fontSize:12,fontWeight:600,color:'#475569'}}>Switch to another workspace:</span>
                       <div style={{display:'flex',gap:8,flexWrap:'wrap',justifyContent:'center'}}>
                         {otherWorkspaces.map(w=>(
@@ -247,7 +247,7 @@ function SemanticModelDialog({model,initialView,role,workspaceName,pendingJobId,
   useEffect(()=>{if(view==='settings')void loadRuntime();if(view==='history')void loadHistory()},[view,model.id]);
   useEffect(()=>{if(!pendingJobId)return;let cancelled=false,timer:any;const poll=async()=>{try{const status=await api<any>(`/service/semantic-models/${model.id}/bridge-refresh/${pendingJobId}`);if(cancelled)return;setRefreshStatus({...status,message:status.error_message||''});await loadHistory();if(['succeeded','failed'].includes(String(status.status).toLowerCase())){onPendingCleared();return}timer=setTimeout(poll,2000)}catch(e:any){if(!cancelled){setRefreshStatus({status:'failed',message:e.message||String(e)});onPendingCleared()}}};void poll();return()=>{cancelled=true;if(timer)clearTimeout(timer)}},[pendingJobId,model.id]);
   const navItems:Array<[View,string,string]>=[['model','Overview','Tables, measures and reports'],['settings','Connections & refresh','Sources, bridge and schedule'],['security','Security','Roles, users and groups'],['history','Refresh history','Runs, status and errors']];
-  return <div style={backdrop} onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section style={dialog} onMouseDown={e=>e.stopPropagation()}><header style={modelHeader}><div style={modelGlyph}>⠿</div><div style={{minWidth:0}}><small style={modelKicker}>UNIFIED DATA MODEL</small><h2 style={{margin:'2px 0 3px',fontSize:20,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{model.name}</h2><span style={modelMeta}>{workspaceName} · Updated {when(model.updated_at)} · {role}</span></div><span style={modelStatus}>{model.status||'Published'}</span><button aria-label="Close Unified Data Model" onClick={onClose} style={close}>×</button></header><div style={modelShell}><nav style={modelNav}>{navItems.map(([id,label,description])=><button key={id} onClick={()=>setView(id)} style={modelNavButton(view===id)}><b>{label}</b><small>{description}</small></button>)}</nav><main style={modelMain}>{refreshStatus&&<div style={['failed','cancelled'].includes(String(refreshStatus.status).toLowerCase())?errorStyle:successStyle}><b>{statusLabel(refreshStatus.status)}</b>{refreshStatus.message&&<span> · {refreshStatus.message}</span>}</div>}{error&&<div style={errorStyle}>{error}</div>}{loading&&<p style={hint}>Loading…</p>}{view==='model'&&<><div style={overviewHero}><div><small style={modelKicker}>MODEL OVERVIEW</small><h2 style={{margin:'5px 0'}}>Published semantic definition</h2><p style={hint}>Review the governed model used by connected reports. Structural changes are made in Desktop and applied here on the next publish.</p></div><div style={governedBadge}>✓ Governed</div></div><Stats values={[[Object.keys(tables).length,'Tables'],[Object.keys(measures).length,'Measures'],[relationships.length,'Relationships'],[model.reports?.length||0,'Reports']]}/><div style={overviewGrid}><section style={overviewCard}><h3 style={{marginTop:0}}>Tables</h3>{Object.entries<any>(tables).map(([name,value])=><details key={name} style={row}><summary><b>{name}</b> · {Object.keys(value?.columns||{}).length} columns</summary><div>{Object.keys(value?.columns||{}).map(c=><span key={c} style={chip}>{c}</span>)}</div></details>)}{!Object.keys(tables).length&&<Empty text="No published tables."/>}</section><section style={overviewCard}><h3 style={{marginTop:0}}>Measures & model</h3>{Object.keys(measures).map(m=><span key={m} style={chip}>{m}</span>)}{!Object.keys(measures).length&&<Empty text="No published measures."/>}<div style={modelFacts}><span><b>{relationships.length}</b> relationships</span><span><b>{hierarchies.length}</b> hierarchies</span><span><b>{model.reports?.length||0}</b> connected reports</span></div></section></div></>}{view==='settings'&&runtime&&<Settings model={model} runtime={runtime} role={role} tables={Object.keys(tables)} onReload={loadRuntime}/>} {view==='security'&&<RlsSecurityPanel modelId={model.id}/>} {view==='history'&&!loading&&<History rows={history}/>}</main></div></section></div>;
+  return <div style={backdrop} onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section style={dialog} onMouseDown={e=>e.stopPropagation()}><header style={modelHeader}><div style={modelGlyph}>⠿</div><div style={{minWidth:0}}><small style={modelKicker}>UNIFIED DATA MODEL</small><h2 style={{margin:'2px 0 3px',fontSize:20,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{model.name}</h2><span style={modelMeta}>{workspaceName} · Updated {when(model.updated_at)} · {role}</span></div><span style={modelStatus}>{model.status||'Published'}</span><button aria-label="Close Unified Data Model" onClick={onClose} style={close}>×</button></header><div style={modelShell}><nav style={modelNav}>{navItems.map(([id,label,description])=><button key={id} onClick={()=>setView(id)} style={modelNavButton(view===id)}><b>{label}</b><small>{description}</small></button>)}</nav><main style={modelMain}>{refreshStatus&&<div style={['failed','cancelled'].includes(String(refreshStatus.status).toLowerCase())?errorStyle:successStyle}><b>{statusLabel(refreshStatus.status)}</b>{refreshStatus.message&&<span> · {refreshStatus.message}</span>}</div>}{error&&<div style={errorStyle}>{error}</div>}{loading&&<p style={hint}>Loading…</p>}{view==='model'&&<><div style={overviewHero}><div><small style={modelKicker}>MODEL OVERVIEW</small><h2 style={{margin:'5px 0'}}>Published Unified Data Model definition</h2><p style={hint}>Review the governed model used by connected reports. Structural changes are made in Desktop and applied here on the next publish.</p></div><div style={governedBadge}>✓ Governed</div></div><Stats values={[[Object.keys(tables).length,'Tables'],[Object.keys(measures).length,'Measures'],[relationships.length,'Relationships'],[model.reports?.length||0,'Reports']]}/><div style={overviewGrid}><section style={overviewCard}><h3 style={{marginTop:0}}>Tables</h3>{Object.entries<any>(tables).map(([name,value])=><details key={name} style={row}><summary><b>{name}</b> · {Object.keys(value?.columns||{}).length} columns</summary><div>{Object.keys(value?.columns||{}).map(c=><span key={c} style={chip}>{c}</span>)}</div></details>)}{!Object.keys(tables).length&&<Empty text="No published tables."/>}</section><section style={overviewCard}><h3 style={{marginTop:0}}>Measures & model</h3>{Object.keys(measures).map(m=><span key={m} style={chip}>{m}</span>)}{!Object.keys(measures).length&&<Empty text="No published measures."/>}<div style={modelFacts}><span><b>{relationships.length}</b> relationships</span><span><b>{hierarchies.length}</b> hierarchies</span><span><b>{model.reports?.length||0}</b> connected reports</span></div></section></div></>}{view==='settings'&&runtime&&<Settings model={model} runtime={runtime} role={role} tables={Object.keys(tables)} onReload={loadRuntime}/>} {view==='security'&&<RlsSecurityPanel modelId={model.id}/>} {view==='history'&&!loading&&<History rows={history}/>}</main></div></section></div>;
 }
 
 function Settings({model,runtime,role,onReload}:{model:SemanticModelAsset;runtime:Runtime;role:string;tables:string[];onReload:()=>Promise<void>}){
@@ -283,7 +283,7 @@ function Row({values,children}:{values:any[];children?:any}){return <>{values.ma
 function Field({caption,value,onChange,type='text'}:{caption:string;value:any;onChange:(v:string)=>void;type?:string}){return <label style={label}>{caption}<input type={type} value={value??''} onChange={e=>onChange(e.target.value)} style={control}/></label>}
 function Check({caption,checked,onChange}:{caption:string;checked:boolean;onChange:(v:boolean)=>void}){return <label style={{...label,display:'flex',alignItems:'center'}}><input type="checkbox" checked={checked} onChange={e=>onChange(e.target.checked)}/>{caption}</label>}
 function Empty({text}:{text:string}){return <div style={{padding:12,border:'1px solid #e5e7eb',borderRadius:7,background:'#f8fafc',fontSize:12,color:'#64748b'}}>{text}</div>}
-function Menu({label,onClick,danger=false,disabled=false,title=''}:{label:string;onClick:()=>void;danger?:boolean;disabled?:boolean;title?:string}){return <button title={title} disabled={disabled} onClick={onClick} style={{display:'block',width:'100%',border:0,background:'transparent',padding:'9px 11px',textAlign:'left',cursor:disabled?'not-allowed':'pointer',fontSize:13,color:disabled?'#9ca3af':danger?'#b91c1c':'#202124'}}>{label}</button>}
+function Menu({label,onClick,danger=false,disabled=false,title=''}:{label:string;onClick:()=>void;danger?:boolean;disabled?:boolean;title?:string}){return <button title={title} disabled={disabled} onClick={onClick} style={{display:'block',width:'100%',border:0,background:'transparent',padding:'9px 11px',textAlign:'left',cursor:disabled?'not-allowed':'pointer',fontSize:13,color:disabled?'#9ca3af':danger?'#b91c1c':'var(--pbi-text, #202124)'}}>{label}</button>}
 function Divider(){return <div style={{height:1,background:'#e5e7eb',margin:'4px 0'}}/>} function Stats({values}:{values:Array<[number,string]>}){return <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:22}}>{values.map(([v,l])=><div key={l} style={{padding:14,border:'1px solid #e5e7eb',borderRadius:8}}><b style={{fontSize:22,display:'block'}}>{v}</b><small>{l}</small></div>)}</div>}
 const sourceLabel=(v?:string)=>({sqlserver:'SQL Server',postgresql:'PostgreSQL',mysql:'MySQL',mariadb:'MariaDB',rest:'REST API',managed_file:'Published Data',google_sheets:'Google Sheets'} as any)[v||'']||v||'Unknown';const statusLabel=(v?:string)=>String(v||'not_configured').split('_').map(x=>x[0]?.toUpperCase()+x.slice(1)).join(' ');const sourceAccess=(c:Connection)=>c.source_type==='managed_file'?'Snapshot':!c.id?'Not Configured':c.gateway_id?'Gateway':'Direct';
 const control:React.CSSProperties={border:'1px solid #cbd5e1',borderRadius:7,padding:'8px 10px',background:'#fff',fontSize:13};const secondary:React.CSSProperties={border:'1px solid #cbd5e1',borderRadius:7,padding:'8px 11px',background:'#fff',cursor:'pointer',fontWeight:650};const primary:React.CSSProperties={...secondary,background:'#6d28d9',borderColor:'#6d28d9',color:'#fff'};const errorStyle:React.CSSProperties={padding:12,marginBottom:12,border:'1px solid #fecaca',background:'#fef2f2',color:'#991b1b',borderRadius:8,fontSize:13};const successStyle:React.CSSProperties={padding:12,marginBottom:12,border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#166534',borderRadius:8,fontSize:13};const warningStyle:React.CSSProperties={padding:12,marginBottom:12,border:'1px solid #fde68a',background:'#fffbeb',color:'#92400e',borderRadius:8,fontSize:13};

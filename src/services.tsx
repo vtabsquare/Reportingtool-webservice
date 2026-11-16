@@ -3,6 +3,13 @@ import SupabaseAuthGate from'./v11/SupabaseAuthGate';
 import CloudWorkspace from'./v11/CloudWorkspace';
 import PublishedViewer from'./v11/PublishedViewer';
 
+const SERVICES_COLOR_MODE_KEY='vtab-services-color-mode';
+const initialColorMode=()=>{
+ try{const stored=localStorage.getItem(SERVICES_COLOR_MODE_KEY);if(stored==='light'||stored==='dark')return stored}catch{}
+ return typeof matchMedia==='function'&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+};
+const applyColorMode=(mode:string)=>{document.documentElement.dataset.theme='vtab';document.documentElement.dataset.colorMode=mode;document.documentElement.style.colorScheme=mode;document.documentElement.dataset.density='comfortable'};
+
 /** Lightweight production entry for Reporting Services.
  *
  * Keeping this separate from studio.tsx means public viewers do not download
@@ -14,7 +21,7 @@ export default function Services(){
  const inIframe = typeof window !== 'undefined' && window.self !== window.top;
  const isEmbed = params?.get('embed') === '1' || params?.get('public') === '1' || params?.get('embedded') === 'true' || inIframe;
  const embedReportId = params?.get('report') || params?.get('viewer');
- useEffect(()=>{document.documentElement.dataset.theme='vtab';document.documentElement.dataset.colorMode='light';document.documentElement.style.colorScheme='light';document.documentElement.dataset.density='comfortable'},[]);
+ useEffect(()=>{applyColorMode(initialColorMode())},[]);
  useEffect(()=>{
   let unsubscribe=()=>{};
   import('./supabase').then(({supabase})=>{

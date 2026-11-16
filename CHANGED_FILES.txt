@@ -1,0 +1,17 @@
+VTAB Reporting Services — Canvas, Theme and Zoom Fix
+
+SOURCE
+src/powerbi.css
+src/styles.css
+src/v11/CloudWorkspace.tsx
+src/v11/PublishedViewer.tsx
+
+TESTS
+test_services_canvas_theme_zoom_regression_20261116.cjs
+test_services_desktop_visual_theme_sync_20261116.cjs
+
+READY-BUILT OUTPUT
+dist-web/ (complete output; replace the deployed dist-web folder)
+
+GUIDE
+SERVICES_CANVAS_THEME_ZOOM_FIX_20261116.md

@@ -1,62 +1,30 @@
-# VTAB Reporting Services — Published Visual Parity Fix
+# VTAB Services — Published Formatting Parity Fix
 
-This is a Services-only, update-only package. It does not replace the full project.
+## Fixed
 
-## What was fixed
+- Restored visual shadows and glow after publishing from Desktop to Services.
+- Preserved the authored shadow color, opacity, horizontal offset, vertical offset, and blur.
+- Preserved visual background, transparency, border edges, border style, border width, corner radii, title background, padding, and container formatting.
+- Retained the previous dark-canvas/background-image opacity parity fix.
 
-- Published visuals now treat the saved Desktop `backgroundEnabled` setting as authoritative.
-- An explicitly disabled visual background renders as true transparency, never a white theme fallback.
-- An explicitly disabled title background renders as true transparency, with no inherited border, rounding, or shadow.
-- Saved border, per-edge border, corner radius, shadow, padding, typography, and title settings remain authoritative.
-- Card, KPI, progress, slicer, textbox, and image visuals are protected from decorative Services fallbacks.
-- Dropdown slicers retain the same saved size and placement while their menus can still open outside the visual.
-- Image visuals now receive the same complete published-format contract as every other visual.
-- Partial transparency uses browser-safe `rgba(...)` output for saved hex colors.
-- Published visual wrappers no longer reuse the Desktop authoring-only `canvasObject` class.
-- `borderVisible: false` now has a dedicated Services-viewer fail-safe that removes every border width, style, and outline.
+## Root cause
 
-## Root cause confirmed
+The published project already contained the correct General formatting values, and Services calculated the same shadow as Desktop. However, the absolute-positioning wrapper around every published visual used `overflow: hidden`. That wrapper clipped all pixels outside the visual rectangle, removing the visible shadow and glow.
 
-A read-only check of the live published report showed that the backend already stores the Desktop settings correctly. For example, the affected cards, text boxes, and slicers contained `backgroundEnabled: false`, zero corner radius, disabled borders, and disabled shadows. The mismatch was introduced by Services frontend fallback styles overriding those valid values.
+Services now follows Desktop: positioning wrappers use visible overflow, while the visual itself continues to manage internal content clipping.
 
-No backend replacement is included because changing the correctly working storage path would add unnecessary risk.
+## Apply
 
-## Files to replace
-
-- `src/v11/PublishedViewer.tsx`
-- `src/formatting-authority.css`
-
-## Installation
-
-Recommended, from PowerShell:
-
-```powershell
-.\Install-Services-Update.ps1 -ServicesProject "D:\path\to\Reporting Tool Services"
-```
-
-The installer verifies the target, creates a timestamped backup under `.vtab-backups`, and copies only the two updated files.
-
-Manual installation is also possible: copy the two files from this package to the same relative paths in the Services project.
-
-Then rebuild and deploy the Services frontend:
-
-```powershell
-npm run build:web
-```
+1. Copy `src/v11/PublishedViewer.tsx` to the same location in the Services project.
+2. Copy `src/styles.css` to the same location in the Services project.
+3. Copy the supplied `dist-web` folder, or rebuild the web application.
+4. Restart Services and force-refresh the browser.
+5. Republish the report so the latest Desktop project snapshot is used.
 
 ## Verification
 
-Run the included contract check from this package directory:
-
-```powershell
-node test_published_visual_parity_contract.cjs
-```
-
-After deployment, republish or reopen the existing test report and confirm:
-
-1. The Global Sales cards have no background where Desktop has no background.
-2. The report title/text box is not placed inside a white rounded Services container.
-3. Country, State Province, City, and Category dropdown slicers sit directly on the blue panel, matching Desktop.
-4. Saved colors, sizes, padding, borders, corners, shadows, and title backgrounds match the Desktop report.
-
-Existing published metadata does not need migration or republishing for this renderer fix.
+- Published visual parity: 9/9 passed.
+- Services canvas/theme/zoom: 9/9 passed.
+- Services Desktop visual parity: 9/9 passed.
+- Visual formatting contract: 78/78 passed.
+- Production build: passed.

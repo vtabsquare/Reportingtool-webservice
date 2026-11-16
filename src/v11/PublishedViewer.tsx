@@ -2,6 +2,8 @@
 import{createPortal}from'react-dom';
 import{ChevronLeft,ChevronRight,ChevronDown,RefreshCcw,Maximize2,Minimize2,Home,CalendarDays,ShieldCheck,MonitorUp,Expand,Scaling,Eraser,BarChart3,PieChart,Table2,LayoutGrid,Filter,TrendingUp,MousePointerClick,FileDown,Presentation,Mail,FileText,Printer,Code2,QrCode,Star,Settings2,Share2,ArrowLeft,Download,FileArchive,Check,Copy,ExternalLink,Globe,Users,BellRing,Search,X,Minus,Plus,ZoomIn,ZoomOut}from'lucide-react';
 import Chart from'../components/Chart';
+import {DARK_REPORT_THEME,isColorDark} from '../visualTheme';
+import {isColorLight,resolveDarkBorder,resolveDarkSurface,resolveDarkText} from '../visualTheme';
 import PaginatedReportViewer from'./PaginatedReportViewer';
 import ReportAutomationDialog from'./ReportAutomationDialog';
 import{api,apiDownload,apiDownloadPost}from'../api';
@@ -214,7 +216,7 @@ function publishedColor(color:string,transparency:number){
  }
  return`color-mix(in srgb, ${color} ${100-value}%, transparent)`;
 }
-function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilter,onAction}:{v:Visual,result?:VisualQueryResult;model?:any;loading:boolean,selected?:boolean,activeFilter?:VisualFilter|null,onCrossFilter:(f:VisualFilter|null)=>void,onAction:(v:Visual)=>void}){
+function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilter,onAction,isDarkCanvas=false}:{v:Visual,result?:VisualQueryResult;model?:any;loading:boolean,selected?:boolean,activeFilter?:VisualFilter|null,onCrossFilter:(f:VisualFilter|null)=>void,onAction:(v:Visual)=>void;isDarkCanvas?:boolean}){
  const rawRows=result?.rows||[],categoryFields=(v.type==='matrix'?[...(v.bindings.axis||[]),...(v.bindings.legend||[])]:[v.bindings.axis?.[v.drillLevel||0]||v.bindings.axis?.[0],...(v.bindings.legend||[])]).filter(Boolean) as string[],rows=sortVisualRows(rawRows,v,model,categoryFields),err=result?.error||'';
  const[focus,setFocus]=useState(false),[slicerSelected,setSlicerSelected]=useState<string[]>(()=>activeFilter?(Array.isArray(activeFilter.value)?activeFilter.value.map(String):activeFilter.value==null||activeFilter.value===''?[]:[String(activeFilter.value)]):[]),[slicerSearch,setSlicerSearch]=useState(''),[slicerDropdownOpen,setSlicerDropdownOpen]=useState(false),[dropUp,setDropUp]=useState(false);
  const slicerDropdownRef=useRef<HTMLDivElement|null>(null);
@@ -225,22 +227,30 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
  const f:any={...(v.format||{}),...(v.type==='map'?{}:resolveConditionalFormat(v.format?.conditionalFormatRules,conditionalValues))},displayVisual={...v,format:f};const bg=f.background||'#fff';const dark=/^#0|^#1/.test(bg.toLowerCase());const accent=f.accent||({kpi:'#2563eb',card:'#16a34a',bar:'#2563eb',column:'#0ea5e9',line:'#16a34a',area:'#10b981',pie:'#f59e0b',donut:'#8b5cf6',gauge:'#16a34a',table:'#2563eb',matrix:'#4f46e5',slicer:'#e11d48'} as any)[v.type]||'#2563eb';
  const backgroundOn=f.backgroundEnabled!==false,transparency=backgroundOn?Math.max(0,Math.min(100,f.backgroundTransparency||0)):100;
  const edges=f.borderEdges||{top:true,right:true,bottom:true,left:true};
- const border=f.borderVisible?`${f.borderWidth??1}px ${f.borderStyle||'solid'} ${f.borderColor||'#c8c8c8'}`:'0';
+ const border=f.borderVisible?`${f.borderWidth??1}px ${f.borderStyle||'solid'} ${f.borderColor||'#c8c8c8'}`:'none';
  const radius=`${f.cornerRadii?.topLeft??f.cornerRadius??0}px ${f.cornerRadii?.topRight??f.cornerRadius??0}px ${f.cornerRadii?.bottomRight??f.cornerRadius??0}px ${f.cornerRadii?.bottomLeft??f.cornerRadius??0}px`;
- const background=publishedColor(bg,transparency);
- const titleBackgroundOn=f.titleBackgroundEnabled!==false,titleBg=f.titleBackground||'#fff',titleTransparency=titleBackgroundOn?Math.max(0,Math.min(100,f.titleBackgroundTransparency||0)):100,titleBackground=publishedColor(titleBg,titleTransparency);
+ const darkVisualBackground=resolveDarkSurface(f.background,DARK_REPORT_THEME.surface);
+ const visualBackground=backgroundOn===false?'transparent':isDarkCanvas?publishedColor(darkVisualBackground,transparency):publishedColor(bg,transparency);
+ const background=visualBackground;
+ const titleBackgroundOn=f.titleBackgroundEnabled!==false,titleBg=f.titleBackground||'#fff',titleTransparency=titleBackgroundOn?Math.max(0,Math.min(100,f.titleBackgroundTransparency||0)):100;
+ const darkTitleBackground=titleBackgroundOn?resolveDarkSurface(f.titleBackground,darkVisualBackground):'transparent';
+ const visualTitleBackground=titleBackgroundOn?(isDarkCanvas?publishedColor(darkTitleBackground,titleTransparency):publishedColor(titleBg,titleTransparency)):'transparent';
  const titleRadius=titleBackgroundOn?`${f.cornerRadii?.topLeft??f.cornerRadius??0}px ${f.cornerRadii?.topRight??f.cornerRadius??0}px 0 0`:'0';
-  const shadowOpacity=Math.max(0,Math.min(100,f.shadowOpacity??18)),shadow=f.shadow?`${f.shadowOffsetX??0}px ${f.shadowOffset??8}px ${f.shadowBlur??24}px color-mix(in srgb, ${f.shadowColor||'#0f172a'} ${shadowOpacity}%, transparent)`:'none';
-  // Published visuals use the same responsive composition as Desktop.
-  const responsiveSizeClass=f.responsive===false?' visualFixed':(v.w<=260||v.h<=130?' visualCompact':(v.w>=900?' visualWide':' visualStandard'));
-  const titleTextStyle:any={fontFamily:f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.titleFontSize||12,color:f.titleColor||(dark?'#fff':'#242424'),fontWeight:f.titleBold===false?400:(f.titleFontWeight||700),fontStyle:f.titleFontStyle||'normal',textDecoration:f.titleUnderline?'underline':'none',whiteSpace:f.titleWrap===false?'nowrap':'normal',textAlign:f.titleAlignment||'left',lineHeight:1.25,paddingBottom:'2px',boxSizing:'border-box'};
-  const subtitleTextStyle:any={fontFamily:f.subtitleFontFamily||f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.subtitleFontSize||10,color:f.subtitleColor||'#616161',fontWeight:f.subtitleBold?(f.subtitleFontWeight||700):400,fontStyle:f.subtitleFontStyle||'normal',textDecoration:f.subtitleUnderline?'underline':'none',whiteSpace:f.subtitleWrap===false?'nowrap':'normal',textAlign:f.subtitleAlignment||f.titleAlignment||'left'};
-  if(v.type==='shape')return <div role="img" aria-label={f.altText||`${f.shapeType||'rectangle'} shape`} className="viewerShapeObject" data-export-state="ready" data-visual-title={v.title||v.type}><ViewerShape format={f}/></div>;
-  if(v.type==='image'){
-    const isCanvasCover=(v.w>=1200&&v.h>=600)||(v.x===0&&v.y===0&&(v.w>=900||v.h>=500));
-    const resolvedFit=(f.imageFit==='stretch'||f.imageFit==='fill'||isCanvasCover)?'fill':(f.imageFit==='cover'?'cover':(f.imageFit||'contain'));
-    const media=<img className="viewerImageVisual" src={v.imageSrc||''} alt={f.altText||v.imageName||''} style={{width:'100%',height:'100%',objectFit:resolvedFit as any,opacity:(f.imageOpacity??100)/100,display:'block'}}/>;
-    return <div className={`viewerVisual viewerVisual-image visualCard ${responsiveSizeClass}`} data-export-state="ready" data-visual-title={v.title||v.type} data-visual-background={backgroundOn?'on':'off'} data-visual-border={f.borderVisible?'on':'off'} data-title-background={titleBackgroundOn?'on':'off'} style={{background,border:'0',borderTop:edges.top?border:'0',borderRight:edges.right?border:'0',borderBottom:edges.bottom?border:'0',borderLeft:edges.left?border:'0',borderRadius:radius,boxShadow:shadow,'--viewer-background':background,'--viewer-border-top':edges.top?border:'none','--viewer-border-right':edges.right?border:'none','--viewer-border-bottom':edges.bottom?border:'none','--viewer-border-left':edges.left?border:'none','--viewer-radius':radius,'--viewer-shadow':shadow,'--visual-background':background,'--visual-border-top':edges.top?border:'none','--visual-border-right':edges.right?border:'none','--visual-border-bottom':edges.bottom?border:'none','--visual-border-left':edges.left?border:'none','--visual-radius':radius,'--visual-shadow':shadow,'--viewer-title-background':titleBackground,'--visual-title-background':titleBackground,'--visual-title-radius':titleRadius,'--visual-title-border':titleBackgroundOn?'1px solid rgba(15,23,42,.08)':'none','--visual-backdrop':backgroundOn?'blur(9px)':'none'} as any}>{f.showTitle!==false&&<div className="viewerVisualTitle visualTitle" style={{background:titleBackground,borderRadius:titleRadius,...titleTextStyle}}><div className="viewerVisualTitleLabel visualTitleText" style={{flex:1,minWidth:0,textAlign:f.titleAlignment||'left',display:'flex',flexDirection:'column',alignItems:'stretch'}}><span style={{...titleTextStyle,display:'block',width:'100%',textAlign:f.titleAlignment||'left'}}>{v.title}</span></div></div>}<div className="viewerVisualBody" style={{padding:0,margin:0,width:'100%',height:'100%',overflow:'hidden'}}>{media}</div></div>}
+ const darkBorderColor=resolveDarkBorder(f.borderColor,darkVisualBackground);
+ const darkDefaultBorder='none';
+ const shadowOpacity=Math.max(0,Math.min(100,f.shadowOpacity??18)),shadow=f.shadow?`${f.shadowOffsetX??0}px ${f.shadowOffset??8}px ${f.shadowBlur??24}px color-mix(in srgb, ${f.shadowColor||'#0f172a'} ${shadowOpacity}%, transparent)`:'none';
+ // Published visuals use the same responsive composition as Desktop.
+ const responsiveSizeClass=f.responsive===false?' visualFixed':(v.w<=260||v.h<=130?' visualCompact':(v.w>=900?' visualWide':' visualStandard'));
+ const visualTitleColor=isDarkCanvas?resolveDarkText(f.titleColor,darkTitleBackground,DARK_REPORT_THEME.text):(f.titleColor||(dark?'#fff':'#242424'));
+ const visualSubtitleColor=isDarkCanvas?resolveDarkText(f.subtitleColor,darkTitleBackground,DARK_REPORT_THEME.mutedText):(f.subtitleColor||'#616161');
+ const titleTextStyle:any={fontFamily:f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.titleFontSize||12,color:visualTitleColor,fontWeight:f.titleBold===false?400:(f.titleFontWeight||700),fontStyle:f.titleFontStyle||'normal',textDecoration:f.titleUnderline?'underline':'none',whiteSpace:f.titleWrap===false?'nowrap':'normal',textAlign:f.titleAlignment||'left',lineHeight:1.25,paddingBottom:'2px',boxSizing:'border-box'};
+ const subtitleTextStyle:any={fontFamily:f.subtitleFontFamily||f.titleFontFamily||f.fontFamily||'Segoe UI',fontSize:f.subtitleFontSize||10,color:visualSubtitleColor,fontWeight:f.subtitleBold?(f.subtitleFontWeight||700):400,fontStyle:f.subtitleFontStyle||'normal',textDecoration:f.subtitleUnderline?'underline':'none',whiteSpace:f.subtitleWrap===false?'nowrap':'normal',textAlign:f.subtitleAlignment||f.titleAlignment||'left'};
+ if(v.type==='shape')return <div role="img" aria-label={f.altText||`${f.shapeType||'rectangle'} shape`} className="viewerShapeObject" data-export-state="ready" data-visual-title={v.title||v.type}><ViewerShape format={f}/></div>;
+ if(v.type==='image'){
+   const isCanvasCover=(v.w>=1200&&v.h>=600)||(v.x===0&&v.y===0&&(v.w>=900||v.h>=500));
+   const resolvedFit=(f.imageFit==='stretch'||f.imageFit==='fill'||isCanvasCover)?'fill':(f.imageFit==='cover'?'cover':(f.imageFit||'contain'));
+   const media=<img className="viewerImageVisual" src={v.imageSrc||''} alt={f.altText||v.imageName||''} style={{width:'100%',height:'100%',objectFit:resolvedFit as any,opacity:(f.imageOpacity??100)/100,display:'block'}}/>;
+   return <div className={`viewerVisual viewerVisual-image visualCard ${isDarkCanvas?'isDarkCard':''} ${responsiveSizeClass}`} data-export-state="ready" data-visual-title={v.title||v.type} data-visual-background={backgroundOn?'on':'off'} data-visual-border={f.borderVisible?'on':'off'} data-title-background={titleBackgroundOn?'on':'off'} style={{background:visualBackground,border:'0',borderTop:edges.top?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'0',borderRight:edges.right?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'0',borderBottom:edges.bottom?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'0',borderLeft:edges.left?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'0',borderRadius:radius,boxShadow:shadow,'--viewer-background':visualBackground,'--viewer-border-top':edges.top?border:'none','--viewer-border-right':edges.right?border:'none','--viewer-border-bottom':edges.bottom?border:'none','--viewer-border-left':edges.left?border:'none','--viewer-radius':radius,'--viewer-shadow':shadow,'--visual-background':visualBackground,'--visual-border-top':edges.top?border:'none','--visual-border-right':edges.right?border:'none','--visual-border-bottom':edges.bottom?border:'none','--visual-border-left':edges.left?border:'none','--visual-radius':radius,'--visual-shadow':shadow,'--viewer-title-background':visualTitleBackground,'--visual-title-background':visualTitleBackground,'--visual-title-radius':titleRadius,'--visual-title-border':titleBackgroundOn?'1px solid rgba(15,23,42,.08)':'none','--visual-backdrop':backgroundOn?'blur(9px)':'none'} as any}>{f.showTitle!==false&&<div className="viewerVisualTitle visualTitle" style={{background:visualTitleBackground,borderRadius:titleRadius,...titleTextStyle}}><div className="viewerVisualTitleLabel visualTitleText" style={{flex:1,minWidth:0,textAlign:f.titleAlignment||'left',display:'flex',flexDirection:'column',alignItems:'stretch'}}><span style={{...titleTextStyle,display:'block',width:'100%',textAlign:f.titleAlignment||'left'}}>{v.title}</span></div></div>}<div className="viewerVisualBody" style={{padding:0,margin:0,width:'100%',height:'100%',overflow:'hidden'}}>{media}</div></div>}
   const content=v.type==='textbox'?(
     <div className="viewerTextBox" style={{fontSize:f.fontSize||18,color:f.labelColor||'#111827',fontFamily:f.fontFamily||'inherit',fontWeight:f.textFontWeight||400,fontStyle:f.textItalic?'italic':'normal',textDecoration:f.textUnderline?'underline':'none',textAlign:f.textAlign||'left',lineHeight:f.textLineHeight||1.45,whiteSpace:f.textWrap===false?'nowrap':'pre-wrap',overflowWrap:f.textWrap===false?'normal':'anywhere',display:'flex',flexDirection:'column',justifyContent:f.textVerticalAlign==='bottom'?'flex-end':f.textVerticalAlign==='middle'?'center':'flex-start',width:'100%',height:'100%',boxSizing:'border-box'}} dangerouslySetInnerHTML={{__html:richTextHtml(v.richText,v.text)}}/>
   ):v.type==='button'?(
@@ -262,8 +272,11 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
     const slicerFontSize=Number(f.tableFontSize)||11,slicerRowPadding=Number(f.tableRowPadding??8),tileMinHeight=Math.max(30,Math.ceil(slicerFontSize*1.35+slicerRowPadding*2+2));
     const gridStyle:any={display:'grid',gridTemplateColumns:`repeat(${tilesPerRow}, minmax(0, 1fr))`,gridAutoRows:`minmax(${tileMinHeight}px, auto)`,gap:4,width:'100%',alignContent:'start',alignItems:'stretch'};
     if(tilesPerColumn>0)gridStyle.gridTemplateRows=`repeat(${tilesPerColumn}, minmax(${tileMinHeight}px, auto))`;
-    const slicerPresentationStyle:any={'--slicer-font':f.tableFontFamily||'Segoe UI','--slicer-text':f.tableTextColor||'#242424','--slicer-size':`${slicerFontSize}px`,'--slicer-weight':f.tableTextBold?700:400,'--slicer-style':f.tableTextItalic?'italic':'normal','--slicer-wrap':f.tableTextWrap?'normal':'nowrap','--slicer-align':f.tableTextAlign||'left','--slicer-justify':f.tableTextAlign==='right'?'flex-end':f.tableTextAlign==='center'?'center':'flex-start','--slicer-bg':f.tableBackground||'#ffffff','--slicer-alt':f.tableAlternatingRows===false?(f.tableBackground||'#ffffff'):(f.tableAlternateColor||'#f8fafc'),'--slicer-row-padding':`${slicerRowPadding}px`,'--slicer-tile-min-height':`${tileMinHeight}px`};
-    const resolvedSlicerTypography:any={'--slicer-font':f.tableFontFamily||'Segoe UI','--slicer-text':f.tableTextColor||'#242424','--slicer-size':`${slicerFontSize}px`,'--slicer-weight':f.tableTextBold?700:400,'--slicer-style':f.tableTextItalic?'italic':'normal','--slicer-wrap':f.tableTextWrap?'normal':'nowrap','--slicer-align':f.tableTextAlign||'left','--slicer-justify':f.tableTextAlign==='right'?'flex-end':f.tableTextAlign==='center'?'center':'flex-start',fontFamily:f.tableFontFamily||'Segoe UI',fontSize:`${slicerFontSize}px`,fontWeight:f.tableTextBold?700:400,fontStyle:f.tableTextItalic?'italic':'normal',textAlign:f.tableTextAlign||'left',lineHeight:1.35};
+    const effectiveSlicerTextColor=isDarkCanvas?(f.tableTextColor&&!isColorDark(f.tableTextColor)?f.tableTextColor:DARK_REPORT_THEME.text):(f.tableTextColor||'#242424');
+    const effectiveSlicerBg=isDarkCanvas?(f.tableBackground&&!isColorLight(f.tableBackground)?f.tableBackground:DARK_REPORT_THEME.surfaceRaised):(f.tableBackground||'#ffffff');
+    const effectiveSlicerAlt=isDarkCanvas?(f.tableAlternateColor&&!isColorLight(f.tableAlternateColor)?f.tableAlternateColor:DARK_REPORT_THEME.surfaceAlternate):(f.tableAlternatingRows===false?(f.tableBackground||'#ffffff'):(f.tableAlternateColor||'#f8fafc'));
+    const slicerPresentationStyle:any={'--slicer-font':f.tableFontFamily||'Segoe UI','--slicer-text':effectiveSlicerTextColor,'--slicer-size':`${slicerFontSize}px`,'--slicer-weight':f.tableTextBold?700:400,'--slicer-style':f.tableTextItalic?'italic':'normal','--slicer-wrap':f.tableTextWrap?'normal':'nowrap','--slicer-align':f.tableTextAlign||'left','--slicer-justify':f.tableTextAlign==='right'?'flex-end':f.tableTextAlign==='center'?'center':'flex-start','--slicer-bg':effectiveSlicerBg,'--slicer-alt':effectiveSlicerAlt,'--slicer-row-padding':`${slicerRowPadding}px`,'--slicer-tile-min-height':`${tileMinHeight}px`};
+    const resolvedSlicerTypography:any={'--slicer-font':f.tableFontFamily||'Segoe UI','--slicer-text':effectiveSlicerTextColor,'--slicer-size':`${slicerFontSize}px`,'--slicer-weight':f.tableTextBold?700:400,'--slicer-style':f.tableTextItalic?'italic':'normal','--slicer-wrap':f.tableTextWrap?'normal':'nowrap','--slicer-align':f.tableTextAlign||'left','--slicer-justify':f.tableTextAlign==='right'?'flex-end':f.tableTextAlign==='center'?'center':'flex-start',fontFamily:f.tableFontFamily||'Segoe UI',fontSize:`${slicerFontSize}px`,fontWeight:f.tableTextBold?700:400,fontStyle:f.tableTextItalic?'italic':'normal',textAlign:f.tableTextAlign||'left',lineHeight:1.35,color:effectiveSlicerTextColor};
     return (
       <div className="viewerSlicerContents" style={{...slicerPresentationStyle,flex:1,display:'flex',flexDirection:'column',justifyContent:'center',width:'100%',boxSizing:'border-box',minHeight:0,padding:'2px 8px'}}>
         {mode!=='dropdown'&&f.slicerSearch&&<div className="slicerSearchRow slicerInlineSearch" onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}><Search size={14}/><input aria-label="Search slicer values" placeholder="Search values" value={slicerSearch} onChange={e=>setSlicerSearch(e.target.value)} onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()} onFocus={e=>e.stopPropagation()}/>{slicerSearch&&<button type="button" title="Clear search" onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();setSlicerSearch('')}}><X size={13}/></button>}</div>}
@@ -291,7 +304,7 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
         )}
       </div>
     );
-  })():<Chart visual={displayVisual} rows={rows} model={model} conditionalValues={conditionalValues} onPointClick={(field,value)=>onCrossFilter(value===undefined||value===null||value===''?null:{field,operator:'equals',value})}/>;
+  })():<Chart visual={displayVisual} rows={rows} model={model} conditionalValues={conditionalValues} isDarkCanvas={isDarkCanvas} onPointClick={(field,value)=>onCrossFilter(value===undefined||value===null||value===''?null:{field,operator:'equals',value})}/>;
   const narrative=visualExportNarrative(v,rows);
   const cardStyle:any={
     width:'100%',
@@ -311,17 +324,17 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
     fontFamily:`${f.fontFamily||'Aptos'}, 'Segoe UI Variable', 'Segoe UI', sans-serif`,
     '--viewer-accent':accent,
     '--viewer-background':background,
-    '--viewer-border-top':edges.top?border:'none',
-    '--viewer-border-right':edges.right?border:'none',
-    '--viewer-border-bottom':edges.bottom?border:'none',
-    '--viewer-border-left':edges.left?border:'none',
+    '--viewer-border-top':edges.top?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'none',
+    '--viewer-border-right':edges.right?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'none',
+    '--viewer-border-bottom':edges.bottom?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'none',
+    '--viewer-border-left':edges.left?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'none',
     '--viewer-radius':radius,
     '--viewer-shadow':shadow,
-    '--viewer-title-background':titleBackground,
+    '--viewer-title-background':visualTitleBackground,
     '--visual-title-radius':titleRadius,
-    '--visual-title-border':titleBackgroundOn?'1px solid color-mix(in srgb, currentColor 8%, transparent)':'none',
+    '--visual-title-border':f.borderVisible&&titleBackgroundOn?'1px solid color-mix(in srgb, currentColor 8%, transparent)':'none',
     '--visual-backdrop':backgroundOn?'blur(9px)':'none',
-    '--viewer-title-color':f.titleColor||(dark?'#fff':'#111827'),
+    '--viewer-title-color':visualTitleColor,
     '--viewer-title-size':`${f.titleFontSize||12}px`,
     '--viewer-title-weight':f.titleBold===false?400:(f.titleFontWeight||700),
     '--viewer-title-align':f.titleAlignment||'left',
@@ -335,7 +348,7 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
     '--visual-title-wrap':f.titleWrap===false?'nowrap':'normal',
     '--visual-subtitle-font':f.subtitleFontFamily||f.titleFontFamily||f.fontFamily||'Segoe UI',
     '--visual-subtitle-size':`${f.subtitleFontSize||10}px`,
-    '--visual-subtitle-color':f.subtitleColor||'#616161',
+    '--visual-subtitle-color':visualSubtitleColor,
     '--visual-subtitle-weight':f.subtitleBold?(f.subtitleFontWeight||700):400,
     '--visual-subtitle-style':f.subtitleFontStyle||'normal',
     '--visual-subtitle-decoration':f.subtitleUnderline?'underline':'none',
@@ -344,27 +357,27 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
     '--viewer-padding-right':`${f.paddingRight??f.padding??8}px`,
     '--viewer-padding-bottom':`${f.paddingBottom??f.padding??8}px`,
     '--viewer-padding-left':`${f.paddingLeft??f.padding??8}px`,
-    '--visual-background':background,
-    '--visual-title-background':titleBackground,
-    '--visual-border-top':edges.top?border:'none',
-    '--visual-border-right':edges.right?border:'none',
-    '--visual-border-bottom':edges.bottom?border:'none',
-    '--visual-border-left':edges.left?border:'none',
+    '--visual-background':visualBackground,
+    '--visual-title-background':visualTitleBackground,
+    '--visual-border-top':edges.top?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'none',
+    '--visual-border-right':edges.right?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'none',
+    '--visual-border-bottom':edges.bottom?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'none',
+    '--visual-border-left':edges.left?(isDarkCanvas?(f.borderVisible?`${f.borderWidth||1}px ${f.borderStyle||'solid'} ${darkBorderColor}`:darkDefaultBorder):border):'none',
     '--visual-radius':radius,
     '--visual-shadow':shadow,
-    '--visual-title-color':f.titleColor||(dark?'#fff':'#0f172a'),
+    '--visual-title-color':visualTitleColor,
     '--visual-padding-top':`${f.paddingTop??f.padding??8}px`,
     '--visual-padding-right':`${f.paddingRight??f.padding??8}px`,
     '--visual-padding-bottom':`${f.paddingBottom??f.padding??8}px`,
     '--visual-padding-left':`${f.paddingLeft??f.padding??8}px`,
-    '--published-background':background,
+    '--published-background':visualBackground,
     '--published-border-top':edges.top?border:'0',
     '--published-border-right':edges.right?border:'0',
     '--published-border-bottom':edges.bottom?border:'0',
     '--published-border-left':edges.left?border:'0',
     '--published-radius':radius,
     '--published-shadow':shadow,
-    '--published-title-color':f.titleColor||(dark?'#fff':'#111827'),
+    '--published-title-color':visualTitleColor,
     '--published-title-size':`${f.titleFontSize||12}px`,
     '--published-title-weight':f.titleBold===false?400:(f.titleFontWeight||700),
     '--published-callout-size':`${f.fontSize||28}px`,
@@ -384,8 +397,8 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
     '--slicer-row-padding':`${f.tableRowPadding??8}px`
   };
   const clearSlicer=()=>{setSlicerSelected([]);setSlicerSearch('');setSlicerDropdownOpen(false);onCrossFilter(null)};
-  const card=<div className={`viewerVisual viewerVisual-${v.type} visualCard ${!['slicer','textbox','button','image','shape'].includes(v.type)?'premiumVisualCard':''} ${v.type==='slicer'?'slicerVisual':''} ${slicerDropdownOpen?'slicerDropdownOpen':''} ${responsiveSizeClass}`} data-export-state={loading?'loading':err?'error':'ready'} data-visual-title={v.title||v.type} data-visual-background={backgroundOn?'on':'off'} data-visual-border={f.borderVisible?'on':'off'} data-title-background={titleBackgroundOn?'on':'off'} data-export-narrative={JSON.stringify(narrative)} data-export-insights={JSON.stringify(narrative.points)} style={cardStyle}>
-    {f.showTitle!==false&&<div className="viewerVisualTitle visualTitle" style={{background:titleBackground,borderRadius:titleRadius,...titleTextStyle}}><div className="viewerVisualTitleLabel visualTitleText" style={{flex:1,minWidth:0,textAlign:f.titleAlignment||'left',display:'flex',flexDirection:'column',alignItems:'stretch'}}><span style={{...titleTextStyle,display:'block',width:'100%',textAlign:f.titleAlignment||'left'}}>{v.title}</span>{f.subtitleVisible&&f.subtitle&&<small style={{...subtitleTextStyle,display:'block',width:'100%',textAlign:f.subtitleAlignment||f.titleAlignment||'left'}}>{f.subtitle}</small>}</div>{v.type==='slicer'&&!!slicerSelected.length&&<button className="slicerClearButton" title="Clear slicer" onClick={clearSlicer}><Eraser size={13}/></button>}{f.visualHeader!==false&&<button className="viewerVisualFocus" onClick={()=>setFocus(true)} title="Focus visual"><Maximize2 size={13}/></button>}</div>}
+  const card=<div className={`viewerVisual viewerVisual-${v.type} visualCard ${isDarkCanvas?'isDarkCard':''} ${!['slicer','textbox','button','image','shape'].includes(v.type)?'premiumVisualCard':''} ${v.type==='slicer'?'slicerVisual':''} ${slicerDropdownOpen?'slicerDropdownOpen':''} ${responsiveSizeClass}`} data-export-state={loading?'loading':err?'error':'ready'} data-visual-title={v.title||v.type} data-visual-background={backgroundOn?'on':'off'} data-visual-border={f.borderVisible?'on':'off'} data-title-background={titleBackgroundOn?'on':'off'} data-export-narrative={JSON.stringify(narrative)} data-export-insights={JSON.stringify(narrative.points)} style={cardStyle}>
+    {f.showTitle!==false&&<div className="viewerVisualTitle visualTitle" style={{background:visualTitleBackground,borderRadius:titleRadius,...titleTextStyle}}><div className="viewerVisualTitleLabel visualTitleText" style={{flex:1,minWidth:0,textAlign:f.titleAlignment||'left',display:'flex',flexDirection:'column',alignItems:'stretch'}}><span style={{...titleTextStyle,display:'block',width:'100%',textAlign:f.titleAlignment||'left'}}>{v.title}</span>{f.subtitleVisible&&f.subtitle&&<small style={{...subtitleTextStyle,display:'block',width:'100%',textAlign:f.subtitleAlignment||f.titleAlignment||'left'}}>{f.subtitle}</small>}</div>{v.type==='slicer'&&!!slicerSelected.length&&<button className="slicerClearButton" title="Clear slicer" onClick={clearSlicer}><Eraser size={13}/></button>}{f.visualHeader!==false&&<button className="viewerVisualFocus" onClick={()=>setFocus(true)} title="Focus visual"><Maximize2 size={13}/></button>}</div>}
     <div className="viewerVisualBody" style={{paddingTop:f.paddingTop??f.padding??8,paddingRight:f.paddingRight??f.padding??8,paddingBottom:f.paddingBottom??f.padding??8,paddingLeft:f.paddingLeft??f.padding??8}}>{loading?<div className="viewerVisualLoading" role="status"><span className="viewerSpinner"/><b>Loading visual data…</b></div>:err?<div className="viewerError">{err}</div>:content}</div>
   </div>;
   return <>{card}{focus&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>setFocus(false)}><div className="visualFocusPanel viewerFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>FOCUS MODE</small><b>{v.title}</b></div><button onClick={()=>setFocus(false)}>Close</button></div><div className="visualFocusBody">{content}</div></div></div>,document.body)}</>;
@@ -403,6 +416,8 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  const isEmbedContext = isExternalEmbed;
  const embedFade = {};
  const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(false),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'|'custom'>('fitPage'),[scale,setScale]=useState(1),[isZoomDragging,setIsZoomDragging]=useState(false),[interactionFilterMap,setInteractionFilterMap]=useState<Record<string,VisualFilter>>({}),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'vtabdemouser@gmail.com',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
+ const [canvasThemeOverride,setCanvasThemeOverride]=useState<'dark'|'light'|null>(null);
+ const [bgImageDark,setBgImageDark]=useState<boolean|null>(null);
  const[publishedMode,setPublishedMode]=useState<'interactive'|'paginated'>(initialPaginatedId?'paginated':'interactive');
  const[activeRibbonTab,setActiveRibbonTab]=useState<'Home'|'File'|'View'>('Home');
  // ── Embed permission enforcement ────────────────────────────────────────────
@@ -533,6 +548,38 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  },[reportId,item?.id,page?.id,JSON.stringify(queryVisualIds),JSON.stringify(combinedFilters),publishedMode,visualReloadKey]);
  useEffect(()=>{const targetPage=new URLSearchParams(location.search).get('page');if(targetPage){const index=pages.findIndex((item:any)=>item.id===targetPage);if(index>=0)setPageIndex(index)}},[item?.id]);
  const width=s.pageWidth||1920,height=s.pageHeight||1080;
+ // Desktop always uses the dark-theme canvas as the base layer when the page
+ // dark canvas toggle is enabled. The background image is composited over that
+ // base using its saved opacity. Services must use the same base or a 63% image
+ // is blended with a light color and appears pale.
+ // Detect whether the background image is dark by sampling it into an offscreen 16x16 canvas.
+ // This runs whenever the page changes (new backgroundImage URL).
+ useEffect(()=>{
+  const img=s.backgroundImage;
+  if(!img){setBgImageDark(null);return}
+  let cancelled=false;
+  const image=new Image();
+  image.onload=()=>{
+   if(cancelled)return;
+   try{
+    const c=document.createElement('canvas');c.width=16;c.height=16;
+    const ctx=c.getContext('2d');if(!ctx){setBgImageDark(null);return}
+    ctx.drawImage(image,0,0,16,16);
+    const data=ctx.getImageData(0,0,16,16).data;
+    let lum=0;const n=data.length/4;
+    for(let i=0;i<data.length;i+=4){const r=data[i]/255,g=data[i+1]/255,b=data[i+2]/255;const lin=(c:number)=>c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4);lum+=(0.2126*lin(r)+0.7152*lin(g)+0.0722*lin(b));}
+    setBgImageDark(lum/n<0.55);
+   }catch{setBgImageDark(null)}
+  };
+  image.onerror=()=>{if(!cancelled)setBgImageDark(null)};
+  image.crossOrigin='anonymous';
+  image.src=img;
+  return()=>{cancelled=true};
+ },[s.backgroundImage]);
+ const isPublishedDarkCanvas=canvasThemeOverride!==null
+  ? canvasThemeOverride==='dark'
+  : (s.canvasTheme==='dark'||isColorDark(s.background)||bgImageDark===true);
+ const publishedPageBackground=s.canvasTheme==='dark'?DARK_REPORT_THEME.canvas:(isPublishedDarkCanvas?DARK_REPORT_THEME.canvas:(s.background||'#f5f7fb'));
  const fixedPagePreset=['16:9','HD 16:9','Full HD 16:9','QHD 16:9','16:10','4:3','Letter','Tooltip','A4 Landscape','A4 Portrait'].includes(String(s.pageSizePreset||''));
  // Older snapshots may contain pixel coordinates without the migration flag.
  // Infer that contract from the coordinate range instead of treating those
@@ -553,12 +600,13 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    const compute=()=>{
       if(viewMode==='custom')return;
      const rect=stage.getBoundingClientRect();
-     const availW=Math.max(240,rect.width-(viewMode==='fitWidth'?36:28)),availH=Math.max(240,rect.height-28);
+     const availW=Math.max(240,rect.width-(['fitWidth','fitPage'].includes(viewMode)?36:28)),availH=Math.max(240,rect.height-28);
      let next=1;
-     if(viewMode==='fitWidth')next=availW/width;
-     else if(viewMode==='fitPage')next=Math.min(availW/width,availH/effectiveHeight);
+     if(viewMode==='fitWidth'||viewMode==='fitPage')next=availW/width;
      else next=1;
-     const clamped=Math.max(.1,Math.min(4,next));
+     // Services zoom is a percentage of the authored canvas and never enlarges
+     // beyond 100%. Fit modes may reduce the page, but cannot distort it.
+     const clamped=Math.max(.05,Math.min(1,next));
      setScale(prev=>Math.abs(prev-clamped)>.002?clamped:prev);
    };
    compute();const ro=new ResizeObserver(compute);ro.observe(stage);window.addEventListener('resize',compute);return()=>{ro.disconnect();window.removeEventListener('resize',compute)};
@@ -571,7 +619,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
         e.preventDefault();
         const factor=e.deltaY<0?1.08:0.92;
         setViewMode('custom');
-        setScale(prev=>Math.max(0.2,Math.min(3.0,Math.round(prev*factor*100)/100)));
+        setScale(prev=>Math.max(0.05,Math.min(1,Math.round(prev*factor*100)/100)));
       }
     };
     stage.addEventListener('wheel',onWheel,{passive:false});
@@ -580,26 +628,26 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
   const zoomPercent=Math.round(scale*100);
   const handleSliderChange=(e:React.ChangeEvent<HTMLInputElement>)=>{
     const val=Number(e.target.value);
-    if(!Number.isFinite(val)||val<10)return;
+    if(!Number.isFinite(val)||val<0||val>100)return;
     setViewMode('custom');
-    setScale(val/100);
+    setScale(Math.max(.01,val/100));
   };
   const handleZoomOut=()=>{
     const current=Math.round(scale*100);
     const step=current<=50?5:current<=120?10:25;
-    const nextVal=Math.max(20,Math.floor((current-step)/5)*5);
+    const nextVal=Math.max(0,Math.floor((current-step)/5)*5);
     setViewMode('custom');
-    setScale(nextVal/100);
+    setScale(Math.max(.01,nextVal/100));
   };
   const handleZoomIn=()=>{
     const current=Math.round(scale*100);
     const step=current<50?5:current<120?10:25;
-    const nextVal=Math.min(300,Math.ceil((current+step)/5)*5);
+    const nextVal=Math.min(100,Math.ceil((current+step)/5)*5);
     setViewMode('custom');
     setScale(nextVal/100);
   };
   const handleToggleFit=()=>{
-    if(viewMode==='fitPage'){
+    if(viewMode==='fitPage'||viewMode==='fitWidth'){
       setViewMode('actual');
       setScale(1);
     }else{
@@ -694,7 +742,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
   const embedUrl = `${window.location.origin}/?workspace=1&report=${encodeURIComponent(reportId)}&embed=1`;
   const embedIframe = `<iframe title="${report?.name || 'VTAB Report'}" width="100%" height="600" src="${embedUrl}" frameborder="0" allowFullScreen="true"></iframe>`;
 
-  return <div className={'publishedViewer '+(!embedded?'viewerStandalone ':'')+(full?'viewerFull':'')}>
+  return <div className={'publishedViewer '+(!embedded?'viewerStandalone ':'')+(full?'viewerFull ':'')+(isPublishedDarkCanvas?'darkCanvasTheme ':'')}>
    {/* Power BI Fabric Topbar (Matching Image 2 & 3) */}
    {!full && (
    <div className="pbi-report-topbar">
@@ -720,7 +768,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
      <div style={{ flex: 1 }} />
 
      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-       <span style={{ fontSize: 12, fontWeight: 600, color: '#166534', background: '#dcfce7', padding: '4px 10px', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+       <span className="pbi-governed-badge" style={{ fontSize: 12, fontWeight: 600, color: '#166534', background: '#dcfce7', padding: '4px 10px', borderRadius: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
          <ShieldCheck size={14} /> Governed
        </span>
        {onManageAccess ? (
@@ -874,7 +922,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
           href="https://admin-reporting.vtabsquare.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="pbi-cmd-btn"
+          className="pbi-cmd-btn pbi-ribbon-admin-btn"
           aria-disabled={!allowed('can_home')}
           tabIndex={allowed('can_home') ? 0 : -1}
           onClick={event=>{if(!allowed('can_home'))event.preventDefault()}}
@@ -933,7 +981,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
        {full && (
          <>
            <div className="fabric-brand-v" style={{ width: 22, height: 22, fontSize: 12 }}>V</div>
-           <b style={{ fontSize: 13, color: '#242424', marginRight: 8 }}>{report.name}</b>
+           <b className="pbi-report-ribbon-title" style={{ fontSize: 13, color: 'var(--pbi-text, #242424)', marginRight: 8 }}>{report.name}</b>
            <div className="pbi-cmd-divider" />
          </>
        )}
@@ -1001,11 +1049,11 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
        </div>
      )}
      <div className="viewerScaleFrame" style={{width:width*scale,height:effectiveHeight*scale,transition:isZoomDragging?'none':'width 0.15s ease, height 0.15s ease'}}>
-    <div className={'viewerPage '+(pixelLayout?'pixelPublishedPage':'legacyPublishedPage')} data-page-id={String(page.id||'')} style={{width,height:effectiveHeight,background:s.background||'#f5f7fb',transform:`scale(${scale})`,transformOrigin:'top left',transition:isZoomDragging?'none':'transform 0.15s ease'}}>
+    <div className={'viewerPage '+(pixelLayout?'pixelPublishedPage':'legacyPublishedPage')+(isPublishedDarkCanvas?' darkCanvasTheme':'')} data-page-id={String(page.id||'')} data-canvas-theme={isPublishedDarkCanvas?'dark':'light'} style={{width,height:effectiveHeight,background:publishedPageBackground,'--published-page-background':publishedPageBackground,transform:`scale(${scale})`,transformOrigin:'top left',transition:isZoomDragging?'none':'transform 0.15s ease'} as any}>
      {s.backgroundImage&&<div className={`viewerPageBg pageBackgroundImage fit-${s.backgroundImageFit||'cover'}`} style={{backgroundImage:`url(${s.backgroundImage})`,opacity:(s.backgroundImageOpacity!==undefined?s.backgroundImageOpacity:100)/100}}/>}
      <div className="viewerPageLayer">
       {!pixelLayout&&s.header?.visible!==false&&<div className="viewerDashboardHeader" style={{background:s.header?.background||'#fff','--viewer-header-bg':s.header?.background||'#fff','--viewer-header-height':`${s.header?.height||84}px`,'--viewer-header-pad-top':`${s.header?.paddingTop??12}px`,'--viewer-header-pad-bottom':`${s.header?.paddingBottom??12}px`,'--viewer-header-pad-left':`${s.header?.paddingLeft??24}px`,'--viewer-header-pad-right':`${s.header?.paddingRight??24}px`,'--viewer-header-radius':`${s.header?.borderRadius??14}px`,'--viewer-header-title-size':`${s.header?.fontSize||28}px`,'--viewer-header-title-color':s.header?.titleColor||'#111827','--viewer-header-subtitle-size':`${s.header?.subtitleFontSize||12}px`,'--viewer-header-subtitle-color':s.header?.subtitleColor||'#475569'} as any}><div className="viewerDashboardHeaderCopy" style={{textAlign:s.header?.alignment||'left'}}><h1 style={{color:s.header?.titleColor||'#111827'}}>{s.header?.title||''}</h1><p style={{color:s.header?.subtitleColor||'#475569'}}>{s.header?.subtitle||''}</p></div>{s.header?.showGeneratedInfo!==false&&<div className="viewerReportMeta" style={{background:s.header?.generatedInfoBackground||'#f8fbff'}}><CalendarDays size={20}/><div><small>REPORT GENERATED</small><b>{new Date(item.updated_at||item.published_at).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}</b><span>{new Date(item.updated_at||item.published_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span></div></div>}</div>}
-      <div className={'viewerGrid '+(pixelLayout?'pixelLayout':'legacyLayout')}>{visibleVisuals.map((v:Visual,index:number)=>{const visualField=v.bindings.axis?.[0]||'',publishedSlicerStyle=v.slicerStyle||(v.format as any)?.slicerStyle||'list';const activeFilter=interactionFilterMap[v.id]||(visualField?interactionFilters.find(filter=>filter.field===visualField||filter.field.endsWith('.'+visualField)||visualField.endsWith('.'+filter.field)):null)||null;return <div key={v.id} className={`viewerVisualWrapper ${v.geometryVersion===2?'viewerPixelObject':''}`} style={v.geometryVersion===2?{position:'absolute',left:v.x,top:v.y,width:v.w,height:v.h,zIndex:v.zIndex??index,transform:`rotate(${v.rotation||0}deg)`,transformOrigin:'center',display:'flex',flexDirection:'column',boxSizing:'border-box',overflow:(v.type==='slicer'&&publishedSlicerStyle==='dropdown')?'visible':'hidden'}:{gridColumn:`${v.x+1} / span ${v.w}`,gridRow:`${v.y+1} / span ${v.h}`}}><ViewerVisual v={v} model={project.model} result={visualResults[v.id]||(visualLoadError?{rows:[],error:visualLoadError}:undefined)} loading={v.type==='slicer'?(!visualResults[v.id]&&visualLoading):(!['textbox','button','image','shape'].includes(v.type)&&visualLoading&&!visualResults[v.id])} selected={buttonSelections[(v.format?.buttonSelectionGroup||'default').trim()||'default']===v.id} activeFilter={activeFilter} onCrossFilter={filter=>handleCrossFilter(v.id,filter)} onAction={executeAction}/></div>})}{visibleVisuals.length===0&&<div className="viewerEmptyPage"><b>No visible visuals on this published page</b><span>Open this page in Report Designer, verify visual visibility, save the report, and publish again.</span></div>}</div>
+      <div className={'viewerGrid '+(pixelLayout?'pixelLayout':'legacyLayout')}>{visibleVisuals.map((v:Visual,index:number)=>{const visualField=v.bindings.axis?.[0]||'',publishedSlicerStyle=v.slicerStyle||(v.format as any)?.slicerStyle||'list';const activeFilter=interactionFilterMap[v.id]||(visualField?interactionFilters.find(filter=>filter.field===visualField||filter.field.endsWith('.'+visualField)||visualField.endsWith('.'+filter.field)):null)||null;return <div key={v.id} className={`viewerVisualWrapper ${v.geometryVersion===2?'viewerPixelObject':''}`} style={v.geometryVersion===2?{position:'absolute',left:v.x,top:v.y,width:v.w,height:v.h,zIndex:v.zIndex??index,transform:`rotate(${v.rotation||0}deg)`,transformOrigin:'center',display:'flex',flexDirection:'column',boxSizing:'border-box',overflow:(v.type==='slicer'&&publishedSlicerStyle==='dropdown')?'visible':'hidden'}:{gridColumn:`${v.x+1} / span ${v.w}`,gridRow:`${v.y+1} / span ${v.h}`}}><ViewerVisual v={v} model={project.model} result={visualResults[v.id]||(visualLoadError?{rows:[],error:visualLoadError}:undefined)} loading={v.type==='slicer'?(!visualResults[v.id]&&visualLoading):(!['textbox','button','image','shape'].includes(v.type)&&visualLoading&&!visualResults[v.id])} selected={buttonSelections[(v.format?.buttonSelectionGroup||'default').trim()||'default']===v.id} activeFilter={activeFilter} isDarkCanvas={s.canvasTheme==='dark'||isPublishedDarkCanvas} onCrossFilter={filter=>handleCrossFilter(v.id,filter)} onAction={executeAction}/></div>})}{visibleVisuals.length===0&&<div className="viewerEmptyPage"><b>No visible visuals on this published page</b><span>Open this page in Report Designer, verify visual visibility, save the report, and publish again.</span></div>}</div>
      </div>
     </div>
     </div>
@@ -1017,7 +1065,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
         type="button" 
         className="viewerZoomBtn" 
         onClick={handleZoomOut} 
-        disabled={zoomPercent <= 20} 
+        disabled={zoomPercent <= 0}
         title="Zoom out" 
         aria-label="Zoom out"
       >
@@ -1026,8 +1074,8 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
       <input 
         type="range" 
         className="viewerZoomSlider" 
-        min={20} 
-        max={300} 
+        min={0}
+        max={100}
         step={5} 
         value={zoomPercent} 
         onChange={handleSliderChange}
@@ -1042,7 +1090,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
         type="button" 
         className="viewerZoomBtn" 
         onClick={handleZoomIn} 
-        disabled={zoomPercent >= 300} 
+        disabled={zoomPercent >= 100}
         title="Zoom in" 
         aria-label="Zoom in"
       >
@@ -1059,12 +1107,23 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
       <div className="viewerZoomDivider" />
       <button 
         type="button" 
-        className={`viewerZoomFitBtn ${viewMode === 'fitPage' ? 'active' : ''}`}
+        className={`viewerZoomFitBtn ${viewMode === 'fitPage' || viewMode === 'fitWidth' ? 'active' : ''}`}
         onClick={handleToggleFit} 
-        title={viewMode === 'fitPage' ? 'Fit to page (active) - Click for 100%' : 'Fit page'}
+        title={viewMode === 'fitPage' || viewMode === 'fitWidth' ? 'Fit to page (active) - Click for 100%' : 'Fit page'}
       >
         <Maximize2 size={13} />
         <span>Fit page</span>
+      </button>
+      <div className="viewerZoomDivider" />
+      <button
+        type="button"
+        className={`viewerZoomFitBtn viewerCanvasThemeToggle ${isPublishedDarkCanvas ? 'active' : ''}`}
+        onClick={() => setCanvasThemeOverride(isPublishedDarkCanvas ? 'light' : 'dark')}
+        title={isPublishedDarkCanvas ? 'Switch to light canvas' : 'Switch to dark canvas'}
+        aria-label={isPublishedDarkCanvas ? 'Switch to light canvas' : 'Switch to dark canvas'}
+      >
+        {isPublishedDarkCanvas ? <ZoomOut size={13} style={{display:'none'}}/> : null}
+        <span>{isPublishedDarkCanvas ? 'Light canvas' : 'Dark canvas'}</span>
       </button>
     </div>
    </div>}

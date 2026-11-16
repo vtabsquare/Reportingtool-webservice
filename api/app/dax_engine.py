@@ -453,6 +453,30 @@ def _virtual_scalar(expr,table:DaxTable,model,measure_resolver=None,filters=None
         context=_context_predicate(model,source,active_filters,source)
         if context:predicates.append(context)
         predicates.extend(explicit)
+        # A referenced measure can already be a complete scalar subquery.  The
+        # old route wrapped that scalar in another SELECT over the fact table,
+        # producing one result for every source row. DuckDB then correctly
+        # rejected it when the iterator consumed it as a scalar ("More than one
+        # row returned by a subquery").
+        #
+        # Apply context transition inside the existing scalar measure instead.
+        # Its generated row alias must be distinct from the iterator's __row
+        # alias so the predicate remains correlated to the current VALUES row.
+        clean_base=base.strip()
+        scalar_measure=(clean_base.startswith('(') and clean_base.endswith(')')
+                        and clean_base[1:].lstrip().upper().startswith('SELECT'))
+        if scalar_measure:
+            measure_row='__vtab_measure_row'
+            scoped_base=base.replace(qi('__row'),qi(measure_row))
+            scoped_predicates=[]
+            source_prefix=qi(source)+'.'
+            measure_prefix=qi(measure_row)+'.'
+            for predicate in predicates:
+                scoped_predicates.append(predicate.replace(source_prefix,measure_prefix))
+            return _attach_filter(
+                scoped_base,
+                ' AND '.join(f'({item})' for item in scoped_predicates),
+            )
         aggregate=_attach_filter(base,' AND '.join(f'({item})' for item in predicates))
         return f'(SELECT {aggregate} FROM {qi(physical)} {qi(source)})'
     def replace_field(match):
@@ -700,6 +724,30 @@ def _context_predicate(model,table,filters,alias):
             parts.append(f'{col} BETWEEN {sql_literal(val[0])} AND {sql_literal(val[1])}')
     return ' AND '.join(parts)
 
+def apply_context_filters(sql,model,filters,override_fields=()):
+    """Materialize visual context inside a measure's aggregate SQL.
+
+    Measure-only visuals cannot represent current-period and shifted-period
+    measures correctly with one shared outer WHERE clause. Embedding each
+    measure's effective context lets a dependent expression combine, for
+    example, current Orders with DATEADD Orders PY in one scalar result.
+    """
+    override=set(override_fields or ())
+    effective=[]
+    for item in filters or []:
+        field=str(item.get('field','') or '')
+        if not field or field in override:continue
+        table=field.split('.',1)[0] if '.' in field else ''
+        try:table=resolve_table(model,table) if table else table
+        except Exception:pass
+        if table and f'{table}.*' in override:continue
+        effective.append(item)
+    predicates=[]
+    for table in model.get('tables',{}):
+        predicate=_context_predicate(model,table,effective,table)
+        if predicate:predicates.append(f'({predicate})')
+    return _attach_filter(sql,' AND '.join(predicates)) if predicates else sql
+
 def _selected_aggregate(model,func,table,column,filters):
     table=resolve_table(model,table,column)
     tbl_meta=model.get('tables',{}).get(table,{})
@@ -753,10 +801,14 @@ def _compile_var_value(expr,model,vars_sql,filters,measure_resolver=None):
     """Compile a VAR assignment value. Supports all aggregate functions, DIVIDE, arithmetic,
     and measure references. Variable references are resolved before compilation."""
     expr=expr.strip()
-    def var_aware_resolver(name):
+    def var_aware_resolver(name,resolver_filters=None):
         try:return _mapping_value(vars_sql,name)
         except KeyError:pass
-        if measure_resolver:return measure_resolver(name)
+        if measure_resolver:
+            if resolver_filters is not None:
+                try:return measure_resolver(name,resolver_filters)
+                except TypeError:pass
+            return measure_resolver(name)
         raise DaxError(f"Unknown measure or variable [{name}]")
     table_value=_compile_table_expr(expr,model,vars_sql,filters,var_aware_resolver)
     if table_value is not None:return table_value
@@ -1367,24 +1419,27 @@ def _condition(expr,model,measure_resolver=None,filters=None,in_filter=False):
     return _comparison(e,model,measure_resolver,filters,in_filter=in_filter)
 
 def _is_date_sql(s):
-    """Return True only when the scalar result itself is date-valued.
+    """Return True only when the *result* of the SQL expression is date-like.
 
-    A numeric measure can legitimately contain date predicates in aggregate
-    FILTER clauses (PREVIOUSMONTH/DATEADD/TOTALYTD).  Looking for ``AS DATE``
-    or ``INTERVAL`` anywhere in its SQL therefore misclassifies the numeric
-    aggregate as a date and produces comparisons such as DOUBLE > DATE.
+    Looking for date tokens anywhere in an expression is unsafe. A numeric
+    measure can contain a PREVIOUSMONTH predicate deep inside its aggregate;
+    the old substring check then classified the whole numeric measure as a
+    date and rewrote `[Variance] > 0` as `DOUBLE > TRY_CAST(0 AS DATE)`.
+    Inspect the leading/top-level expression instead so nested filter dates do
+    not leak into the scalar result type.
     """
-    value = str(s).strip()
-    while _is_wrapped(value):
-        value = value[1:-1].strip()
-    return bool(
-        re.fullmatch(r'(?is)CURRENT_DATE(?:\s*\(\s*\))?', value)
-        or re.fullmatch(r'(?is)CURRENT_TIMESTAMP(?:\s*\(\s*\))?', value)
-        or re.fullmatch(r'(?is)(?:TRY_)?CAST\s*\(.*\s+AS\s+(?:DATE|TIMESTAMP)\s*\)', value)
-        or re.fullmatch(r'(?is)MAKE_DATE\s*\(.*\)', value)
-        or re.fullmatch(r'(?is)DATE_TRUNC\s*\(.*\)', value)
-        or re.fullmatch(r'(?is)(?:DATE_TRUNC\s*\(.*\)|(?:TRY_)?CAST\s*\(.*\s+AS\s+(?:DATE|TIMESTAMP)\s*\))\s*[+-]\s*INTERVAL\s+.*', value)
-    )
+    text=str(s or '').strip()
+    # Removing wrapping parentheses is sufficient for the scalar expressions
+    # emitted by this compiler and deliberately does not scan nested SQL.
+    head=re.sub(r'^\s*\(+\s*','',text).lower()
+    if re.match(r"^(?:date|timestamp)\s*'",head):return True
+    if re.match(r'^(?:current_date|current_timestamp)\b',head):return True
+    if re.match(r'^(?:date_trunc|last_day|make_date)\s*\(',head):return True
+    if re.match(r'^(?:try_cast|cast)\s*\(',head):
+        # A top-level CAST is date-like only when that CAST returns DATE or
+        # TIMESTAMP. Nested date casts inside SUM/CASE/FILTER remain numeric.
+        return bool(re.search(r'\bas\s+(?:date|timestamp)\s*\)\s*(?:[+-]\s*interval\b.*)?$',head,re.S))
+    return False
 
 def _comparison(expr,model,measure_resolver=None,filters=None,in_filter=False):
     depth=0;quote=None
@@ -1416,13 +1471,22 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         except KeyError:pass
         if measure_resolver:return measure_resolver(name)
         raise DaxError(f"Unknown variable [{name}] in CALCULATE filter")
-    m=re.fullmatch(r'(?is)(REMOVEFILTERS|ALL)\s*\(\s*([A-Za-z_][\w ]*)\s*\[\s*([^\]]+)\]\s*\)',e)
-    if m:return None,{semantic_field(m.group(2),m.group(3))}
-    
-    m=re.fullmatch(r'(?is)(REMOVEFILTERS|ALL)\s*\(\s*(\'?.*?\'?)\s*\)',e)
+    # REMOVEFILTERS/ALL accept a table or one or more column arguments.  Treating
+    # a comma-separated column list as a table name left iterator group filters
+    # active and generated contradictory context-transition predicates.
+    m=re.fullmatch(r'(?is)(REMOVEFILTERS|ALL)\s*\((.*)\)',e)
     if m:
-        t=m.group(2).strip("'")
-        return None,{t+'.*'}
+        removed=set()
+        for argument in split_top(m.group(2)):
+            field=parse_field(argument.strip())
+            if field:
+                removed.add(semantic_field(*field))
+                continue
+            table_name=argument.strip().strip("'")
+            if not table_name:
+                raise DaxError(f'{m.group(1).upper()} requires a table or column.')
+            removed.add(resolve_table(model,table_name)+'.*')
+        return None,removed
 
     m=re.fullmatch(r'(?is)FILTER\s*\(\s*ALL\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)\s*,\s*(.*)\)',e)
     if m:
@@ -1447,7 +1511,7 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         start=_compile_simple(args[1],model,resolve_filter_value,filters,in_filter=True)
         end=_compile_simple(args[2],model,resolve_filter_value,filters,in_filter=True)
         predicate=f'(CAST({start} AS DATE) IS NULL OR CAST({field} AS DATE) >= CAST({start} AS DATE)) AND (CAST({end} AS DATE) IS NULL OR CAST({field} AS DATE) <= CAST({end} AS DATE))'
-        return predicate,{semantic_field(t,c)}
+        return predicate,{resolve_table(model,t)+'.*'}
     m=re.fullmatch(r'(?is)DATESINPERIOD\s*\((.*)\)',e)
     if m:
         args=split_top(m.group(1))
@@ -1462,13 +1526,13 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         sql_unit='month' if unit=='QUARTER' else unit.lower();sql_num=num*3 if unit=='QUARTER' else num
         shifted=f"(CAST({anchor} AS DATE) + INTERVAL '{sql_num} {sql_unit}')"
         lower,upper=(shifted,f'CAST({anchor} AS DATE)') if num<=0 else (f'CAST({anchor} AS DATE)',shifted)
-        return f'CAST({field} AS DATE) BETWEEN {lower} AND {upper}',{semantic_field(t,c)}
+        return f'CAST({field} AS DATE) BETWEEN {lower} AND {upper}',{resolve_table(model,t)+'.*'}
     m=re.fullmatch(r'(?is)SAMEPERIODLASTYEAR\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)',e)
     if m:
         t,c=m.groups(); t = t.strip().strip("'"); c = c.strip()
         mn,mx=_selected_bounds(model,t,c,filters)
         field=resolve_field(model,t,c)
-        return f"TRY_CAST({field} AS DATE) BETWEEN (TRY_CAST({mn} AS DATE)-INTERVAL '1 year') AND (TRY_CAST({mx} AS DATE)-INTERVAL '1 year')",{semantic_field(t,c)}
+        return f"TRY_CAST({field} AS DATE) BETWEEN (TRY_CAST({mn} AS DATE)-INTERVAL '1 year') AND (TRY_CAST({mx} AS DATE)-INTERVAL '1 year')",{resolve_table(model,t)+'.*'}
     m=re.fullmatch(r'(?is)(PREVIOUSMONTH|PREVIOUSYEAR|PREVIOUSQUARTER)\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)',e)
     if m:
         kind,t,c=m.groups(); t = t.strip().strip("'"); c = c.strip(); kind = kind.upper()
@@ -1483,7 +1547,7 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         else:
             start=f"date_trunc('year', CAST({mx} AS DATE) - INTERVAL '1 year')"
             end=f"(date_trunc('year', CAST({mx} AS DATE)) - INTERVAL '1 day')"
-        return f"TRY_CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({end} AS DATE)",{semantic_field(t,c)}
+        return f"TRY_CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({end} AS DATE)",{resolve_table(model,t)+'.*'}
     m=re.fullmatch(r'(?is)PARALLELPERIOD\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*,\s*(-?\d+)\s*,\s*(YEAR|QUARTER|MONTH)\s*\)',e)
     if m:
         t,c,num,unit=m.groups(); t = t.strip().strip("'"); c = c.strip(); num = int(num); unit = unit.lower()
@@ -1495,13 +1559,13 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         shift_end = (num + 1) * mult
         start=f"date_trunc('{unit}', CAST({mx} AS DATE) + INTERVAL '{shift_start} {sql_unit}')"
         end=f"(date_trunc('{unit}', CAST({mx} AS DATE) + INTERVAL '{shift_end} {sql_unit}') - INTERVAL '1 day')"
-        return f"TRY_CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({end} AS DATE)",{semantic_field(t,c)}
+        return f"TRY_CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({end} AS DATE)",{resolve_table(model,t)+'.*'}
     m=re.fullmatch(r'(?is)DATEADD\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*,\s*(-?\d+)\s*,\s*(YEAR|QUARTER|MONTH|DAY)\s*\)',e)
     if m:
         t,c,num,unit=m.groups(); t = t.strip().strip("'"); c = c.strip(); num = int(num); unit = unit.lower()
         mn,mx=_selected_bounds(model,t,c,filters)
         field=resolve_field(model,t,c)
-        return f"TRY_CAST({field} AS DATE) BETWEEN (TRY_CAST({mn} AS DATE) + INTERVAL '{num} {unit}') AND (TRY_CAST({mx} AS DATE) + INTERVAL '{num} {unit}')",{semantic_field(t,c)}
+        return f"TRY_CAST({field} AS DATE) BETWEEN (TRY_CAST({mn} AS DATE) + INTERVAL '{num} {unit}') AND (TRY_CAST({mx} AS DATE) + INTERVAL '{num} {unit}')",{resolve_table(model,t)+'.*'}
     m=re.fullmatch(r'(?is)(DATESYTD|DATESQTD|DATESMTD)\s*\(\s*(\'?.*?\'?)\s*\[\s*([^\]]+)\]\s*\)',e)
     if m:
         kind,t,c=m.groups(); t = t.strip().strip("'"); c = c.strip(); kind = kind.upper()
@@ -1510,7 +1574,7 @@ def _compile_calculate_filter(expr,model,vars_sql,filters,measure_resolver=None)
         if kind=='DATESYTD':start=f"date_trunc('year',CAST({mx} AS DATE))"
         elif kind=='DATESQTD':start=f"date_trunc('quarter',CAST({mx} AS DATE))"
         else:start=f"date_trunc('month',CAST({mx} AS DATE))"
-        return f"TRY_CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({mx} AS DATE)",{semantic_field(t,c)}
+        return f"TRY_CAST({field} AS DATE) BETWEEN CAST({start} AS DATE) AND CAST({mx} AS DATE)",{resolve_table(model,t)+'.*'}
     m=re.fullmatch(r"(?is)FILTER\s*\(\s*'?([A-Za-z_][\w ]*)'?\s*,\s*(.*)\)",e)
     if m:
         table=m.group(1).strip();condition=m.group(2).strip()
@@ -1528,7 +1592,7 @@ def _attach_filter(base_sql,predicate):
     # this engine. Apply it to every aggregate in a composite/CASE expression so
     # CALCULATE([Measure], ...) and CALCULATE inside SWITCH/IF preserve filter context.
     aggregate=re.compile(r'(?i)\b(SUM|AVG|MIN|MAX|COUNT|MEDIAN|STDDEV_POP|STDDEV_SAMP|VAR_POP|VAR_SAMP)\s*\(')
-    spans=[]
+    insertions=[]
     for match in aggregate.finditer(base_sql):
         open_pos=base_sql.find('(',match.start());depth=0;quote=None;close_pos=None
         for i in range(open_pos,len(base_sql)):
@@ -1543,13 +1607,38 @@ def _attach_filter(base_sql,predicate):
                 if depth==0:close_pos=i;break
         if close_pos is None:continue
         tail=base_sql[close_pos+1:]
-        if re.match(r'(?is)^\s*FILTER\s*\(',tail):continue
-        spans.append(close_pos+1)
-    if not spans:
+        existing=re.match(r'(?is)^\s*FILTER\s*\(\s*WHERE\s+',tail)
+        if existing:
+            # CALCULATE can wrap a measure that already contains CALCULATE. In
+            # that case the aggregate has an existing FILTER clause (for
+            # example OrderStatus = "Delivered"). The previous implementation
+            # skipped the new filter entirely, so DATEADD/SAMEPERIODLASTYEAR
+            # dependent measures evaluated the current period again and YoY
+            # calculations returned exactly zero. Merge both predicates into
+            # the same aggregate FILTER context instead.
+            filter_start=close_pos+1+existing.start()
+            filter_open=base_sql.find('(',filter_start)
+            depth=0;filter_quote=None;filter_close=None
+            for index in range(filter_open,len(base_sql)):
+                char=base_sql[index]
+                if filter_quote:
+                    if char==filter_quote:
+                        if index+1<len(base_sql) and base_sql[index+1]==filter_quote:continue
+                        filter_quote=None
+                    continue
+                if char in ("'",'"'):filter_quote=char;continue
+                if char=='(':depth+=1
+                elif char==')':
+                    depth-=1
+                    if depth==0:filter_close=index;break
+            if filter_close is not None:insertions.append((filter_close,f' AND ({predicate})'))
+            continue
+        insertions.append((close_pos+1,f' FILTER (WHERE {predicate})'))
+    if not insertions:
         # Constants and already-scalar expressions are unaffected by row filters.
         return base_sql
     out=base_sql
-    for pos in reversed(spans):out=out[:pos]+f' FILTER (WHERE {predicate})'+out[pos:]
+    for pos,text in sorted(insertions,reverse=True):out=out[:pos]+text+out[pos:]
     return out
 
 def _compile_total_period(kind,args,model,measure_resolver,filters):
@@ -1609,10 +1698,14 @@ def compile_dax(expression,model,filters=None,measure_resolver=None):
 
     m=re.fullmatch(r'(?is)CALCULATE\s*\((.*)\)',ret.strip())
     
-    def var_aware_resolver(name):
+    def var_aware_resolver(name,resolver_filters=None):
         try:return _mapping_value(vars_sql,name)
         except KeyError:pass
-        if measure_resolver:return measure_resolver(name)
+        if measure_resolver:
+            if resolver_filters is not None:
+                try:return measure_resolver(name,resolver_filters)
+                except TypeError:pass
+            return measure_resolver(name)
         raise DaxError(f"Unknown measure or variable [{name}]")
 
     if not m:
@@ -1621,12 +1714,21 @@ def compile_dax(expression,model,filters=None,measure_resolver=None):
         
     args=split_top(m.group(1))
     if not args:raise DaxError('CALCULATE requires an expression.')
-    base=_compile_simple(args[0],model,var_aware_resolver,filters)
     predicates=[];override=set()
     for item in args[1:]:
         pred,over=_compile_calculate_filter(item,model,vars_sql,filters,var_aware_resolver)
         if pred:predicates.append(pred)
         override.update(over)
+    effective_filters=[]
+    for item in filters:
+        field=str(item.get('field','') or '')
+        table=field.split('.',1)[0] if '.' in field else ''
+        try:table=resolve_table(model,table) if table else table
+        except Exception:pass
+        if field in override or (table and f'{table}.*' in override):continue
+        effective_filters.append(item)
+    def calculate_resolver(name):return var_aware_resolver(name,effective_filters)
+    base=_compile_simple(args[0],model,calculate_resolver,effective_filters)
     return DaxCompilation(_attach_filter(base,' AND '.join(f'({p})' for p in predicates)),override)
 
 @lru_cache(maxsize=1)

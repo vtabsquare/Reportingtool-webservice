@@ -16,8 +16,20 @@ import {
   X, ChevronDown, Star, Share2, RefreshCw, Trash2, 
   MoreHorizontal, BarChart2, Database, FileText, Check, Folder, Users, 
   SlidersHorizontal, LogOut, Filter, ArrowLeft, Grid,
-  Shield, ExternalLink
+  Shield, ExternalLink, Moon, Sun
 } from 'lucide-react';
+
+type ServicesColorMode = 'light' | 'dark';
+const SERVICES_COLOR_MODE_KEY = 'vtab-services-color-mode';
+const readServicesColorMode = (): ServicesColorMode => {
+  try { const stored = localStorage.getItem(SERVICES_COLOR_MODE_KEY); if (stored === 'light' || stored === 'dark') return stored; } catch {}
+  return typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+};
+const applyServicesColorMode = (mode: ServicesColorMode) => {
+  document.documentElement.dataset.theme = 'vtab';
+  document.documentElement.dataset.colorMode = mode;
+  document.documentElement.style.colorScheme = mode;
+};
 
 type Report = { id: string; itemKey?: string; itemType?: string; paginatedId?: string; name: string; published_at: string; updated_at?: string; pages?: number | null; role: string; sourceType?: string; project?: any; workspace_id?: string; workspace_name?: string; workspace_is_personal?: boolean };
 type Workspace = { id: string; name: string; created_at: string; role: string; member_count: number; report_count: number; description?: string; is_personal?: boolean; access_scope?: 'workspace' | 'report'; can_manage_workspace?: boolean };
@@ -76,6 +88,8 @@ const PowerBiLogo = () => (
 );
 
 export default function CloudWorkspace({ session }: { session: any }) {
+  const [colorMode, setColorMode] = useState<ServicesColorMode>(() => readServicesColorMode());
+  useEffect(() => { applyServicesColorMode(colorMode); try { localStorage.setItem(SERVICES_COLOR_MODE_KEY, colorMode); } catch {} }, [colorMode]);
   // Navigation & View mode: 'home' | 'workspaces' | 'help_support'
   const [viewMode, setViewMode] = useState<'home' | 'workspaces' | 'help_support'>(() => {
     try {
@@ -413,7 +427,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
       ? { ...DEFAULT_REPORT_UI_PERMISSIONS }
       : resolveReportUiPermissions((viewingWorkspace as any)?.description, session?.user?.id, session?.user?.email);
     return (
-      <div className="pbi-app-shell">
+      <div className="pbi-app-shell servicesPortalShell">
         <ServicesUpdateExperience />
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <PublishedViewer 
@@ -444,7 +458,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
   // ─── MAIN POWER BI APP SHELL ──────────────────────────────────────────────────
   return (
-    <div className="pbi-app-shell">
+    <div className="pbi-app-shell servicesPortalShell">
       <ServicesUpdateExperience />
       {/* GLOBAL TOPBAR */}
       <header className="pbi-topbar">
@@ -482,7 +496,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
             href="https://admin-reporting.vtabsquare.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="pbi-cmd-btn pbi-admin-btn"
+            className="pbi-cmd-btn pbi-admin-btn pbi-topbar-admin-btn"
             title="Open Admin Portal in new tab"
             style={{
               display: 'inline-flex',
@@ -516,6 +530,15 @@ export default function CloudWorkspace({ session }: { session: any }) {
           </a>
 
           <NotificationCenter userId={session?.user?.id}/>
+          <button
+            className="pbi-header-icon-btn pbi-theme-toggle"
+            title={colorMode === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            aria-label={colorMode === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            aria-pressed={colorMode === 'dark'}
+            onClick={() => setColorMode(mode => mode === 'dark' ? 'light' : 'dark')}
+          >
+            {colorMode === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+          </button>
           <button className="pbi-header-icon-btn" title="Settings" onClick={() => setNotificationSettingsOpen(true)}>
             <Settings size={17} />
           </button>
@@ -529,7 +552,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
               <HelpCircle size={17} color={viewMode === 'help_support' || helpMenuOpen ? '#0f6cbd' : undefined} />
             </button>
             {helpMenuOpen && (
-              <div style={{
+              <div className="pbi-help-menu" style={{
                 position: 'absolute', right: 0, top: 38, width: 220, background: '#fff',
                 borderRadius: 8, boxShadow: '0 8px 30px rgba(0,0,0,0.14)', border: '1px solid #e1e1e1',
                 padding: 6, zIndex: 200, color: '#242424'
@@ -576,7 +599,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
             </button>
 
             {userMenuOpen && (
-              <div style={{
+              <div className="pbi-user-menu" style={{
                 position: 'absolute', right: 0, top: 40, width: 260, background: '#fff',
                 borderRadius: 8, boxShadow: '0 8px 30px rgba(0,0,0,0.14)', border: '1px solid #e1e1e1',
                 padding: 16, zIndex: 200, color: '#242424'
@@ -595,6 +618,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                   href="https://admin-reporting.vtabsquare.com"
                   target="_blank"
                   rel="noopener noreferrer"
+                  className="pbi-user-menu-admin-link"
                   style={{
                     width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     padding: '8px 10px', border: '1px solid #cce4f7', background: '#f0f7fc',
@@ -609,6 +633,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                 </a>
                 <button 
                   onClick={signOut}
+                  className="pbi-user-menu-signout-btn"
                   style={{
                     width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px',
                     border: '1px solid #fecaca', background: '#fff5f5', color: '#dc2626',
@@ -634,15 +659,6 @@ export default function CloudWorkspace({ session }: { session: any }) {
           >
             <Home size={18} />
             <span className="pbi-rail-label">Home</span>
-          </button>
-
-          <button 
-            className="pbi-rail-item" 
-            title="Create / Import package"
-            onClick={() => fileInput.current?.click()}
-          >
-            <Plus size={18} />
-            <span className="pbi-rail-label">Create</span>
           </button>
 
           <button 
@@ -749,10 +765,10 @@ export default function CloudWorkspace({ session }: { session: any }) {
                         <User size={17} />
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#242424' }}>My workspace</div>
-                        <small style={{ color: '#616161', fontSize: 11 }}>Personal workspace</small>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--pbi-text, #242424)' }}>My workspace</div>
+                        <small style={{ color: 'var(--pbi-text-subtle, #616161)', fontSize: 11 }}>Personal workspace</small>
                       </div>
-                      <span style={{ fontSize: 10, background: '#fef3c7', color: '#b45309', padding: '2px 6px', borderRadius: 99, fontWeight: 700 }}>PRO</span>
+                      <span className="pbi-pro-badge">PRO</span>
                     </button>
                   </div>
                 )}
@@ -774,10 +790,10 @@ export default function CloudWorkspace({ session }: { session: any }) {
                         <Users size={16} />
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#242424', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--pbi-text, #242424)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {w.name}
                         </div>
-                        <small style={{ color: '#616161', fontSize: 11 }}>
+                        <small style={{ color: 'var(--pbi-text-subtle, #616161)', fontSize: 11 }}>
                           {w.report_count} report{w.report_count !== 1 ? 's' : ''} · {w.access_scope === 'report' ? 'Report-level access' : w.role}
                         </small>
                       </div>
@@ -936,13 +952,13 @@ export default function CloudWorkspace({ session }: { session: any }) {
                   </button>
 
                   {optionsOpen && (
-                    <div style={{
+                    <div className="pbi-columns-popover" style={{
                       position: 'absolute', right: 0, top: 38, width: 230, background: '#fff',
                       borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', border: '1px solid #e1e1e1',
                       padding: '12px 14px', zIndex: 120, fontSize: 13
                     }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, borderBottom: '1px solid #edebe9', paddingBottom: 8 }}>
-                        <span style={{ fontWeight: 600, color: '#242424' }}>Columns</span>
+                        <span style={{ fontWeight: 600, color: 'var(--pbi-text, #242424)' }}>Columns</span>
                         <button 
                           onClick={() => setVisibleCols({ type: true, opened: true, refreshed: true, modified: true, location: true, endorsement: true })}
                           style={{ border: 'none', background: 'transparent', color: '#0d6257', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
@@ -1016,7 +1032,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                               <div className="pbi-item-icon-report">
                                 <BarChart2 size={16} />
                               </div>
-                              <b style={{ color: '#242424', fontWeight: 600 }}>{r.name}</b>
+                              <b className="pbi-item-name" style={{ color: 'var(--pbi-text, #242424)', fontWeight: 600 }}>{r.name}</b>
                               <button 
                                 onClick={e => toggleFavorite(r.id, e)}
                                 title={isFav ? "Remove from favorites" : "Add to favorites"}
@@ -1049,7 +1065,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
                           {visibleCols.endorsement && (
                             <td>
-                              <span style={roleBadgeStyle(r.role)}>{r.role}</span>
+                              <span className="pbi-role-badge" data-role={r.role} style={roleBadgeStyle(r.role)}>{r.role}</span>
                             </td>
                           )}
 
@@ -1063,7 +1079,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                             </button>
 
                             {isMenuOpen && (
-                              <div style={{
+                              <div className="pbi-table-row-menu" style={{
                                 position: 'absolute', right: 12, top: 32, width: 210, background: '#fff',
                                 borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', border: '1px solid #e1e1e1',
                                 padding: '6px 4px', zIndex: 110, fontSize: 13, textAlign: 'left'
@@ -1074,7 +1090,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                                     history.replaceState(null, '', `${location.pathname}?workspace=1&report=${encodeURIComponent(r.id)}`);
                                     setViewing(r);
                                   }}
-                                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: '#242424' }}
+                                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: 'var(--pbi-text, #242424)' }}
                                 >
                                   <BarChart2 size={15} color="#d97706" /> Open report
                                 </button>
@@ -1082,7 +1098,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                                 {canManage && !isPersonalReport(r) && (
                                   <button 
                                     onClick={() => { setMenuReportId(null); setSharing(r); }}
-                                    style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: '#242424' }}
+                                    style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: 'var(--pbi-text, #242424)' }}
                                   >
                                     <Share2 size={15} color="#0f6cbd" /> Manage permissions
                                   </button>
@@ -1090,14 +1106,14 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
                                 <button 
                                   onClick={() => { setMenuReportId(null); setScheduling(r); }}
-                                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: '#242424' }}
+                                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: 'var(--pbi-text, #242424)' }}
                                 >
                                   <RefreshCw size={15} color="#0d6257" /> Refresh now
                                 </button>
 
                                 <button 
                                   onClick={() => { setMenuReportId(null); setSettingsReport(r); }}
-                                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: '#242424' }}
+                                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', borderRadius: 4, color: 'var(--pbi-text, #242424)' }}
                                 >
                                   <Settings size={15} color="#616161" /> Settings
                                 </button>
@@ -1147,7 +1163,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                               <div className="pbi-workspace-icon-box" style={{ width: 26, height: 26, borderRadius: 4 }}>
                                 {isPersonalWorkspace(w) ? <User size={15} /> : <Users size={15} />}
                               </div>
-                              <b style={{ color: '#242424', fontWeight: 600 }}>{w.name}</b>
+                              <b className="pbi-item-name" style={{ color: 'var(--pbi-text, #242424)', fontWeight: 600 }}>{w.name}</b>
                             </div>
                           </td>
                           {visibleCols.type && <td style={{ color: '#616161' }}>Workspace</td>}
@@ -1156,7 +1172,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                           {visibleCols.location && <td style={{ color: '#616161' }}>Workspaces</td>}
                           {visibleCols.endorsement && (
                             <td>
-                              <span style={roleBadgeStyle(w.role)}>{w.role}</span>
+                              <span className="pbi-role-badge" data-role={w.role} style={roleBadgeStyle(w.role)}>{w.role}</span>
                             </td>
                           )}
                           <td></td>
@@ -1165,9 +1181,9 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
                     {filteredHomeReports.length === 0 && workspaces.length === 0 && (
                       <tr>
-                        <td colSpan={8} style={{ padding: '48px 24px', textAlign: 'center', color: '#616161' }}>
+                        <td colSpan={8} style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--pbi-text-subtle, #616161)' }}>
                           <div style={{ fontSize: 32, marginBottom: 8 }}>📊</div>
-                          <b style={{ display: 'block', fontSize: 15, color: '#242424', marginBottom: 4 }}>No items found</b>
+                          <b style={{ display: 'block', fontSize: 15, color: 'var(--pbi-text, #242424)', marginBottom: 4 }}>No items found</b>
                           <small>Publish reports from Desktop or upload a package to see them here.</small>
                         </td>
                       </tr>
@@ -1185,27 +1201,27 @@ export default function CloudWorkspace({ session }: { session: any }) {
             <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',minHeight:420,gap:16,padding:32}} role="status">
               <div style={{width:36,height:36,border:'3px solid #e1e1e1',borderTopColor:'#0d6257',borderRadius:'50%',animation:'pbiSpin .7s linear infinite'}}/>
               <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:6,textAlign:'center'}}>
-                <b style={{color:'#242424',fontSize:16,fontWeight:600}}>Loading {loadingWorkspaceName?`"${loadingWorkspaceName}"`:'workspace'} dashboards…</b>
-                <span style={{color:'#616161',fontSize:12}}>Fetching reports, Unified Data Models, and workspace assets</span>
+                <b style={{color:'var(--pbi-text, #242424)',fontSize:16,fontWeight:600}}>Loading {loadingWorkspaceName?`"${loadingWorkspaceName}"`:'workspace'} dashboards…</b>
+                <span style={{color:'var(--pbi-text-subtle, #616161)',fontSize:12}}>Fetching reports, Unified Data Models, and workspace assets</span>
               </div>
             </div>
           )}
           {!loading && !workspaceLoading && viewMode === 'workspaces' && activeWorkspace && (
             <div>
               {/* Workspace Top Title Bar (Matching Reference Image 1 "BRNZ Layer") */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 28px 12px', background: '#ffffff', borderBottom: '1px solid #edebe9', flexWrap: 'wrap', gap: 16 }}>
+              <div className="pbi-workspace-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 28px 12px', background: '#ffffff', borderBottom: '1px solid #edebe9', flexWrap: 'wrap', gap: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <div style={{ width: 38, height: 38, borderRadius: 8, background: '#e4f2ef', color: '#0d6257', display: 'grid', placeItems: 'center' }}>
                     {isPersonalWorkspace(activeWorkspace) ? <User size={20} /> : <Users size={20} />}
                   </div>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <h2 style={{ margin: 0, fontSize: 19, fontWeight: 600, color: '#242424' }}>
+                      <h2 style={{ margin: 0, fontSize: 19, fontWeight: 600, color: 'var(--pbi-text, #242424)' }}>
                         {activeWorkspace.name}
                       </h2>
-                      <span style={roleBadgeStyle(activeWorkspace.role)}>{activeWorkspace.role}</span>
+                      <span className="pbi-role-badge" data-role={activeWorkspace.role} style={roleBadgeStyle(activeWorkspace.role)}>{activeWorkspace.role}</span>
                     </div>
-                    <small style={{ color: '#616161', fontSize: 12 }}>
+                    <small style={{ color: 'var(--pbi-text-subtle, #616161)', fontSize: 12 }}>
                       {isPersonalWorkspace(activeWorkspace)
                         ? 'Personal workspace · Private to your account'
                         : activeWorkspace.access_scope === 'report'
@@ -1323,13 +1339,13 @@ export default function CloudWorkspace({ session }: { session: any }) {
       {/* Manage Access Modal (Power BI Style — Shows Members & Add Member) */}
       {addMemberOpen && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 999, display: "grid", placeItems: "center" }} onMouseDown={() => setAddMemberOpen(false)}>
-          <div style={{ background: "#fff", borderRadius: 8, padding: 24, width: 480, maxWidth: "92vw", maxHeight: "88vh", display: "flex", flexDirection: "column", boxShadow: "0 16px 40px rgba(0,0,0,.2)" }} onMouseDown={e => e.stopPropagation()}>
+          <div className="pbi-manage-access-dialog" style={{ background: "#fff", borderRadius: 8, padding: 24, width: 480, maxWidth: "92vw", maxHeight: "88vh", display: "flex", flexDirection: "column", boxShadow: "0 16px 40px rgba(0,0,0,.2)" }} onMouseDown={e => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div>
-                <b style={{ fontSize: 16, color: "#242424" }}>Manage access</b>
-                <small style={{ color: "#616161", display: "block" }}>{activeWorkspace?.name}</small>
+                <b style={{ fontSize: 16, color: "var(--pbi-text, #242424)" }}>Manage access</b>
+                <small style={{ color: "var(--pbi-text-subtle, #616161)", display: "block" }}>{activeWorkspace?.name}</small>
               </div>
-              <button onClick={() => setAddMemberOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#616161" }}>
+              <button onClick={() => setAddMemberOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--pbi-text-subtle, #616161)" }}>
                 <X size={18} />
               </button>
             </div>
@@ -1337,7 +1353,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
             {activeWorkspace?.role === 'Admin' && (
               <div style={{ display: "flex", flexDirection: "column", gap: 12, paddingBottom: 16, marginBottom: 16, borderBottom: "1px solid #edebe9" }}>
                 <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: "#242424", display: "block", marginBottom: 6 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: "var(--pbi-text, #242424)", display: "block", marginBottom: 6 }}>
                     Add people
                   </label>
                   <select 
@@ -1356,7 +1372,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
 
                 <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
                   <div style={{ flex: 1 }}>
-                    <label style={{ fontSize: 12, fontWeight: 600, color: "#242424", display: "block", marginBottom: 6 }}>Role</label>
+                    <label style={{ fontSize: 12, fontWeight: 600, color: "var(--pbi-text, #242424)", display: "block", marginBottom: 6 }}>Role</label>
                     <select 
                       style={{ width: "100%", border: "1px solid #c8c6c4", borderRadius: 4, padding: "8px 10px", fontSize: 13, outline: "none" }}
                       value={memberRole} 
@@ -1390,7 +1406,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
             )}
 
             <div style={{ flex: 1, overflowY: "auto" }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "#616161", marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--pbi-text-subtle, #616161)", marginBottom: 8 }}>
                 People with access ({activeWorkspace?.members?.length || 1})
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1399,15 +1415,15 @@ export default function CloudWorkspace({ session }: { session: any }) {
                   const name = m.display_name || email.split('@')[0];
                   const canRemove = activeWorkspace?.role === 'Admin' && m.user_id && m.user_id !== session?.user?.id;
                   return (
-                    <div key={m.user_id || idx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "#f8fafc", borderRadius: 6, border: "1px solid #edebe9" }}>
+                    <div key={m.user_id || idx} className="pbi-member-row" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "#f8fafc", borderRadius: 6, border: "1px solid #edebe9" }}>
                       <div className="pbi-avatar-btn" style={{ margin: 0, width: 30, height: 30, fontSize: 12 }}>
                         {(name || '?')[0].toUpperCase()}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: "#242424", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
-                        <small style={{ fontSize: 11, color: "#616161", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</small>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--pbi-text, #242424)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+                        <small style={{ fontSize: 11, color: "var(--pbi-text-subtle, #616161)", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</small>
                       </div>
-                      <span style={roleBadgeStyle(m.role || 'Viewer')}>{m.role || 'Viewer'}</span>
+                      <span className="pbi-role-badge" data-role={m.role || 'Viewer'} style={roleBadgeStyle(m.role || 'Viewer')}>{m.role || 'Viewer'}</span>
                       {canRemove && (
                         <button
                           title={`Remove ${email}`}
@@ -1429,7 +1445,8 @@ export default function CloudWorkspace({ session }: { session: any }) {
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
               <button 
                 onClick={() => setAddMemberOpen(false)} 
-                style={{ padding: "7px 18px", border: "1px solid #c8c6c4", borderRadius: 4, cursor: "pointer", background: "#fff", fontWeight: 600, fontSize: 13, color: "#242424" }}
+                className="pbi-btn-close"
+                style={{ padding: "7px 18px", border: "1px solid #c8c6c4", borderRadius: 4, cursor: "pointer", background: "#fff", fontWeight: 600, fontSize: 13, color: "var(--pbi-text, #242424)" }}
               >
                 Close
               </button>

@@ -2876,3 +2876,794 @@ html[data-color-mode="dark"] [data-theme="vtab"] .view-report .advancedFields .f
   border-radius: 0 !important;
   box-shadow: 0 4px 20px rgba(15, 23, 42, 0.12), 0 1px 3px rgba(15, 23, 42, 0.08) !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Reporting Services portal themes
+   Kept separate from PublishedViewer so a report always retains the exact
+   theme and colours authored in Desktop.
+   ═══════════════════════════════════════════════════════════════════════════ */
+html[data-color-mode="light"],
+html[data-color-mode="light"] .servicesPortalShell{
+  --svc-canvas:#f5f7fa;--svc-surface:#ffffff;--svc-surface-2:#fafbfc;
+  --svc-surface-3:#f1f5f9;--svc-border:#d8e0ea;--svc-border-soft:#e8edf3;
+  --svc-text:#172033;--svc-muted:#5f6f82;--svc-accent:#0f6cbd;--svc-accent-soft:#e8f3fb;
+  color-scheme:light;background:var(--svc-canvas);color:var(--svc-text)
+}
+html[data-color-mode="dark"],
+html[data-color-mode="dark"] .servicesPortalShell{
+  --svc-canvas:#07111f;--svc-surface:#0d1929;--svc-surface-2:#111f32;
+  --svc-surface-3:#18283e;--svc-border:#2a3b52;--svc-border-soft:#213149;
+  --svc-text:#f4f8fc;--svc-muted:#a8b6c8;--svc-accent:#4ab7ff;--svc-accent-soft:#123250;
+  --pbi-bg:var(--svc-canvas);--pbi-text:var(--svc-text);--pbi-text-subtle:var(--svc-muted);
+  --pbi-border:var(--svc-border);--pbi-border-light:var(--svc-border-soft);--pbi-rail-bg:#0a1524;
+  color-scheme:dark;background:var(--svc-canvas);color:var(--svc-text)
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-topbar,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-rail,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspaces-drawer,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-drawer-footer,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-pills-row,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table-toolbar,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table-container{
+  background:var(--svc-surface)!important;color:var(--svc-text)!important;border-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-canvas,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-cards-carousel{
+  background:var(--svc-canvas)!important;color:var(--svc-text)!important;border-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-brand-title,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-breadcrumb-crumb,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-drawer-title,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-quick-card-title,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table th,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-rail-item,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-btn-tool,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-btn-card-open,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-card,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-help-menu,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu{
+  color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-breadcrumb-separator,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-search-icon,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-drawer-section-label,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-quick-card-meta,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu small{
+  color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-waffle-btn,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-header-icon-btn,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-search-input,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-drawer-search-input,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table-search input,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-btn-tool,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-btn-card-open{
+  background:var(--svc-surface-2)!important;color:var(--svc-text)!important;border-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-search-input::placeholder,
+html[data-color-mode="dark"] .servicesPortalShell input::placeholder,
+html[data-color-mode="dark"] .servicesPortalShell textarea::placeholder{color:#7f91a8!important}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-waffle-btn:hover,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-header-icon-btn:hover,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-header-icon-btn.active,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-rail-item:hover,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-btn-tool:hover,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-btn-card-open:hover,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-card:hover{
+  background:var(--svc-surface-3)!important;color:#fff!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-rail-item.active,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-card.active,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-pill.active{
+  background:var(--svc-accent-soft)!important;color:#8bd2ff!important;border-color:#2676a9!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-pill{
+  background:var(--svc-surface-2)!important;color:var(--svc-muted)!important;border-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-quick-card{
+  background:var(--svc-surface)!important;color:var(--svc-text)!important;border-color:var(--svc-border)!important;
+  box-shadow:0 8px 24px rgba(0,0,0,.24)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-quick-card-thumb{
+  background:linear-gradient(135deg,#142a43,#193555)!important;color:#75c8ff!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-quick-card-info,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-quick-card-footer{
+  background:var(--svc-surface)!important;border-color:var(--svc-border-soft)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table th{
+  background:var(--svc-surface-2)!important;color:#c6d3e2!important;border-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td{
+  background:var(--svc-surface)!important;border-color:var(--svc-border-soft)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table tr:hover td{background:#15263c!important}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-report{background:#3b2a12!important;color:#fbbf24!important}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-model{background:#271e45!important;color:#b79aff!important}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-help-menu,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu{
+  background:var(--svc-surface-2)!important;border-color:var(--svc-border)!important;box-shadow:0 18px 52px rgba(0,0,0,.5)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-help-menu button,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu button,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu a{
+  color:var(--svc-text)!important;border-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-help-menu button:hover{background:var(--svc-surface-3)!important}
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationItem{
+  background:var(--svc-surface-2)!important;color:var(--svc-text)!important;border-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel header,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel article,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings>header,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings>footer,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog>header,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog>footer,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsTabs{
+  background:var(--svc-surface)!important;color:var(--svc-text)!important;border-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel article.unread{background:#102a45!important}
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationContent:hover,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsTabs button.active{background:var(--svc-surface-3)!important;color:#8bd2ff!important}
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationContent small,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationContent em,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsRow small,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationItem .details span,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationItem .details small{color:var(--svc-muted)!important}
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings input,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings select,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog input,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog select,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog textarea{
+  background:var(--svc-surface-3)!important;color:var(--svc-text)!important;border-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-theme-toggle{background:#18314d!important;color:#fbbf24!important;box-shadow:inset 0 0 0 1px #315276}
+
+/* Dark mode portal typography & component visibility fixes */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td b,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td strong,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td span,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td div,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table b,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table strong,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-name {
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td small {
+  color: var(--svc-muted) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td button {
+  color: var(--svc-muted) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td button:hover {
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-card div,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-card b,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-card span:not(.pbi-pro-badge) {
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-card small {
+  color: var(--svc-muted) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-pro-badge {
+  background: #3b2a12 !important;
+  color: #fbbf24 !important;
+  border: 1px solid #78350f !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-icon-box {
+  background: #142a43 !important;
+  color: #75c8ff !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-icon-box svg {
+  color: #75c8ff !important;
+  stroke: #75c8ff !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-report {
+  background: #3b2a12 !important;
+  color: #fbbf24 !important;
+  border: 1px solid #78350f !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-report svg {
+  color: #fbbf24 !important;
+  stroke: #fbbf24 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-model {
+  background: #271e45 !important;
+  color: #c4b5fd !important;
+  border: 1px solid #5b21b6 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-model svg {
+  color: #c4b5fd !important;
+  stroke: #c4b5fd !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-paginated {
+  background: #0c2e4e !important;
+  color: #7dd3fc !important;
+  border: 1px solid #0369a1 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-paginated svg {
+  color: #7dd3fc !important;
+  stroke: #7dd3fc !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-topbar-admin-btn {
+  background: #3b2a12 !important;
+  border-color: #78350f !important;
+  color: #fbbf24 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-topbar-admin-btn:hover {
+  background: #451a03 !important;
+  border-color: #92400e !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-topbar-admin-btn svg {
+  color: #fbbf24 !important;
+  stroke: #fbbf24 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-topbar-admin-btn span {
+  color: #fbbf24 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-admin-link {
+  background: #142a43 !important;
+  border-color: #20456c !important;
+  color: #60a5fa !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-admin-link:hover {
+  background: #1b385c !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-admin-link svg {
+  color: #60a5fa !important;
+  stroke: #60a5fa !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-admin-link span {
+  color: #60a5fa !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-signout-btn {
+  background: #2b1216 !important;
+  border-color: #5c1d24 !important;
+  color: #f87171 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-signout-btn:hover {
+  background: #3b181e !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-signout-btn svg {
+  color: #f87171 !important;
+  stroke: #f87171 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Admin"] {
+  background: #1e3a5f !important; color: #93c5fd !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Owner"],
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Co-Owner"] {
+  background: #2e1065 !important; color: #c4b5fd !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Member"] {
+  background: #064e3b !important; color: #6ee7b7 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Contributor"] {
+  background: #451a03 !important; color: #fcd34d !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Viewer"] {
+  background: #1e293b !important; color: #94a3b8 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-model-status[data-status="ready"] {
+  color: #34d399 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-model-status[data-status="setup"] {
+  color: #fbbf24 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-model-status[data-status="active"] {
+  color: #60a5fa !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-switch-workspace-box {
+  background: var(--svc-surface-2) !important;
+  border-color: var(--svc-border) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-switch-workspace-box span {
+  color: var(--svc-muted) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-switch-workspace-box button {
+  background: var(--svc-surface-3) !important;
+  border-color: var(--svc-border) !important;
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table-search svg,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-drawer-search-wrap svg {
+  color: var(--svc-muted) !important;
+  stroke: var(--svc-muted) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table-row-menu,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-row-menu {
+  background: var(--svc-surface-2) !important;
+  border-color: var(--svc-border) !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table-row-menu button,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-row-menu button {
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table-row-menu button:hover,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-row-menu button:hover {
+  background: var(--svc-surface-3) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table-row-menu div,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-row-menu div {
+  background: var(--svc-border) !important;
+  border-color: var(--svc-border) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-columns-popover {
+  background: var(--svc-surface-2) !important;
+  border-color: var(--svc-border) !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-columns-popover span,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-columns-popover label {
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-columns-popover div {
+  border-color: var(--svc-border) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-header,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-toolbar {
+  background: var(--svc-surface) !important;
+  border-color: var(--svc-border) !important;
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-header h2 {
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-header small {
+  color: var(--svc-muted) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-manage-access-dialog {
+  background: var(--svc-surface) !important;
+  border: 1px solid var(--svc-border) !important;
+  color: var(--svc-text) !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-manage-access-dialog b,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-manage-access-dialog label,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-manage-access-dialog div {
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-manage-access-dialog small {
+  color: var(--svc-muted) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-manage-access-dialog select,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-manage-access-dialog input {
+  background: var(--svc-surface-2) !important;
+  border-color: var(--svc-border) !important;
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-manage-access-dialog .pbi-member-row {
+  background: var(--svc-surface-2) !important;
+  border-color: var(--svc-border) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-manage-access-dialog button.pbi-btn-close {
+  background: var(--svc-surface-2) !important;
+  border-color: var(--svc-border) !important;
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu b {
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu small {
+  color: var(--svc-muted) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-help-menu span {
+  color: var(--svc-text) !important;
+}
+
+/* ── Dark mode: table TD inline-colour overrides ─────────────────────────── */
+/* Table cells with hardcoded color:#616161 inline styles */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td[style*="color"] {
+  color: var(--svc-muted) !important;
+}
+/* Favourite star button (hardcoded #c8c6c4 on dark = invisible) */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td button[title*="favorite"],
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td button[title*="favourite"] {
+  color: var(--svc-muted) !important;
+}
+/* 3-dot menu button in table rows */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table td button[style*="color"] {
+  color: var(--svc-muted) !important;
+}
+/* Row context menu divider (hardcoded #edebe9 background) */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-table-row-menu div[style*="background"] {
+  background: var(--svc-border) !important;
+}
+/* User-menu divider line (hardcoded #edebe9) */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu div[style*="background:#edebe9"],
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu div[style*="background: #edebe9"] {
+  background: var(--svc-border) !important;
+}
+
+/* ── Role badges – override hardcoded inline light-mode palette ───────────── */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge,
+html[data-color-mode="dark"] .servicesPortalShell span[style*="ede9fe"],
+html[data-color-mode="dark"] .servicesPortalShell span[style*="dbeafe"],
+html[data-color-mode="dark"] .servicesPortalShell span[style*="dcfce7"],
+html[data-color-mode="dark"] .servicesPortalShell span[style*="fef3c7"],
+html[data-color-mode="dark"] .servicesPortalShell span[style*="f1f5f9"] {
+  background: var(--svc-surface-3) !important;
+  color: var(--svc-text) !important;
+  border: 1px solid var(--svc-border) !important;
+}
+/* Keep role-specific accent tints for pbi-role-badge[data-role] (already defined above) */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Admin"] {
+  background: #1e3a5f !important; color: #93c5fd !important; border-color: #2d5a92 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Owner"],
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Co-Owner"] {
+  background: #2e1065 !important; color: #c4b5fd !important; border-color: #5b21b6 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Member"] {
+  background: #064e3b !important; color: #6ee7b7 !important; border-color: #065f46 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Contributor"] {
+  background: #451a03 !important; color: #fcd34d !important; border-color: #78350f !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-role-badge[data-role="Viewer"] {
+  background: #1e293b !important; color: #94a3b8 !important; border-color: #334155 !important;
+}
+
+/* ── Rail bottom label "VTAB" (hardcoded color:#616161) ─────────────────── */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-rail span[style*="616161"] {
+  color: var(--svc-muted) !important;
+}
+
+/* ── Viewer pages panel (white bg, dark text) ──────────────────────────── */
+html[data-color-mode="dark"] .servicesPortalShell .viewerPagesPanel,
+html[data-color-mode="dark"] .servicesPortalShell .viewerPagesPanelHeader {
+  background: var(--svc-surface) !important;
+  border-color: var(--svc-border) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .viewerPagesPanelTitle,
+html[data-color-mode="dark"] .servicesPortalShell .viewerPagesPanelItem {
+  color: var(--svc-text) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .viewerPagesPanelToggle {
+  color: var(--svc-muted) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .viewerPagesPanelItem:hover {
+  background: var(--svc-surface-2) !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .viewerPagesPanelItem.active {
+  background: var(--svc-accent-soft) !important;
+  color: #8bd2ff !important;
+  border-left-color: var(--svc-accent) !important;
+}
+
+/* ── Viewer zoom dock (white bg in dark mode) ──────────────────────────── */
+html[data-color-mode="dark"] .viewerZoomDock {
+  background: var(--svc-surface, #0d1929) !important;
+  border-color: var(--svc-border, #2a3b52) !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,.45), 0 1px 3px rgba(0,0,0,.3) !important;
+}
+html[data-color-mode="dark"] .viewerZoomBtn,
+html[data-color-mode="dark"] .viewerZoomPercentBtn,
+html[data-color-mode="dark"] .viewerZoomFitBtn {
+  color: var(--svc-text, #f4f8fc) !important;
+}
+html[data-color-mode="dark"] .viewerZoomBtn:hover:not(:disabled),
+html[data-color-mode="dark"] .viewerZoomPercentBtn:hover,
+html[data-color-mode="dark"] .viewerZoomFitBtn:hover {
+  background: var(--svc-surface-2, #111f32) !important;
+}
+html[data-color-mode="dark"] .viewerZoomDivider {
+  background: var(--svc-border, #2a3b52) !important;
+}
+html[data-color-mode="dark"] .viewerZoomSlider {
+  background: var(--svc-surface-3, #18283e) !important;
+}
+html[data-color-mode="dark"] .viewerCanvasThemeToggle {
+  color: var(--svc-text, #f4f8fc) !important;
+  background: transparent !important;
+}
+html[data-color-mode="dark"] .viewerCanvasThemeToggle.active {
+  background: var(--svc-accent-soft, #123250) !important;
+  color: var(--svc-accent, #4ab7ff) !important;
+  border-color: var(--svc-accent, #4ab7ff) !important;
+}
+
+/* ── Viewer ribbon topbar & pages panel (white in dark mode) ───────────── */
+html[data-color-mode="dark"] .publishedViewer .pbi-report-topbar {
+  background: var(--svc-surface, #0d1929) !important;
+  border-color: var(--svc-border, #2a3b52) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-report-title-meta b,
+html[data-color-mode="dark"] .publishedViewer .pbi-report-title-meta small {
+  color: var(--svc-text, #f4f8fc) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-btn-back {
+  background: var(--svc-surface-2, #111f32) !important;
+  border-color: var(--svc-border, #2a3b52) !important;
+  color: var(--svc-text, #f4f8fc) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .viewerPagesPanel,
+html[data-color-mode="dark"] .publishedViewer .viewerPagesPanelHeader {
+  background: var(--svc-surface, #0d1929) !important;
+  border-color: var(--svc-border, #2a3b52) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .viewerPagesPanelTitle,
+html[data-color-mode="dark"] .publishedViewer .viewerPagesPanelItem {
+  color: var(--svc-text, #f4f8fc) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .viewerPagesPanelToggle {
+  color: var(--svc-muted, #a8b6c8) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .viewerPagesPanelItem:hover {
+  background: var(--svc-surface-2, #111f32) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .viewerPagesPanelItem.active {
+  background: var(--svc-accent-soft, #123250) !important;
+  color: #8bd2ff !important;
+  border-left-color: var(--svc-accent, #4ab7ff) !important;
+}
+
+/* ── Viewer share/export action bar & ribbon tabs in published viewer ────── */
+html[data-color-mode="dark"] .publishedViewer .pbi-report-ribbon-tabs,
+.publishedViewer.darkCanvasTheme .pbi-report-ribbon-tabs {
+  background: var(--svc-surface-2, #111f32) !important;
+  border-bottom: 1px solid var(--svc-border, #2a3b52) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-tab-btn,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-tab-btn {
+  color: var(--svc-text, #f4f8fc) !important;
+  background: transparent !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-tab-btn:hover,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-tab-btn:hover {
+  background: var(--svc-surface-3, #18283e) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-tab-btn.active,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-tab-btn.active {
+  background: var(--svc-surface, #0d1929) !important;
+  color: var(--svc-text, #f4f8fc) !important;
+  border-bottom-color: var(--svc-accent, #4ab7ff) !important;
+  font-weight: 600 !important;
+}
+
+/* ── Ribbon Command Bar in published viewer ──────────────────────────────── */
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar {
+  background: var(--svc-surface, #0d1929) !important;
+  border-bottom: 1px solid var(--svc-border, #2a3b52) !important;
+  color: var(--svc-text, #f4f8fc) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar b,
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar .pbi-report-ribbon-title,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar b,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar .pbi-report-ribbon-title {
+  color: var(--svc-text, #f4f8fc) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar .pbi-cmd-btn,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar .pbi-cmd-btn {
+  color: var(--svc-text, #f4f8fc) !important;
+  background: transparent !important;
+  border-color: transparent !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar .pbi-cmd-btn:hover:not(:disabled),
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar .pbi-cmd-btn:hover:not(:disabled) {
+  background: var(--svc-surface-2, #111f32) !important;
+  border-color: var(--svc-border, #2a3b52) !important;
+  color: #ffffff !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar .pbi-cmd-btn.active,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar .pbi-cmd-btn.active {
+  background: var(--svc-surface-3, #18283e) !important;
+  border-color: var(--svc-border, #2a3b52) !important;
+  color: var(--svc-accent, #4ab7ff) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar .pbi-cmd-divider,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar .pbi-cmd-divider {
+  background: var(--svc-border, #2a3b52) !important;
+}
+
+/* ── Ribbon admin portal button ──────────────────────────────────────────── */
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar a[href*="admin-reporting"],
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar .pbi-ribbon-admin-btn,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar a[href*="admin-reporting"],
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar .pbi-ribbon-admin-btn {
+  background: #11263c !important;
+  border: 1px solid #1d4ed8 !important;
+  color: #60a5fa !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar a[href*="admin-reporting"]:hover,
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar .pbi-ribbon-admin-btn:hover,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar a[href*="admin-reporting"]:hover,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar .pbi-ribbon-admin-btn:hover {
+  background: #1e3a5f !important;
+  border-color: #2563eb !important;
+  color: #93c5fd !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar a[href*="admin-reporting"] span,
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar .pbi-ribbon-admin-btn span,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar a[href*="admin-reporting"] span,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar .pbi-ribbon-admin-btn span {
+  color: #60a5fa !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar a[href*="admin-reporting"] svg,
+html[data-color-mode="dark"] .publishedViewer .pbi-ribbon-command-bar .pbi-ribbon-admin-btn svg,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar a[href*="admin-reporting"] svg,
+.publishedViewer.darkCanvasTheme .pbi-ribbon-command-bar .pbi-ribbon-admin-btn svg {
+  color: #60a5fa !important;
+  stroke: #60a5fa !important;
+}
+
+/* ── Viewer file dropdown and export/embed submenus ──────────────────────── */
+html[data-color-mode="dark"] .publishedViewer .pbi-dropdown-menu,
+.publishedViewer.darkCanvasTheme .pbi-dropdown-menu,
+html[data-color-mode="dark"] .publishedViewer .pbi-submenu,
+.publishedViewer.darkCanvasTheme .pbi-submenu {
+  background: var(--svc-surface, #0d1929) !important;
+  border: 1px solid var(--svc-border, #2a3b52) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-menu-item,
+.publishedViewer.darkCanvasTheme .pbi-menu-item {
+  color: var(--svc-text, #f4f8fc) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-menu-item:hover,
+.publishedViewer.darkCanvasTheme .pbi-menu-item:hover {
+  background: var(--svc-surface-2, #111f32) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-menu-item svg,
+.publishedViewer.darkCanvasTheme .pbi-menu-item svg {
+  color: var(--svc-muted, #a8b6c8) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-menu-chevron,
+.publishedViewer.darkCanvasTheme .pbi-menu-chevron {
+  color: var(--svc-muted, #a8b6c8) !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-menu-divider,
+.publishedViewer.darkCanvasTheme .pbi-menu-divider {
+  background: var(--svc-border, #2a3b52) !important;
+}
+
+/* ── Governed badge in viewer topbar ─────────────────────────────────────── */
+html[data-color-mode="dark"] .publishedViewer .pbi-governed-badge,
+.publishedViewer.darkCanvasTheme .pbi-governed-badge {
+  background: #143823 !important;
+  color: #4ade80 !important;
+  border: 1px solid #166534 !important;
+}
+html[data-color-mode="dark"] .publishedViewer .pbi-governed-badge svg,
+.publishedViewer.darkCanvasTheme .pbi-governed-badge svg {
+  color: #4ade80 !important;
+  stroke: #4ade80 !important;
+}
+
+/* ── Home: quick-access cards carousel dark ──────────────────────────────── */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-cards-carousel {
+  background: var(--svc-canvas) !important;
+}
+
+/* ── Home: pills row dark ──────────────────────────────────────────────────── */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-pills-row {
+  background: var(--svc-surface) !important;
+  border-color: var(--svc-border) !important;
+}
+
+/* ── Workspace home header area dark ─────────────────────────────────────── */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-canvas h2[style],
+html[data-color-mode="dark"] .servicesPortalShell .pbi-canvas p[style],
+html[data-color-mode="dark"] .servicesPortalShell .pbi-canvas small[style] {
+  color: var(--svc-muted) !important;
+}
+
+/* ── User menu: Admin Portal and Sign out buttons ── */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-admin-link,
+html[data-color-mode="dark"] .servicesPortalShell a.pbi-user-menu-admin-link {
+  background: #11263c !important;
+  border-color: #1d4ed8 !important;
+  color: #60a5fa !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-admin-link span,
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-admin-link svg {
+  color: #60a5fa !important;
+  stroke: #60a5fa !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-admin-link:hover {
+  background: #1e3a5f !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-signout-btn,
+html[data-color-mode="dark"] .servicesPortalShell button.pbi-user-menu-signout-btn {
+  background: #3b1418 !important;
+  border-color: #991b1b !important;
+  color: #f87171 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-signout-btn svg {
+  color: #f87171 !important;
+  stroke: #f87171 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu-signout-btn:hover {
+  background: #4c1d24 !important;
+}
+
+/* ── PRO badge in workspace drawer and cards ── */
+.pbi-pro-badge {
+  font-size: 10px;
+  background: #fef3c7;
+  color: #b45309;
+  padding: 2px 6px;
+  border-radius: 99px;
+  font-weight: 700;
+  display: inline-block;
+  line-height: 1.2;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-pro-badge {
+  background: #3b2a12 !important;
+  color: #fbbf24 !important;
+  border: 1px solid #78350f !important;
+}
+
+/* ── Table item names & icons in dark mode ── */
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-name,
+html[data-color-mode="dark"] .servicesPortalShell b.pbi-item-name,
+html[data-color-mode="dark"] .servicesPortalShell td b.pbi-item-name {
+  color: #f4f8fc !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-report,
+html[data-color-mode="dark"] .servicesPortalShell span.pbi-item-icon-report {
+  background: #3b2a12 !important;
+  color: #fbbf24 !important;
+  border: 1px solid #78350f !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-report svg {
+  color: #fbbf24 !important;
+  stroke: #fbbf24 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-model,
+html[data-color-mode="dark"] .servicesPortalShell span.pbi-item-icon-model {
+  background: #271e45 !important;
+  color: #c4b5fd !important;
+  border: 1px solid #5b21b6 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-model svg {
+  color: #c4b5fd !important;
+  stroke: #c4b5fd !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-paginated,
+html[data-color-mode="dark"] .servicesPortalShell span.pbi-item-icon-paginated {
+  background: #0c2d48 !important;
+  color: #38bdf8 !important;
+  border: 1px solid #0369a1 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-item-icon-paginated svg {
+  color: #38bdf8 !important;
+  stroke: #38bdf8 !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-icon-box {
+  background: #142a43 !important;
+  color: #75c8ff !important;
+  border: 1px solid #1e40af !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell .pbi-workspace-icon-box svg {
+  color: #75c8ff !important;
+  stroke: #75c8ff !important;
+}
+html[data-color-mode="dark"] .servicesPortalShell input[type="checkbox"] {
+  color-scheme: dark;
+  accent-color: #38bdf8;
+}
+
+/* ── Premium KPI Icon color protection in dark mode and dark canvas ── */
+.premiumKpiIcon,
+.darkCanvasTheme .premiumKpiIcon,
+.viewerVisual.isDarkCard .premiumKpiIcon,
+.publishedViewer .premiumKpiIcon {
+  color: var(--kpi-icon-color, currentColor) !important;
+}
+.premiumKpiIcon svg,
+.darkCanvasTheme .premiumKpiIcon svg,
+.viewerVisual.isDarkCard .premiumKpiIcon svg,
+.publishedViewer .premiumKpiIcon svg {
+  color: var(--kpi-icon-color, currentColor) !important;
+  stroke: var(--kpi-icon-color, currentColor) !important;
+}
+

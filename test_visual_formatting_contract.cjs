@@ -9,6 +9,7 @@ const publishedViewer = read('src/v11/PublishedViewer.tsx');
 const canvasManager = read('src/components/CanvasObjectInteractionManager.tsx');
 const styles = read('src/styles.css');
 const formattingAuthority = read('src/formatting-authority.css');
+const categoryColors = read('src/categoryColors.ts');
 
 const checks = [
   ['cartesian legends use unclipped top and bottom bands', schema.includes("['top','bottom']") && !schema.includes("['top','bottom','left','right']")],
@@ -28,6 +29,8 @@ const checks = [
   ['slicer search filters values', workbench.includes('allOptions.filter(option=>!slicerSearch')],
   ['categorical visuals default to a multi-color palette', schema.includes("toggle('categoricalColors','Use multiple category colors',true)") && chart.includes('categoryColor(name,i,value)')],
   ['category colors can be overridden by category name', schema.includes("id:'categoryColors'") && chart.includes('categoryOverrides[String(name)]')],
+  ['category palette assignment is stable across query row order', categoryColors.includes('stableCategoryColor') && categoryColors.includes('distinctCategoryColors') && categoryColors.includes('Math.imul') && chart.includes('distinctCategoryColors(')],
+  ['cartesian legend values expose persistent color controls', schema.includes("title:'Legend and category colors'") && schema.includes('bar:[dataColors,seriesColors,categoryColorSection') && workbench.includes('const axis=legend||') && chart.includes('color:categoryColor(sn,si,0)')],
   ['combo chart requires a second value before creating its line', chart.includes("const second=visual.bindings.target?.[0];const secondData=second?rows.map(r=>r[second]):[]") && chart.includes("...(second?[{name:second,type:'line'")],
   ['combo primary axis renders selected gridlines', chart.includes("splitLine:{show:visual.format.gridLines!==false,lineStyle:{color:gridLineColor,type:gridLineStyle}}},...(second?")],
   ['stacked charts apply radius to the outer stack', chart.includes('si===seriesNames.length-1')],
@@ -49,7 +52,7 @@ const checks = [
   ['configured series colors drive the renderer', chart.includes('visual.format.seriesColors?.[field]') && chart.includes('configuredSeriesColor(vf,si')],
   ['gauge and progress expose target color and label controls', schema.includes("title:'Target'") && schema.includes("color('targetColor','Target color'") && schema.includes("title:'Data labels'") && schema.includes("toggle('targetLabelVisible'")],
   ['gauge and progress render target and axis-label formatting', chart.includes('visual.format.targetLabelVisible!==false') && chart.includes('visual.format.gaugeAxisLabelColor') && chart.includes('visual.format.gaugeAxisLabelFontSize')],
-  ['table and matrix expose explicit text and background cards', schema.includes("id:'textFormatting',title:'Text formatting'") && schema.includes("id:'backgroundFormatting',title:'Background formatting'") && schema.includes('table:[tableValues,tableBackgrounds') && schema.includes('matrix:[matrixLayout,matrixRowHeaders,matrixColumnHeaders,tableValues,tableBackgrounds')],
+  ['table and matrix expose explicit text and background cards', schema.includes("id:'textFormatting',title:'Text formatting'") && schema.includes("id:'backgroundFormatting',title:'Background formatting'") && schema.includes('table:[tableValues,tableBackgrounds') && schema.includes('matrix:[tableValues,tableBackgrounds')],
   ['table typography controls reach CSS variables', chart.includes("'--table-weight'") && chart.includes("'--table-style'") && chart.includes("'--table-wrap'") && styles.includes('font-weight:var(--table-weight)!important') && styles.includes('white-space:var(--table-wrap)!important')],
   ['donut callout uses true horizontal centering', chart.includes("left:'center',top:'42%'") && chart.includes("left:'center',top:'52%'")],
   ['gauge actual pointer and overlaid target notch remain distinct', chart.includes("length:'68%',width:5,itemStyle:{color:accent}") && chart.includes("z: 10") && chart.includes("pointer: {show:false}") && chart.includes("width: thickness + 8")],
@@ -63,6 +66,7 @@ const checks = [
   ['published shapes use the same standalone renderer', publishedViewer.includes('className="viewerShapeObject"') && !publishedViewer.includes('viewerVisual viewerVisual-shape')],
   ['shape CSS has no internal padding', styles.includes('.shapeObject,.viewerShapeObject') && styles.includes('.viewerShapeVisual{width:100%;height:100%;padding:0')],
   ['slicer typography reaches every slicer presentation', schema.includes("select('tableFontFamily','Font family'") && workbench.includes("'--slicer-font':displayFormat.tableFontFamily") && publishedViewer.includes("'--slicer-font':f.tableFontFamily") && formattingAuthority.includes("font-family:var(--slicer-font")],
+  ['measure editor always exposes a visible caret', styles.includes('caret-color:#60a5fa!important') && styles.includes('cursor:text!important')],
   ['slicer bold italic wrap alignment and row spacing are wired', formattingAuthority.includes("font-weight:var(--slicer-weight") && formattingAuthority.includes("font-style:var(--slicer-style") && formattingAuthority.includes("white-space:var(--slicer-wrap") && formattingAuthority.includes("text-align:var(--slicer-align") && formattingAuthority.includes("padding-top:var(--slicer-row-padding")],
   ['title exposes Power BI style typography controls', schema.includes("select('titleFontFamily','Font family'") && schema.includes("toggle('titleBold','Bold'") && schema.includes("toggle('subtitleBold','Subtitle bold'")],
   ['authoring title and subtitle consume all typography properties', workbench.includes("'--visual-title-font':displayFormat.titleFontFamily") && workbench.includes("fontWeight:displayFormat.titleBold===false") && workbench.includes("fontFamily:displayFormat.subtitleFontFamily") && formattingAuthority.includes("--visual-subtitle-font")],
@@ -72,7 +76,7 @@ const checks = [
   ['published visuals preserve general container formatting', publishedViewer.includes("const cardStyle:any=") && publishedViewer.includes("'--viewer-radius':radius") && publishedViewer.includes("'--viewer-background':background") && publishedViewer.includes("'--viewer-shadow':shadow") && formattingAuthority.includes("border-radius:var(--viewer-radius") && formattingAuthority.includes("background:var(--viewer-background") && formattingAuthority.includes("box-shadow:var(--viewer-shadow")],
   ['heatmaps use vertical category scrolling and wheel synchronization', chart.includes("categories={yCategories} horizontal={true}") && chart.includes("dataZoom:categoryZoom(yCategories,true)") && chart.includes("moveOnMouseWheel:true") && chart.includes("datazoom:handleDataZoom") && styles.includes('.chartNativeScrollerVertical')],
   ['matrix content starts directly with the table', !chart.includes('<b>Matrix hierarchy</b>') && chart.includes("premiumDataTable matrixMode")],
-  ['treemap removes root name banner and fills its visual bounds', chart.includes("type:'treemap',roam:false,nodeClick:false,breadcrumb:{show:false},left:6,right:6,top:6,bottom:6") && chart.includes("upperLabel:{show:false}") && !schema.includes("toggle('treemapGroupLabels'")],
+  ['treemap fills its bounds and offers optional hierarchy group labels', chart.includes("type:'treemap',roam:false,nodeClick:false,breadcrumb:{show:false},left:6,right:6,top:6,bottom:6") && chart.includes("upperLabel:{show:visual.format.treemapGroupLabels===true") && schema.includes("toggle('treemapGroupLabels','Show group labels'")],
   ['gauge target field wins over manual fallback and participates in auto scale', chart.includes('const boundTarget=resolveBoundNumber(rows?.[0],targetField)') && chart.includes('const rawTarget=boundTarget!==undefined?boundTarget') && chart.includes('autoMaxCandidates.push(Math.abs(rawTarget!)*1.15)')],
   ['gauge target label is placed outside the arc', chart.includes('const labelRadius = 110') && chart.includes('fontWeight: 600') && chart.includes("radius: '91%'")],
   ['heatmap plot and color scale use compact margins', chart.includes("top:legendVisible&&legendPosition==='top'?42:8") && chart.includes("bottom:legendVisible&&legendPosition==='bottom'?44:8") && chart.includes("left:'center',right:'auto'")],

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import re, json, hashlib, time, threading
 from collections import OrderedDict
-from .dax_engine import strip_assignment
+from .dax_engine import apply_context_filters, strip_assignment
 from .dax_v2 import analyze_measure as analyze_dax_v2
 from .dax_v2.storage_adapter import compile_for_duckdb
 from .local_engine import connect, ensure_analytics_ready
@@ -265,15 +265,20 @@ def measure(name,model,stack=None,context_filters=None,with_meta=False):
     # editor-valid/visual-fails split while DuckDB remains the storage adapter.
     exp=strip_assignment(semantic.canonical_source)
 
-    def resolve_measure(ref):
-        return measure(ref,model,stack+[name],context_filters,False)
+    def resolve_measure(ref,resolver_filters=None):
+        return measure(ref,model,stack+[name],context_filters if resolver_filters is None else resolver_filters,False)
 
     # Every validated canonical measure must pass through the storage adapter.
     # The previous heuristic bypassed compilation for scalar formulas without
     # field references (notably BLANK()), leaking DAX function names directly
     # into DuckDB and causing a visual-only API 400 after successful validation.
     c=compile_for_duckdb(exp,model,context_filters or [],resolve_measure)
-    return (c.sql,c.override_fields) if with_meta else c.sql
+    # Leaf measures own their visual filter context. Composite measures receive
+    # already-contextualized dependency SQL, so applying the same context again
+    # would incorrectly re-filter DATEADD/SAMEPERIODLASTYEAR branches.
+    dependency_refs=[ref for ref in re.findall(r'(?<![A-Za-z0-9_])\[([^]]+)\]',exp) if resolve_measure_name(ref,measures) is not None]
+    sql=c.sql if dependency_refs else apply_context_filters(c.sql,model,context_filters or [],c.override_fields)
+    return (sql,c.override_fields) if with_meta else sql
 
 def inline(exp,model,stack,context_filters=None):
     # Single quotes are valid in DAX table names e.g. SUM('Sales'[Amount])
@@ -344,7 +349,7 @@ def compile_query(model,req,rls=()):
     dims=normalized_dims
     needed=set(required(model,dims,meas,rls,filters))
     if not model.get('tables'):
-        raise ValueError('The Unified Data Model has no tables.')
+        raise ValueError('The semantic model has no tables.')
 
     # Compile measures before planning FROM/JOIN.  A formula can validate in
     # isolation yet expand to table references that simple DAX-text heuristics
@@ -354,6 +359,8 @@ def compile_query(model,req,rls=()):
     sql_reference_tables=set();sql_aggregate_tables=set()
     for m in meas:
         msql,mover=measure(m,model,context_filters=filters,with_meta=True)
+        if not dims and resolve_measure_name(m,model.get('measures',{})) is None:
+            msql=apply_context_filters(msql,model,filters,mover)
         compiled_measures.append((m,msql,mover))
         sql_reference_tables.update(_sql_reference_tables(model,msql))
         sql_aggregate_tables.update(_sql_aggregate_reference_tables(model,msql))
@@ -475,18 +482,22 @@ def compile_query(model,req,rls=()):
     if not sel:
         # Slicers normally provide a dimension; this protects malformed empty requests.
         sel=['1 AS "Value"']
-    bt=model['tables'][base];base_phys=bt.get('physical') or base;sql=f'SELECT {", ".join(sel)} FROM {q(base_phys)} {q(base)}'
+    bt=model['tables'][base];base_phys=bt.get('physical') or base
+    # A measure-only visual (card/KPI/gauge) must always produce one logical
+    # row. Self-contained iterator measures are scalar subqueries; without a
+    # GROUP BY the surrounding fact-table FROM repeated that scalar once per
+    # fact row. DISTINCT preserves ordinary aggregate behavior and collapses
+    # scalar-only requests to the single row expected by every KPI consumer.
+    select_keyword='SELECT' if groups else 'SELECT DISTINCT'
+    sql=f'{select_keyword} {", ".join(sel)} FROM {q(base_phys)} {q(base)}'
     if joins:sql+=' '+' '.join(joins)
 
     wh=[];params=[]
-    for f in filters:
+    # Dimensionless cards/KPIs embed context per measure. A shared outer WHERE
+    # cannot simultaneously represent current-period and shifted-period DAX.
+    # Grouped visuals retain their normal outer filter for category pruning.
+    for f in (filters if dims else []):
         f_field=f.get('field','')
-        if not f_field:continue
-        if '.' not in f_field:
-            for t_name_candidate, t_def in model.get('tables', {}).items():
-                if f_field in t_def.get('columns', {}):
-                    f_field = f'{t_name_candidate}.{f_field}'
-                    break
         if not f_field or '.' not in f_field:continue
         t_name = resolve_table_name(model,f_field.split('.')[0])
         if f_field in override_fields or f"{t_name}.*" in override_fields:continue

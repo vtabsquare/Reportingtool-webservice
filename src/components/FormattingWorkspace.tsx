@@ -7,6 +7,8 @@ import {useStudio} from '../store';
 import {DeferredNumberInput} from './DeferredNumberInput';
 import {DeferredTextInput} from './DeferredTextInput';
 import {CATEGORY_PALETTE,stableCategoryColor} from '../categoryColors';
+import {BUTTON_ICON_CATALOG,BUTTON_ICON_CATEGORIES,ButtonIcon,type ButtonIconCategory} from '../buttonIcons';
+import {applyButtonPreset} from '../buttonVisualStyle';
 
 type Props={visual:Visual;updateVisual:(fn:(visual:Visual)=>void)=>void;mode?:'format'|'analytics';multiSelect?:boolean;multiSelectSameType?:boolean;categories?:string[]};
 type Scope='visual'|'general';
@@ -46,6 +48,7 @@ function write(visual:Visual,key:string,value:any){
   }
   if(key==='titleBold'){visual.format.titleBold=!!value;visual.format.titleFontWeight=value?700:400;return}
   if(key==='subtitleBold'){visual.format.subtitleBold=!!value;visual.format.subtitleFontWeight=value?700:400;return}
+  if(key==='buttonPreset'){applyButtonPreset(visual.format,String(value));return}
   (visual.format as any)[key]=value;
   if(key==='cornerRadius'){
     visual.format.cornerLinked=true;
@@ -82,14 +85,22 @@ function Control({schema,visual,updateVisual}:{schema:FormattingControlSchema;vi
 }
 
 function DataFormat({visual,updateVisual}:{visual:Visual;updateVisual:Props['updateVisual']}){
-  const fields=Array.from(new Set([...(visual.type==='table'||visual.type==='matrix'?(visual.bindings.axis||[]):[]),...(visual.bindings.values||[]),...(visual.bindings.target||[])]));
+  const bindingKeys=['axis','values','target','variance','indicator','color','tooltips','legend','x','size','min','max','location','latitude','longitude','geometry','detail','label','path','country','region','postalCode'] as const;
+  const fields=Array.from(new Set(bindingKeys.flatMap(key=>{const values=(visual.bindings as any)?.[key];return Array.isArray(values)?values.filter((item):item is string=>typeof item==='string'&&!!item):[]})));
   const[field,setField]=useState(fields[0]||'');
   const active=fields.includes(field)?field:(fields[0]||'');
   if(!active)return <div className="schemaEmptyNote">Add a field or measure to this visual to configure its display format.</div>;
   const format:NumberFormat={...DEFAULT_NUMBER_FORMAT,...visual.format.fieldFormats?.[active]};
+  const automaticLabel=active.replace(/^(field:|numericField:|hierarchy:|measure:)/,'').replace(/^.*\./,'').replace(/::.*$/,'').replace(/_/g,' ');
+  const labelMode=visual.format.fieldLabelModes?.[active]||(visual.format.fieldDisplayNames?.[active]!==undefined?'custom':'automatic');
+  const customLabel=visual.format.fieldDisplayNames?.[active]??automaticLabel;
   const set=(key:keyof NumberFormat,value:any)=>updateVisual(v=>{v.format.fieldFormats=v.format.fieldFormats||{};v.format.fieldFormats[active]={...DEFAULT_NUMBER_FORMAT,...v.format.fieldFormats[active],[key]:value}});
+  const setLabelMode=(mode:'automatic'|'custom')=>updateVisual(v=>{v.format.fieldLabelModes={...(v.format.fieldLabelModes||{})};v.format.fieldDisplayNames={...(v.format.fieldDisplayNames||{})};if(mode==='custom'){v.format.fieldLabelModes[active]='custom';if(v.format.fieldDisplayNames[active]===undefined)v.format.fieldDisplayNames[active]=automaticLabel}else{delete v.format.fieldLabelModes[active];delete v.format.fieldDisplayNames[active]}});
+  const setCustomLabel=(value:string)=>updateVisual(v=>{v.format.fieldLabelModes={...(v.format.fieldLabelModes||{}),[active]:'custom'};v.format.fieldDisplayNames={...(v.format.fieldDisplayNames||{}),[active]:value}});
   return <div className="schemaDataFormat">
-    <label>Field / measure<select value={active} onChange={e=>setField(e.target.value)}>{fields.map(item=><option key={item}>{item}</option>)}</select></label>
+    <label>Field / measure<select value={active} onChange={e=>setField(e.target.value)}>{fields.map(item=><option key={item} value={item}>{visual.format.fieldDisplayNames?.[item]||item}</option>)}</select></label>
+    <label>Label<select value={labelMode} onChange={e=>setLabelMode(e.target.value as 'automatic'|'custom')}><option value="automatic">Automatic</option><option value="custom">Custom</option></select></label>
+    {labelMode==='custom'&&<label>Custom label<DeferredTextInput value={customLabel} onCommit={setCustomLabel}/></label>}
     <div className="formatStyleButtons"><button className={format.style==='number'?'active':''} onClick={()=>set('style','number')}>123</button><button className={format.style==='currency'?'active':''} onClick={()=>set('style','currency')}>$</button><button className={format.style==='percentage'?'active':''} onClick={()=>set('style','percentage')}>%</button></div>
     {format.style==='currency'&&<label>Currency<select value={format.currency} onChange={e=>set('currency',e.target.value)}>{CURRENCIES.map(currency=><option key={currency.code} value={currency.code}>{currency.symbol} · {currency.code}</option>)}</select></label>}
     <div className="schemaTwoColumn"><label>Decimal places<input type="number" min="0" max="8" value={format.decimals} onChange={e=>set('decimals',Number(e.target.value))}/></label><label>Display units<select value={format.displayUnits} onChange={e=>set('displayUnits',e.target.value)}><option value="auto">Auto</option><option value="none">None</option><option value="thousand">Thousands</option><option value="million">Millions</option><option value="billion">Billions</option><option value="trillion">Trillions</option></select></label></div>
@@ -154,7 +165,7 @@ function CategoryColorFormat({visual,updateVisual,categories}:{visual:Visual;upd
 function TableConditionalFormat({visual,updateVisual}:{visual:Visual;updateVisual:Props['updateVisual']}){
   const{project}=useStudio();
   const measures=Object.keys(project?.model?.measures||{}).sort((a,b)=>Number(!/colou?r/i.test(a))-Number(!/colou?r/i.test(b))||a.localeCompare(b));
-  const fields=Array.from(new Set([...(visual.bindings.axis||[]),...(visual.bindings.values||[]),...(visual.bindings.target||[]),...(visual.bindings.legend||[]),...(visual.bindings.tooltips||[])]));
+  const fields=Array.from(new Set([...(visual.bindings.axis||[]),...(visual.bindings.values||[]),...(visual.bindings.target||[]),...(visual.bindings.variance||[]),...(visual.bindings.indicator||[]),...(visual.bindings.color||[]),...(visual.bindings.legend||[]),...(visual.bindings.tooltips||[])]));
   const[selected,setSelected]=useState(fields[0]||'');
   const active=fields.includes(selected)?selected:(fields[0]||'');
   if(!active)return <div className="schemaEmptyNote">Add a column or measure before creating a conditional-formatting rule.</div>;
@@ -255,11 +266,31 @@ function MapColorGrading({visual,updateVisual}:{visual:Visual;updateVisual:Props
   </div>;
 }
 
+function IconLibraryPicker({visual,updateVisual,property}:{visual:Visual;updateVisual:Props['updateVisual'];property:'buttonIcon'|'kpiIcon'}){
+  const[query,setQuery]=useState('');
+  const selected=String(visual.format[property]||'none');
+  const selectedCategory=BUTTON_ICON_CATALOG.find(item=>item.name===selected)?.category||'Analytics';
+  const[category,setCategory]=useState<ButtonIconCategory>(selectedCategory);
+  const icons=BUTTON_ICON_CATALOG.filter(item=>item.category===category&&(!query||item.label.toLowerCase().includes(query.toLowerCase())||item.name.includes(query.toLowerCase())));
+  return <div className="buttonIconPicker">
+    {property==='kpiIcon'&&<div className="schemaTwoColumn kpiIconStyleControls">
+      <label className="checkboxGlass"><input type="checkbox" checked={visual.format.kpiShowIcon!==false} onChange={e=>updateVisual(v=>{v.format.kpiShowIcon=e.target.checked})}/>Show icon</label>
+      <span/>
+      <label>Icon color<div className="schemaColor"><input type="color" value={visual.format.kpiIconColor||visual.format.kpiAccentColor||'#2563eb'} onChange={e=>updateVisual(v=>{v.format.kpiIconColor=e.target.value})}/><input value={visual.format.kpiIconColor||''} placeholder="Inherit accent" onChange={e=>updateVisual(v=>{v.format.kpiIconColor=e.target.value||undefined})}/></div></label>
+      <label>Icon background<div className="schemaColor"><input type="color" value={visual.format.kpiIconBackgroundColor||'#eff6ff'} onChange={e=>updateVisual(v=>{v.format.kpiIconBackgroundColor=e.target.value})}/><input value={visual.format.kpiIconBackgroundColor||''} placeholder="Automatic" onChange={e=>updateVisual(v=>{v.format.kpiIconBackgroundColor=e.target.value||undefined})}/></div></label>
+    </div>}
+    {property==='kpiIcon'&&visual.format.kpiShowIcon===false&&<div className="schemaEmptyNote">Turn on Show icon to display the selected icon.</div>}
+    <label className="buttonIconCategory">Icon category<select value={category} onChange={e=>{setCategory(e.target.value as ButtonIconCategory);setQuery('')}}>{BUTTON_ICON_CATEGORIES.map(item=><option key={item}>{item}</option>)}</select></label>
+    <label className="buttonIconSearch"><Search size={13}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search icons..."/></label>
+    <div className="buttonIconGrid">{icons.map(item=><button type="button" key={item.name} className={selected===item.name?'active':''} title={`${item.category}: ${item.label}`} onClick={()=>updateVisual(v=>{v.format[property]=item.name})}><ButtonIcon name={item.name} size={18}/><span>{item.label}</span></button>)}{!icons.length&&<div className="schemaEmptyNote">No icons match this search.</div>}</div>
+  </div>;
+}
+
 function Card({schema,visual,updateVisual,open,onToggle,categories}:{schema:FormattingCardSchema;visual:Visual;updateVisual:Props['updateVisual'];open:boolean;onToggle:()=>void;categories?:string[]}){
   const legendDrivenTypes=['bar','column','stackedbar','stackedcolumn','line','area','combo'];
   const disabled=schema.id==='categoryColors'&&legendDrivenTypes.includes(visual.type)&&!(visual.bindings.legend||[]).length;
-  const reset=()=>updateVisual(v=>{if(schema.id==='categoryColors'){v.format.categoryColors={};return}if(schema.id==='seriesColors'){v.format.seriesColors={};return}if(schema.id==='conditionalFormatting'){v.format.tableConditionalRules={};return}if(schema.id==='measureConditionalFormatting'){v.format.conditionalFormatRules=[];return}if(schema.id==='mapAreas'){v.format.mapColorScale='measure';v.format.mapColorMeasure=undefined;v.format.mapRuleLow=0;v.format.mapRuleHigh=100;v.format.mapRuleLowColor='#d64550';v.format.mapRuleMidColor='#facc15';v.format.mapRuleHighColor='#1aab40';v.bindings.color=[];return}schema.controls.forEach(control=>write(v,control.key,control.defaultValue))});
-  return <details className={'formatSchemaCard'+(disabled?' formatSchemaCardDisabled':'')} open={open} onToggle={e=>{if((e.currentTarget as HTMLDetailsElement).open!==open)onToggle()}}><summary><span><ChevronDown size={14}/><b>{schema.title}</b>{disabled&&<small>Add a field to Legend to enable</small>}</span><button disabled={disabled} title={disabled?'Add a Legend field first':`Reset ${schema.title}`} onClick={event=>{event.preventDefault();event.stopPropagation();if(!disabled)reset()}}><RotateCcw size={13}/></button></summary><fieldset disabled={disabled} className="formatSchemaBody">{schema.description&&<p>{schema.description}</p>}{disabled?<div className="schemaEmptyNote">Legend color mapping becomes available after a field is added to the visual’s Legend well.</div>:schema.id==='dataFormat'?<DataFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='individualCards'?<IndividualCardFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='seriesColors'?<SeriesColorFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='categoryColors'?<CategoryColorFormat visual={visual} updateVisual={updateVisual} categories={categories}/>:schema.id==='conditionalFormatting'?<TableConditionalFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='measureConditionalFormatting'?<MeasureConditionalFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='mapAreas'?<MapColorGrading visual={visual} updateVisual={updateVisual}/>:schema.controls.map(control=><Control key={control.key} schema={control} visual={visual} updateVisual={updateVisual}/>)}</fieldset></details>;
+  const reset=()=>updateVisual(v=>{if(schema.id==='buttonIcon'){v.format.buttonIcon='none';return}if(schema.id==='kpiIcon'){v.format.kpiIcon='chart';return}if(schema.id==='categoryColors'){v.format.categoryColors={};return}if(schema.id==='seriesColors'){v.format.seriesColors={};return}if(schema.id==='conditionalFormatting'){v.format.tableConditionalRules={};return}if(schema.id==='measureConditionalFormatting'){v.format.conditionalFormatRules=[];return}if(schema.id==='mapAreas'){v.format.mapColorScale='measure';v.format.mapColorMeasure=undefined;v.format.mapRuleLow=0;v.format.mapRuleHigh=100;v.format.mapRuleLowColor='#d64550';v.format.mapRuleMidColor='#facc15';v.format.mapRuleHighColor='#1aab40';v.bindings.color=[];return}schema.controls.forEach(control=>write(v,control.key,control.defaultValue))});
+  return <details className={'formatSchemaCard'+(disabled?' formatSchemaCardDisabled':'')} open={open} onToggle={e=>{if((e.currentTarget as HTMLDetailsElement).open!==open)onToggle()}}><summary><span><ChevronDown size={14}/><b>{schema.title}</b>{disabled&&<small>Add a field to Legend to enable</small>}</span><button disabled={disabled} title={disabled?'Add a Legend field first':`Reset ${schema.title}`} onClick={event=>{event.preventDefault();event.stopPropagation();if(!disabled)reset()}}><RotateCcw size={13}/></button></summary><fieldset disabled={disabled} className="formatSchemaBody">{schema.description&&<p>{schema.description}</p>}{disabled?<div className="schemaEmptyNote">Legend color mapping becomes available after a field is added to the visual’s Legend well.</div>:schema.id==='dataFormat'?<DataFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='individualCards'?<IndividualCardFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='seriesColors'?<SeriesColorFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='categoryColors'?<CategoryColorFormat visual={visual} updateVisual={updateVisual} categories={categories}/>:schema.id==='conditionalFormatting'?<TableConditionalFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='measureConditionalFormatting'?<MeasureConditionalFormat visual={visual} updateVisual={updateVisual}/>:schema.id==='mapAreas'?<MapColorGrading visual={visual} updateVisual={updateVisual}/>:schema.id==='buttonIcon'?<IconLibraryPicker visual={visual} updateVisual={updateVisual} property="buttonIcon"/>:schema.id==='kpiIcon'?<IconLibraryPicker visual={visual} updateVisual={updateVisual} property="kpiIcon"/>:schema.controls.map(control=><Control key={control.key} schema={control} visual={visual} updateVisual={updateVisual}/>)}</fieldset></details>;
 }
 
 export default function FormattingWorkspace({visual,updateVisual,mode='format',multiSelect,multiSelectSameType,categories}:Props){

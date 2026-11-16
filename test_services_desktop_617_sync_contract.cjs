@@ -23,7 +23,7 @@ const checks = [
   ['correction uses unique conservative model matches', correction.includes('_unique_close_match') && correction.includes('No unambiguous automatic correction')],
   ['negative numeric literals remain compiler-compatible', renderer.includes('node.operator in {"+", "-"}')],
   ['AI measure generation is absent from Services', !server.includes("@app.post('/api/v1/measures/ai-generate')") && !server.includes('suggest_measure_from_prompt')],
-  ['category colors are stable by category identity', colors.includes('stableCategoryColor') && colors.includes('Math.imul') && chart.includes('stableCategoryColor(cat, palette)')],
+  ['category colors are stable and non-repeating by category identity', colors.includes('stableCategoryColor') && colors.includes('distinctCategoryColors') && colors.includes('Math.imul') && chart.includes('distinctCategoryColors(values,palette,overrides)')],
   ['legend series use persistent category colors', chart.includes('color:categoryColor(sn,si,0)') && schema.includes("title:'Legend and category colors'")],
   ['published slicers consume desktop typography', viewer.includes("'--slicer-size':`${f.tableFontSize||11}px`") && viewer.includes('slicerTileButton')],
   ['Services keeps independent slicer filters', viewer.includes('interactionFilterMap') && viewer.includes('handleCrossFilter') && viewer.includes('activeFilter={activeFilter}')],
