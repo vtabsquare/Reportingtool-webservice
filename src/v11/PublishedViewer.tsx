@@ -415,7 +415,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     window.self !== window.top);
  const isEmbedContext = isExternalEmbed;
  const embedFade = {};
- const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(false),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'|'custom'>('fitPage'),[scale,setScale]=useState(1),[isZoomDragging,setIsZoomDragging]=useState(false),[interactionFilterMap,setInteractionFilterMap]=useState<Record<string,VisualFilter>>({}),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'vtabdemouser@gmail.com',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
+ const[item,setItem]=useState<any>((initialItem && initialItem.project)?initialItem:null),[error,setError]=useState(''),[pageIndex,setPageIndex]=useState(0),[full,setFull]=useState(false),[viewMode,setViewMode]=useState<'fitWidth'|'fitPage'|'actual'|'custom'>('fitWidth'),[scale,setScale]=useState(1),[isZoomDragging,setIsZoomDragging]=useState(false),[interactionFilterMap,setInteractionFilterMap]=useState<Record<string,VisualFilter>>({}),[runtimeHidden,setRuntimeHidden]=useState<Record<string,boolean>>({}),[buttonSelections,setButtonSelections]=useState<Record<string,string>>({}),[authRequired,setAuthRequired]=useState(false),[signedIn,setSignedIn]=useState(true),[login,setLogin]=useState({email:'vtabdemouser@gmail.com',password:''}),[exporting,setExporting]=useState<''|'pdf'|'pptx'>(''),[visualResults,setVisualResults]=useState<Record<string,VisualQueryResult>>({}),[visualLoading,setVisualLoading]=useState(false),[visualLoadError,setVisualLoadError]=useState(''),[visualReloadKey,setVisualReloadKey]=useState(0);
  const [canvasThemeOverride,setCanvasThemeOverride]=useState<'dark'|'light'|null>(null);
  const [bgImageDark,setBgImageDark]=useState<boolean|null>(null);
  const[publishedMode,setPublishedMode]=useState<'interactive'|'paginated'>(initialPaginatedId?'paginated':'interactive');
@@ -651,7 +651,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
       setViewMode('actual');
       setScale(1);
     }else{
-      setViewMode('fitPage');
+      setViewMode('fitWidth');
     }
   };
   const handleResetActual=()=>{
@@ -964,7 +964,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
        {paginatedReports.length > 0 && project.paginatedPublishMode !== 'separate' && (
          <>
            <div className="pbi-cmd-divider" />
-           <button className={`pbi-cmd-btn ${publishedMode === 'interactive' ? 'active' : ''}`} onClick={() => {setPublishedMode('interactive');setViewMode('fitPage')}}>
+           <button className={`pbi-cmd-btn ${publishedMode === 'interactive' ? 'active' : ''}`} onClick={() => {setPublishedMode('interactive');setViewMode('fitWidth')}}>
              <BarChart3 size={15} /> Dashboard
            </button>
            <button className={`pbi-cmd-btn ${publishedMode === 'paginated' ? 'active' : ''}`} onClick={() => setPublishedMode('paginated')}>
@@ -987,7 +987,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
        )}
        {publishedMode !== 'paginated' && (
          <>
-           <button className={`pbi-cmd-btn ${viewMode === 'fitPage' ? 'active' : ''}`} onClick={() => setViewMode('fitPage')}>
+           <button className={`pbi-cmd-btn ${viewMode === 'fitWidth' || viewMode === 'fitPage' ? 'active' : ''}`} onClick={() => setViewMode('fitWidth')}>
              <Scaling size={15} /> Fit to page
            </button>
            <button className={`pbi-cmd-btn ${viewMode === 'fitWidth' ? 'active' : ''}`} onClick={() => setViewMode('fitWidth')}>
