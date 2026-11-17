@@ -17,6 +17,7 @@
     "test:paginated-parity": "node test_paginated_publish_parity.cjs",
     "test:publish-visual-parity": "node test_publish_visual_parity.cjs",
     "test:services-update-workflow": "node test_services_update_workflow_contract.cjs",
+    "test:notification-visibility": "node test_services_notification_dark_mode_visibility_contract.cjs",
     "test:admin-services-permissions": "node test_admin_services_permission_contract.cjs",
     "desktop": "electron .",
     "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-backend.ps1",

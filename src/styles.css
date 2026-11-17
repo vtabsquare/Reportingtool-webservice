@@ -1618,9 +1618,13 @@ main,.mainPanel,.workspace,.reportWorkspace,.modelWorkspace,.measuresWorkspace{p
 }
 
 /* Empty-state and action controls */
-[data-theme="vtab"] .professionalRightPane .paneEmpty{
+[data-theme="vtab"] .professionalRightPane .paneEmpty,
+.professionalRightPane .paneEmpty{
   background:#ffffff!important;
   color:#374151!important;
+  height:auto!important;
+  flex:1 1 0!important;
+  min-height:0!important;
 }
 [data-theme="vtab"] .professionalRightPane .paneEmpty b{
   color:#050505!important;

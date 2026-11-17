@@ -36,6 +36,18 @@ const visualColor:Record<string,string>={
  progress:'#2dd4bf',map:'#0ea5e9',table:'#60a5fa',matrix:'#818cf8',slicer:'#f43f5e',textbox:'#334155',button:'#2563eb',image:'#0ea5e9',shape:'#7c3aed'
 };
 
+const isDarkVal = (c?: string): boolean => {
+  if (!c) return false;
+  const l = c.trim().toLowerCase();
+  return l==='#000'||l==='#000000'||l==='#242424'||l==='#0f172a'||l==='#111827'||l==='#1e293b'||l==='#333'||l==='#333333'||l==='#18181b';
+};
+
+const isLightVal = (c?: string): boolean => {
+  if (!c) return false;
+  const l = c.trim().toLowerCase();
+  return l==='#fff'||l==='#ffffff'||l==='#f8fafc'||l==='#f1f5f9'||l==='#f3f4f6'||l==='#fafafa';
+};
+
 const COMMON_FORMAT_PAINTER_KEYS:Array<keyof VisualFormat>=[
   'accent','fontSize','showTitle','background','fontFamily','titleFontSize','titleColor','titleFontWeight','titleAlignment','titleFontStyle','titleUnderline','titleWrap',
   'subtitle','subtitleVisible','subtitleColor','subtitleFontSize','subtitleFontWeight','subtitleAlignment','subtitleFontStyle','subtitleUnderline','subtitleWrap',
@@ -1225,11 +1237,8 @@ function RightPane({visual,updateVisual,removeVisual,duplicate,page,updatePage,r
   :tab==='analytics'?(!visual?<div className="paneEmpty"><LineChart/><b>Select a visual</b><span>Analytics settings appear for the selected chart.</span></div>:<FormattingWorkspace visual={visual} updateVisual={formatUpdateVisual} mode="analytics" multiSelect={multiSelect} multiSelectSameType={multiSelectSameType}/>)
   :<div className="propertyList">
     <Section title="Report Theme" icon={<Palette size={14}/>}>
-      <div className="themeGallery">{REPORT_THEMES.map(theme=><button key={theme.id} className={(pageSettings.themeId||'light-professional')===theme.id?'themeCard active':'themeCard'} onClick={()=>updatePage(p=>applyThemeToPage(p,theme.id))}>
-        <div className="themeSwatches">{theme.preview.map((c,i)=><i key={i} style={{background:c}}/>)}</div>
-        <span>{theme.name}</span>
-      </button>)}</div>
-      <div className="formatHint">Themes apply the page, header, visual background, accent, labels and title colors. You can still override individual visuals afterward.</div>
+      <Toggle label="Dark mode" value={pageSettings.canvasTheme==='dark'||(pageSettings.themeId&&pageSettings.themeId!=='light-professional')} onChange={val=>updatePage(p=>{pageDefaults(p);applyThemeToPage(p,val?'vtab-midnight':'light-professional');p.settings!.canvasTheme=val?'dark':'light'})}/>
+      <div className="formatHint">Toggle between light mode and dark mode for report visuals, backgrounds, and canvas.</div>
     </Section>
     <Section title="Background Image" icon={<ImageIcon size={14}/>}>
       <label className="uploadBackgroundBtn"><Upload size={14}/><span>Upload background image</span><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={e=>{const file=e.target.files?.[0];if(file)uploadBackgroundImage(file,data=>updatePage(p=>{pageDefaults(p);p.settings!.backgroundImage=data}))}}/></label>

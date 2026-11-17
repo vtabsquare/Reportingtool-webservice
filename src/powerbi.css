@@ -352,10 +352,11 @@ html[data-color-mode="dark"] .view-report .well.dropWell b{background:#273947!im
 
 /* Visualization pane owns its scroll area; the format/build area keeps the rest. */
 [data-theme="vtab"] .view-report .professionalRightPane{min-height:0!important}
-[data-theme="vtab"] .view-report .visualizationsPane{flex:0 1 min(330px,42vh)!important;min-height:92px!important;max-height:42vh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
+[data-theme="vtab"] .view-report .visualizationsPane{flex:0 0 min(190px,28vh)!important;min-height:min(190px,28vh)!important;max-height:28vh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}
 [data-theme="vtab"] .view-report .visualizationsHeader{flex:0 0 30px!important}
 [data-theme="vtab"] .view-report .rightVisualGallery{flex:1 1 auto!important;min-height:0!important;max-height:none!important;overflow-y:auto!important;overflow-x:hidden!important;align-content:start!important;scrollbar-gutter:stable}
 [data-theme="vtab"] .view-report .professionalRightPane>.propertyList{flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important}
+[data-theme="vtab"] .view-report .professionalRightPane>.paneEmpty{height:auto!important;flex:1 1 0!important;min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important}
 
 /* Responsive visual chrome follows the persisted grid width/height. */
 .view-report .visualCard.visualCompact .visualTitle{height:22px!important;min-height:22px!important;padding:0 3px!important;font-size:9px!important}
@@ -2991,35 +2992,467 @@ html[data-color-mode="dark"] .servicesPortalShell .pbi-user-menu a{
   color:var(--svc-text)!important;border-color:var(--svc-border)!important
 }
 html[data-color-mode="dark"] .servicesPortalShell .pbi-help-menu button:hover{background:var(--svc-surface-3)!important}
+html[data-color-mode="dark"] .vtabNotificationPanel,
+.darkCanvasTheme .vtabNotificationPanel,
+.publishedViewer.darkCanvasTheme .vtabNotificationPanel,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel,
+html[data-color-mode="dark"] .vtabNotificationSettings,
+.darkCanvasTheme .vtabNotificationSettings,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings,
+html[data-color-mode="dark"] .vtabAutomationDialog,
+.darkCanvasTheme .vtabAutomationDialog,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog,
 html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog,
 html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationItem{
   background:var(--svc-surface-2)!important;color:var(--svc-text)!important;border-color:var(--svc-border)!important
 }
+html[data-color-mode="dark"] .vtabNotificationPanel header,
+.darkCanvasTheme .vtabNotificationPanel header,
+.publishedViewer.darkCanvasTheme .vtabNotificationPanel header,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel header,
+html[data-color-mode="dark"] .vtabNotificationPanel article,
+.darkCanvasTheme .vtabNotificationPanel article,
+.publishedViewer.darkCanvasTheme .vtabNotificationPanel article,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel article,
+html[data-color-mode="dark"] .vtabNotificationSettings>header,
+html[data-color-mode="dark"] .vtabNotificationSettings>footer,
+.darkCanvasTheme .vtabNotificationSettings>header,
+.darkCanvasTheme .vtabNotificationSettings>footer,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings>header,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings>footer,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings>header,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings>footer,
+html[data-color-mode="dark"] .vtabAutomationDialog>header,
+html[data-color-mode="dark"] .vtabAutomationDialog>footer,
+.darkCanvasTheme .vtabAutomationDialog>header,
+.darkCanvasTheme .vtabAutomationDialog>footer,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog>header,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog>footer,
 html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog>header,
 html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog>footer,
+html[data-color-mode="dark"] .vtabSettingsTabs,
+.darkCanvasTheme .vtabSettingsTabs,
+.publishedViewer.darkCanvasTheme .vtabSettingsTabs,
 html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsTabs{
   background:var(--svc-surface)!important;color:var(--svc-text)!important;border-color:var(--svc-border)!important
 }
+html[data-color-mode="dark"] .vtabNotificationPanel>header b,
+.darkCanvasTheme .vtabNotificationPanel>header b,
+.publishedViewer.darkCanvasTheme .vtabNotificationPanel>header b,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel>header b,
+html[data-color-mode="dark"] .vtabNotificationSettings>header b,
+.darkCanvasTheme .vtabNotificationSettings>header b,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings>header b,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings>header b{
+  color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabNotificationPanel>header small,
+.darkCanvasTheme .vtabNotificationPanel>header small,
+.publishedViewer.darkCanvasTheme .vtabNotificationPanel>header small,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel>header small,
+html[data-color-mode="dark"] .vtabNotificationSettings>header small,
+.darkCanvasTheme .vtabNotificationSettings>header small,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings>header small,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings>header small{
+  color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .vtabNotificationPanel>header button,
+.darkCanvasTheme .vtabNotificationPanel>header button,
+.publishedViewer.darkCanvasTheme .vtabNotificationPanel>header button,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel>header button,
+html[data-color-mode="dark"] .vtabNotificationSettings>header button,
+.darkCanvasTheme .vtabNotificationSettings>header button,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings>header button,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings>header button{
+  color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .vtabNotificationPanel>header button:hover,
+.darkCanvasTheme .vtabNotificationPanel>header button:hover,
+.publishedViewer.darkCanvasTheme .vtabNotificationPanel>header button:hover,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel>header button:hover,
+html[data-color-mode="dark"] .vtabNotificationSettings>header button:hover,
+.darkCanvasTheme .vtabNotificationSettings>header button:hover,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings>header button:hover,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings>header button:hover{
+  color:var(--svc-text)!important;background:var(--svc-surface-3)!important
+}
+html[data-color-mode="dark"] .vtabNotificationSettings section,
+.darkCanvasTheme .vtabNotificationSettings section,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings section,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings section{
+  border-bottom-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .vtabNotificationSettings h3,
+.darkCanvasTheme .vtabNotificationSettings h3,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings h3,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings h3{
+  color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabNotificationSettings h3 svg,
+.darkCanvasTheme .vtabNotificationSettings h3 svg,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings h3 svg,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings h3 svg{
+  color:var(--svc-accent)!important
+}
+html[data-color-mode="dark"] .vtabSettingsRow,
+.darkCanvasTheme .vtabSettingsRow,
+.publishedViewer.darkCanvasTheme .vtabSettingsRow,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsRow{
+  color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabSettingsRow b,
+.darkCanvasTheme .vtabSettingsRow b,
+.publishedViewer.darkCanvasTheme .vtabSettingsRow b,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsRow b{
+  color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabSettingsRow small,
+.darkCanvasTheme .vtabSettingsRow small,
+.publishedViewer.darkCanvasTheme .vtabSettingsRow small,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsRow small{
+  color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .vtabSettingsMatrix,
+.darkCanvasTheme .vtabSettingsMatrix,
+.publishedViewer.darkCanvasTheme .vtabSettingsMatrix,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsMatrix{
+  border-bottom-color:var(--svc-border)!important;color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabSettingsMatrix label,
+.darkCanvasTheme .vtabSettingsMatrix label,
+.publishedViewer.darkCanvasTheme .vtabSettingsMatrix label,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsMatrix label{
+  color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabSettingsMatrix input,
+.darkCanvasTheme .vtabSettingsMatrix input,
+.publishedViewer.darkCanvasTheme .vtabSettingsMatrix input,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsMatrix input{
+  accent-color:var(--svc-accent)!important
+}
+html[data-color-mode="dark"] .vtabSettingsTabs button,
+.darkCanvasTheme .vtabSettingsTabs button,
+.publishedViewer.darkCanvasTheme .vtabSettingsTabs button,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsTabs button{
+  color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .vtabSettingsTabs button:hover,
+.darkCanvasTheme .vtabSettingsTabs button:hover,
+.publishedViewer.darkCanvasTheme .vtabSettingsTabs button:hover,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsTabs button:hover{
+  color:var(--svc-text)!important;background:var(--svc-surface-2)!important
+}
+html[data-color-mode="dark"] .vtabSettingsTabs button.active,
+.darkCanvasTheme .vtabSettingsTabs button.active,
+.publishedViewer.darkCanvasTheme .vtabSettingsTabs button.active,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsTabs button.active{
+  background:var(--svc-surface-3)!important;color:#8bd2ff!important
+}
+html[data-color-mode="dark"] .vtabSettingsTabs button em,
+.darkCanvasTheme .vtabSettingsTabs button em,
+.publishedViewer.darkCanvasTheme .vtabSettingsTabs button em,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsTabs button em{
+  background:var(--svc-surface-3)!important;color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabSettingsTabs button.active em,
+.darkCanvasTheme .vtabSettingsTabs button.active em,
+.publishedViewer.darkCanvasTheme .vtabSettingsTabs button.active em,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsTabs button.active em{
+  background:var(--svc-surface-2)!important;color:#8bd2ff!important
+}
+html[data-color-mode="dark"] .vtabSettingsToggle input,
+.darkCanvasTheme .vtabSettingsToggle input,
+.publishedViewer.darkCanvasTheme .vtabSettingsToggle input,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsToggle input{
+  background:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .vtabSettingsToggle input:checked,
+.darkCanvasTheme .vtabSettingsToggle input:checked,
+.publishedViewer.darkCanvasTheme .vtabSettingsToggle input:checked,
+html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsToggle input:checked{
+  background:#2563eb!important
+}
+html[data-color-mode="dark"] .vtabNotificationSettings>footer button:not(.primary),
+.darkCanvasTheme .vtabNotificationSettings>footer button:not(.primary),
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings>footer button:not(.primary),
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings>footer button:not(.primary){
+  background:var(--svc-surface-3)!important;border-color:var(--svc-border)!important;color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabNotificationSettings>footer button:not(.primary):hover,
+.darkCanvasTheme .vtabNotificationSettings>footer button:not(.primary):hover,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings>footer button:not(.primary):hover,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings>footer button:not(.primary):hover{
+  background:var(--svc-surface-2)!important
+}
+html[data-color-mode="dark"] .vtabAutomationDialog>header b,
+.darkCanvasTheme .vtabAutomationDialog>header b,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog>header b,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog>header b{
+  color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabAutomationDialog>header small,
+.darkCanvasTheme .vtabAutomationDialog>header small,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog>header small,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog>header small{
+  color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .vtabAutomationDialog>header button,
+.darkCanvasTheme .vtabAutomationDialog>header button,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog>header button,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog>header button{
+  color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .vtabAutomationDialog>header button:hover,
+.darkCanvasTheme .vtabAutomationDialog>header button:hover,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog>header button:hover,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog>header button:hover{
+  color:var(--svc-text)!important;background:var(--svc-surface-3)!important
+}
+html[data-color-mode="dark"] .vtabAutomationField>span,
+.darkCanvasTheme .vtabAutomationField>span,
+.publishedViewer.darkCanvasTheme .vtabAutomationField>span,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationField>span,
+html[data-color-mode="dark"] .vtabAutomationDialog .vtabAutomationField>span,
+.darkCanvasTheme .vtabAutomationDialog .vtabAutomationField>span,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog .vtabAutomationField>span{
+  color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabAutomationHelper,
+.darkCanvasTheme .vtabAutomationHelper,
+.publishedViewer.darkCanvasTheme .vtabAutomationHelper,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationHelper,
+html[data-color-mode="dark"] .vtabAutomationDialog .vtabAutomationHelper,
+.darkCanvasTheme .vtabAutomationDialog .vtabAutomationHelper,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog .vtabAutomationHelper{
+  color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .vtabAutomationCheck,
+.darkCanvasTheme .vtabAutomationCheck,
+.publishedViewer.darkCanvasTheme .vtabAutomationCheck,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationCheck{
+  color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabAutomationCheck input,
+.darkCanvasTheme .vtabAutomationCheck input,
+.publishedViewer.darkCanvasTheme .vtabAutomationCheck input,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationCheck input{
+  accent-color:var(--svc-accent)!important
+}
+html[data-color-mode="dark"] .vtabAutomationDialog footer button:not(.primary),
+.darkCanvasTheme .vtabAutomationDialog footer button:not(.primary),
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog footer button:not(.primary),
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog footer button:not(.primary){
+  background:var(--svc-surface-3)!important;border-color:var(--svc-border)!important;color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabAutomationDialog footer button:not(.primary):hover,
+.darkCanvasTheme .vtabAutomationDialog footer button:not(.primary):hover,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog footer button:not(.primary):hover,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog footer button:not(.primary):hover{
+  background:var(--svc-surface-2)!important
+}
+html[data-color-mode="dark"] .vtabAutomationDialog footer button.primary,
+.darkCanvasTheme .vtabAutomationDialog footer button.primary,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog footer button.primary,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog footer button.primary{
+  background:#2563eb!important;border-color:#2563eb!important;color:#fff!important
+}
+html[data-color-mode="dark"] .vtabAutomationEmpty,
+.darkCanvasTheme .vtabAutomationEmpty,
+.publishedViewer.darkCanvasTheme .vtabAutomationEmpty,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationEmpty{
+  border-color:var(--svc-border)!important;background:var(--svc-surface-2)!important;color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .vtabAutomationSuccess,
+.darkCanvasTheme .vtabAutomationSuccess,
+.publishedViewer.darkCanvasTheme .vtabAutomationSuccess,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationSuccess{
+  border-color:#065f46!important;background:#064e3b33!important;color:#34d399!important
+}
+html[data-color-mode="dark"] .vtabNotificationPanel article.unread,
+.darkCanvasTheme .vtabNotificationPanel article.unread,
+.publishedViewer.darkCanvasTheme .vtabNotificationPanel article.unread,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel article.unread{background:#102a45!important}
+html[data-color-mode="dark"] .vtabNotificationPanel article.unread::before,
+.darkCanvasTheme .vtabNotificationPanel article.unread::before,
+.publishedViewer.darkCanvasTheme .vtabNotificationPanel article.unread::before,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationPanel article.unread::before{background:var(--svc-accent,#4ab7ff)!important}
+html[data-color-mode="dark"] .vtabNotificationContent,
+.darkCanvasTheme .vtabNotificationContent,
+.publishedViewer.darkCanvasTheme .vtabNotificationContent,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationContent{color:var(--svc-text)!important}
+html[data-color-mode="dark"] .vtabNotificationContent:hover,
+.darkCanvasTheme .vtabNotificationContent:hover,
+.publishedViewer.darkCanvasTheme .vtabNotificationContent:hover,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationContent:hover,
 html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsTabs button.active{background:var(--svc-surface-3)!important;color:#8bd2ff!important}
+html[data-color-mode="dark"] .vtabNotificationContent b,
+.darkCanvasTheme .vtabNotificationContent b,
+.publishedViewer.darkCanvasTheme .vtabNotificationContent b,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationContent b{color:var(--svc-text,#f4f8fc)!important}
+html[data-color-mode="dark"] .vtabNotificationContent small,
+.darkCanvasTheme .vtabNotificationContent small,
+.publishedViewer.darkCanvasTheme .vtabNotificationContent small,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationContent small,
+html[data-color-mode="dark"] .vtabNotificationContent em,
+.darkCanvasTheme .vtabNotificationContent em,
+.publishedViewer.darkCanvasTheme .vtabNotificationContent em,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationContent em,
+html[data-color-mode="dark"] .vtabSettingsRow small,
+.darkCanvasTheme .vtabSettingsRow small,
+.publishedViewer.darkCanvasTheme .vtabSettingsRow small,
 html[data-color-mode="dark"] .servicesPortalShell .vtabSettingsRow small,
+html[data-color-mode="dark"] .vtabAutomationItem .details span,
+html[data-color-mode="dark"] .vtabAutomationItem .details small,
+.darkCanvasTheme .vtabAutomationItem .details span,
+.darkCanvasTheme .vtabAutomationItem .details small,
+.publishedViewer.darkCanvasTheme .vtabAutomationItem .details span,
+.publishedViewer.darkCanvasTheme .vtabAutomationItem .details small,
 html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationItem .details span,
 html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationItem .details small{color:var(--svc-muted)!important}
+html[data-color-mode="dark"] .vtabNotificationType,
+.darkCanvasTheme .vtabNotificationType,
+.publishedViewer.darkCanvasTheme .vtabNotificationType,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationType{background:var(--svc-accent-soft,#123250)!important;color:var(--svc-accent,#4ab7ff)!important}
+html[data-color-mode="dark"] .vtabNotificationType.success,
+.darkCanvasTheme .vtabNotificationType.success,
+.publishedViewer.darkCanvasTheme .vtabNotificationType.success,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationType.success{background:rgba(16,124,16,.22)!important;color:#34d399!important}
+html[data-color-mode="dark"] .vtabNotificationType.error,
+.darkCanvasTheme .vtabNotificationType.error,
+.publishedViewer.darkCanvasTheme .vtabNotificationType.error,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationType.error{background:rgba(197,15,31,.22)!important;color:#f87171!important}
+html[data-color-mode="dark"] .vtabNotificationDismiss,
+.darkCanvasTheme .vtabNotificationDismiss,
+.publishedViewer.darkCanvasTheme .vtabNotificationDismiss,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationDismiss{color:var(--svc-muted,#a8b6c8)!important}
+html[data-color-mode="dark"] .vtabNotificationDismiss:hover,
+.darkCanvasTheme .vtabNotificationDismiss:hover,
+.publishedViewer.darkCanvasTheme .vtabNotificationDismiss:hover,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationDismiss:hover{background:rgba(220,38,38,.2)!important;color:#f87171!important}
+html[data-color-mode="dark"] .vtabNotificationEmpty,
+html[data-color-mode="dark"] .vtabNotificationLoading,
+.darkCanvasTheme .vtabNotificationEmpty,
+.darkCanvasTheme .vtabNotificationLoading,
+.publishedViewer.darkCanvasTheme .vtabNotificationEmpty,
+.publishedViewer.darkCanvasTheme .vtabNotificationLoading,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationEmpty,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationLoading{color:var(--svc-muted,#a8b6c8)!important}
+html[data-color-mode="dark"] .vtabNotificationEmpty b,
+.darkCanvasTheme .vtabNotificationEmpty b,
+.publishedViewer.darkCanvasTheme .vtabNotificationEmpty b,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationEmpty b{color:var(--svc-text,#f4f8fc)!important}
+html[data-color-mode="dark"] .vtabNotificationEmpty span,
+.darkCanvasTheme .vtabNotificationEmpty span,
+.publishedViewer.darkCanvasTheme .vtabNotificationEmpty span,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationEmpty span{color:var(--svc-muted,#a8b6c8)!important}
+html[data-color-mode="dark"] .vtabNotificationError,
+.darkCanvasTheme .vtabNotificationError,
+.publishedViewer.darkCanvasTheme .vtabNotificationError,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationError{border-color:rgba(239,68,68,.35)!important;background:rgba(239,68,68,.14)!important;color:#fca5a5!important}
+html[data-color-mode="dark"] .vtabNotificationMore,
+.darkCanvasTheme .vtabNotificationMore,
+.publishedViewer.darkCanvasTheme .vtabNotificationMore,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationMore{background:var(--svc-surface-3,#18283e)!important;border-color:var(--svc-border,#2a3b52)!important;color:var(--svc-accent,#4ab7ff)!important}
+html[data-color-mode="dark"] .vtabNotificationMore:hover,
+.darkCanvasTheme .vtabNotificationMore:hover,
+.publishedViewer.darkCanvasTheme .vtabNotificationMore:hover,
+html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationMore:hover{background:var(--svc-surface-2,#111f32)!important;color:#8bd2ff!important}
+html[data-color-mode="dark"] .vtabAutomationItem,
+.darkCanvasTheme .vtabAutomationItem,
+.publishedViewer.darkCanvasTheme .vtabAutomationItem,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationItem{
+  background:var(--svc-surface-3)!important;border-color:var(--svc-border)!important;color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabAutomationItem .icon,
+.darkCanvasTheme .vtabAutomationItem .icon,
+.publishedViewer.darkCanvasTheme .vtabAutomationItem .icon,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationItem .icon{
+  background:var(--svc-accent-soft,#123250)!important;color:var(--svc-accent,#4ab7ff)!important
+}
+html[data-color-mode="dark"] .vtabAutomationItem .details b,
+.darkCanvasTheme .vtabAutomationItem .details b,
+.publishedViewer.darkCanvasTheme .vtabAutomationItem .details b,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationItem .details b{
+  color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabAutomationActions button,
+.darkCanvasTheme .vtabAutomationActions button,
+.publishedViewer.darkCanvasTheme .vtabAutomationActions button,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationActions button{
+  background:var(--svc-surface-2)!important;border-color:var(--svc-border)!important;color:var(--svc-text)!important
+}
+html[data-color-mode="dark"] .vtabAutomationActions button:hover,
+.darkCanvasTheme .vtabAutomationActions button:hover,
+.publishedViewer.darkCanvasTheme .vtabAutomationActions button:hover,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationActions button:hover{
+  background:var(--svc-surface)!important
+}
+html[data-color-mode="dark"] .vtabAutomationStatus,
+.darkCanvasTheme .vtabAutomationStatus,
+.publishedViewer.darkCanvasTheme .vtabAutomationStatus,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationStatus{
+  background:var(--svc-surface)!important;color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .vtabAutomationStatus.active,
+.darkCanvasTheme .vtabAutomationStatus.active,
+.publishedViewer.darkCanvasTheme .vtabAutomationStatus.active,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationStatus.active{
+  background:#064e3b55!important;color:#34d399!important
+}
+html[data-color-mode="dark"] .vtabAutomationStatus.paused,
+.darkCanvasTheme .vtabAutomationStatus.paused,
+.publishedViewer.darkCanvasTheme .vtabAutomationStatus.paused,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationStatus.paused{
+  background:#78350f44!important;color:#fbbf24!important
+}
+html[data-color-mode="dark"] .vtabAutomationLoading,
+.darkCanvasTheme .vtabAutomationLoading,
+.publishedViewer.darkCanvasTheme .vtabAutomationLoading,
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationLoading{
+  color:var(--svc-muted)!important
+}
+html[data-color-mode="dark"] .vtabNotificationSettings input,
+html[data-color-mode="dark"] .vtabNotificationSettings select,
+.darkCanvasTheme .vtabNotificationSettings input,
+.darkCanvasTheme .vtabNotificationSettings select,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings input,
+.publishedViewer.darkCanvasTheme .vtabNotificationSettings select,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings input,
 html[data-color-mode="dark"] .servicesPortalShell .vtabNotificationSettings select,
+html[data-color-mode="dark"] .vtabAutomationField input,
+html[data-color-mode="dark"] .vtabAutomationField select,
+html[data-color-mode="dark"] .vtabAutomationField textarea,
+.darkCanvasTheme .vtabAutomationField input,
+.darkCanvasTheme .vtabAutomationField select,
+.darkCanvasTheme .vtabAutomationField textarea,
+.publishedViewer.darkCanvasTheme .vtabAutomationField input,
+.publishedViewer.darkCanvasTheme .vtabAutomationField select,
+.publishedViewer.darkCanvasTheme .vtabAutomationField textarea,
 html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog input,
 html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog select,
-html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog textarea{
+html[data-color-mode="dark"] .servicesPortalShell .vtabAutomationDialog textarea,
+html[data-color-mode="dark"] .vtabAutomationDialog input,
+html[data-color-mode="dark"] .vtabAutomationDialog select,
+html[data-color-mode="dark"] .vtabAutomationDialog textarea,
+.darkCanvasTheme .vtabAutomationDialog input,
+.darkCanvasTheme .vtabAutomationDialog select,
+.darkCanvasTheme .vtabAutomationDialog textarea,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog input,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog select,
+.publishedViewer.darkCanvasTheme .vtabAutomationDialog textarea{
   background:var(--svc-surface-3)!important;color:var(--svc-text)!important;border-color:var(--svc-border)!important
+}
+html[data-color-mode="dark"] .vtabAutomationField input:focus,
+html[data-color-mode="dark"] .vtabAutomationField select:focus,
+html[data-color-mode="dark"] .vtabAutomationField textarea:focus,
+.darkCanvasTheme .vtabAutomationField input:focus,
+.darkCanvasTheme .vtabAutomationField select:focus,
+.darkCanvasTheme .vtabAutomationField textarea:focus,
+.publishedViewer.darkCanvasTheme .vtabAutomationField input:focus,
+.publishedViewer.darkCanvasTheme .vtabAutomationField select:focus,
+.publishedViewer.darkCanvasTheme .vtabAutomationField textarea:focus{
+  border-color:var(--svc-accent)!important;outline:2px solid rgba(74,183,255,0.25)!important
 }
 html[data-color-mode="dark"] .servicesPortalShell .pbi-theme-toggle{background:#18314d!important;color:#fbbf24!important;box-shadow:inset 0 0 0 1px #315276}
 

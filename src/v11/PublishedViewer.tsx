@@ -1114,17 +1114,6 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
         <Maximize2 size={13} />
         <span>Fit page</span>
       </button>
-      <div className="viewerZoomDivider" />
-      <button
-        type="button"
-        className={`viewerZoomFitBtn viewerCanvasThemeToggle ${isPublishedDarkCanvas ? 'active' : ''}`}
-        onClick={() => setCanvasThemeOverride(isPublishedDarkCanvas ? 'light' : 'dark')}
-        title={isPublishedDarkCanvas ? 'Switch to light canvas' : 'Switch to dark canvas'}
-        aria-label={isPublishedDarkCanvas ? 'Switch to light canvas' : 'Switch to dark canvas'}
-      >
-        {isPublishedDarkCanvas ? <ZoomOut size={13} style={{display:'none'}}/> : null}
-        <span>{isPublishedDarkCanvas ? 'Light canvas' : 'Dark canvas'}</span>
-      </button>
     </div>
    </div>}
    {/* Embed Dialog */}

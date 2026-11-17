@@ -54,17 +54,17 @@ export function isColorLight(value?: string): boolean {
   return result !== null && result > 0.72;
 }
 
-export function resolveDarkSurface(value: string | undefined, fallback = DARK_REPORT_THEME.surface): string {
+export function resolveDarkSurface(value: string | undefined, fallback: string = DARK_REPORT_THEME.surface): string {
   if (!value || value.trim().toLowerCase() === 'transparent') return fallback;
   return isColorLight(value) ? fallback : value;
 }
 
-export function resolveDarkText(value: string | undefined, background = DARK_REPORT_THEME.surface, fallback = DARK_REPORT_THEME.text): string {
+export function resolveDarkText(value: string | undefined, background: string = DARK_REPORT_THEME.surface, fallback: string = DARK_REPORT_THEME.text): string {
   if (!value || isColorDark(value) || contrastRatio(value, background) < 3.5) return fallback;
   return value;
 }
 
-export function resolveDarkBorder(value: string | undefined, background = DARK_REPORT_THEME.surface): string {
+export function resolveDarkBorder(value: string | undefined, background: string = DARK_REPORT_THEME.surface): string {
   if (!value || isColorLight(value) || contrastRatio(value, background) < 1.35) return DARK_REPORT_THEME.border;
   return value;
 }
