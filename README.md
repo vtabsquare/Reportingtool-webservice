@@ -6,7 +6,7 @@
 - Preserved the authored shadow color, opacity, horizontal offset, vertical offset, and blur.
 - Preserved visual background, transparency, border edges, border style, border width, corner radii, title background, padding, and container formatting.
 - Retained the previous dark-canvas/background-image opacity parity fix.
-
+-Fixed dark mode contrast and typography visibility in Notifications Center.
 ## Root cause
 
 The published project already contained the correct General formatting values, and Services calculated the same shadow as Desktop. However, the absolute-positioning wrapper around every published visual used `overflow: hidden`. That wrapper clipped all pixels outside the visual rectangle, removing the visible shadow and glow.
