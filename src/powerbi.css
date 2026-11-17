@@ -2821,7 +2821,7 @@ html[data-color-mode="dark"] [data-theme="vtab"] .view-report .advancedFields .f
 
 .viewerZoomFitBtn.active {
   background: #e8f4ee;
-  color: #0d6257;
+  color: #0d6257 !important;
   font-weight: 600;
 }
 
@@ -3368,6 +3368,29 @@ html[data-color-mode="dark"] .viewerCanvasThemeToggle.active {
   background: var(--svc-accent-soft, #123250) !important;
   color: var(--svc-accent, #4ab7ff) !important;
   border-color: var(--svc-accent, #4ab7ff) !important;
+}
+html[data-color-mode="dark"] .viewerZoomFitBtn.active,
+.publishedViewer.darkCanvasTheme .viewerZoomFitBtn.active,
+.darkCanvasTheme .viewerZoomDock .viewerZoomFitBtn.active,
+[data-canvas-theme="dark"] .viewerZoomFitBtn.active {
+  background: var(--svc-accent-soft, #123250) !important;
+  color: var(--svc-accent, #4ab7ff) !important;
+  border-color: var(--svc-accent, #4ab7ff) !important;
+  font-weight: 600 !important;
+}
+html[data-color-mode="dark"] .viewerZoomFitBtn.active svg,
+.publishedViewer.darkCanvasTheme .viewerZoomFitBtn.active svg,
+.darkCanvasTheme .viewerZoomDock .viewerZoomFitBtn.active svg,
+[data-canvas-theme="dark"] .viewerZoomFitBtn.active svg {
+  stroke: var(--svc-accent, #4ab7ff) !important;
+  color: var(--svc-accent, #4ab7ff) !important;
+}
+html[data-color-mode="dark"] .viewerZoomFitBtn.active:hover,
+.publishedViewer.darkCanvasTheme .viewerZoomFitBtn.active:hover,
+.darkCanvasTheme .viewerZoomDock .viewerZoomFitBtn.active:hover,
+[data-canvas-theme="dark"] .viewerZoomFitBtn.active:hover {
+  background: #174268 !important;
+  color: #70c7ff !important;
 }
 
 /* ── Viewer ribbon topbar & pages panel (white in dark mode) ───────────── */
