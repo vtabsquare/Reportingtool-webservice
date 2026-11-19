@@ -51,6 +51,16 @@ class RefreshCredentialTests(unittest.TestCase):
             self.assertNotIn("private", value)
             self.assertEqual(decrypt_credentials(value)["password"], "private")
 
+    def test_fallback_to_service_role_key(self):
+        env = {
+            "VTAB_CREDENTIAL_ENCRYPTION_KEY": "",
+            "SUPABASE_SERVICE_ROLE_KEY": "fallback-service-role-key-that-is-at-least-thirty-two-chars"
+        }
+        with patch.dict(os.environ, env):
+            value = encrypt_credentials({"sheet_url": "https://docs.google.com/test"})
+            self.assertTrue(value.startswith("v1:"))
+            self.assertEqual(decrypt_credentials(value)["sheet_url"], "https://docs.google.com/test")
+
     def test_legacy_plaintext_is_refused(self):
         with self.assertRaises(CredentialConfigurationError):
             decrypt_credentials('{"password":"old-plaintext"}')

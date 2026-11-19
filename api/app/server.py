@@ -57,6 +57,8 @@ from .reporting_service import (
     publish_report as service_publish_report,
     restore_version as service_restore_version,
     update_semantic_model as service_update_semantic_model,
+    register_cache_invalidator,
+    invalidate_report_cache,
 )
 from .version import PRODUCT_VERSION
 from .update_agent import update_agent, verify_agent_token, verify_webhook_signature
@@ -1129,41 +1131,176 @@ def list_published_reports(authorization:str|None=Header(default=None)):
     _workspace_user(authorization);return store.list_published()
 
 @app.get('/api/v1/published/{report_id}')
-def get_published_report(report_id:str,authorization:str|None=Header(default=None)):
+def get_published_report(report_id:str,request:Request,authorization:str|None=Header(default=None)):
     try:
         _workspace_user(authorization)
     except HTTPException:
         pass
+    bypass = bool(request.query_params.get('_t') or request.query_params.get('bypass_cache'))
+    if bypass:
+        invalidate_report_cache(report_id)
     item=store.get_published(report_id)
-    if item and item.get('project'):
+    if not bypass and item and item.get('project'):
         return item
-    cloud_project=_get_cloud_project(report_id)
+    cloud_project=_get_cloud_project(report_id, bypass_cache=bypass)
     if cloud_project:
         report_name=(cloud_project.get('report') or {}).get('name') or cloud_project.get('name') or 'Published Report'
         return {
             'id': report_id,
             'name': report_name,
             'project': cloud_project,
-            'role': 'Viewer'
+            'role': 'Viewer',
+            'updated_at': cloud_project.get('updated_at') or (cloud_project.get('report') or {}).get('updated_at'),
+            'published_at': cloud_project.get('published_at') or (cloud_project.get('report') or {}).get('published_at')
         }
+    if item and item.get('project'):
+        return item
     raise HTTPException(404,'Published report not found')
 
 @app.get('/api/v1/published/{report_id}/definition')
-def published_report_definition(report_id:str):
+def published_report_definition(report_id:str,request:Request):
     """Return published report definition for viewers and iframe embeds."""
+    bypass = bool(request.query_params.get('_t') or request.query_params.get('bypass_cache'))
+    if bypass:
+        invalidate_report_cache(report_id)
     item=store.get_published(report_id)
-    if item and item.get('project'):
+    if not bypass and item and item.get('project'):
         return item
-    cloud_project=_get_cloud_project(report_id)
+    cloud_project=_get_cloud_project(report_id, bypass_cache=bypass)
     if cloud_project:
         report_name=(cloud_project.get('report') or {}).get('name') or cloud_project.get('name') or 'Published Report'
         return {
             'id': report_id,
             'name': report_name,
             'project': cloud_project,
-            'role': 'Viewer'
+            'role': 'Viewer',
+            'updated_at': cloud_project.get('updated_at') or (cloud_project.get('report') or {}).get('updated_at'),
+            'published_at': cloud_project.get('published_at') or (cloud_project.get('report') or {}).get('published_at')
         }
     raise HTTPException(404,'Published report not found')
+
+@app.get('/api/v1/published/{report_id}/model-readiness')
+def get_published_report_model_readiness(report_id: str):
+    """Return Unified Data Model ID and refresh readiness for a published report."""
+    try:
+        from .supabase_store import _admin_client
+        from .data_bridge import _CLOUD_SOURCE_TYPES
+        sb = _admin_client()
+
+        rep_row = sb.table('published_reports').select('id, workspace_id, semantic_model_id').eq('id', report_id).limit(1).execute().data or []
+        rep = rep_row[0] if rep_row else {}
+        model_id = str(rep.get('semantic_model_id') or '').strip()
+        workspace_id = str(rep.get('workspace_id') or '').strip()
+
+        if not model_id:
+            m_row = sb.table('semantic_models').select('id, workspace_id, name').eq('report_id', report_id).limit(1).execute().data or []
+            if m_row:
+                model_id = str(m_row[0].get('id') or '').strip()
+                if not workspace_id:
+                    workspace_id = str(m_row[0].get('workspace_id') or '').strip()
+
+        if not model_id:
+            return {
+                'ok': True,
+                'has_model': False,
+                'model_id': None,
+                'workspace_id': workspace_id or None,
+                'is_ready': False,
+                'status': 'no_model',
+                'blockers': ['No Unified Data Model connected to this report.']
+            }
+
+        model_rows = sb.table('semantic_models').select('id,workspace_id,report_id,name,definition').eq('id', model_id).limit(1).execute().data or []
+        model = model_rows[0] if model_rows else {}
+        model_name = model.get('name') or 'Unified Data Model'
+        definition = model.get('definition') or {}
+        if isinstance(definition, str):
+            import json
+            try:
+                definition = json.loads(definition or '{}')
+            except Exception:
+                definition = {}
+
+        source_manifest = definition.get('sourceManifest') or {}
+        raw_sources = source_manifest.get('sources') or []
+        definition_tables = set((definition.get('tables') or {}).keys())
+
+        connections = sb.table('semantic_model_connections').select('id,name,source_type,status,table_mappings').eq('semantic_model_id', model_id).execute().data or []
+
+        def _clean_type(val):
+            k = str(val or '').lower()
+            if 'postgres' in k: return 'postgresql'
+            if 'sqlserver' in k or 'sql_server' in k or 'mssql' in k: return 'sqlserver'
+            if 'mysql' in k: return 'mysql'
+            if 'sheet' in k: return 'google_sheets'
+            return k or 'unknown'
+
+        sources = [s for s in raw_sources if _clean_type(s.get('type') or s.get('sourceType')) not in ('managed_file', 'published_data', 'snapshot', 'file')]
+
+        all_cloud = bool(sources) and all(_clean_type(s.get('type') or s.get('sourceType')) in _CLOUD_SOURCE_TYPES for s in sources)
+        has_connected_cloud = bool(sources) and all(
+            _clean_type(s.get('type') or s.get('sourceType')) in _CLOUD_SOURCE_TYPES and
+            any(
+                ((c.get('name') and c.get('name') == s.get('name')) or _clean_type(c.get('source_type')) == _clean_type(s.get('type') or s.get('sourceType'))) and
+                c.get('status') == 'connected'
+                for c in connections
+            )
+            for s in sources
+        )
+
+        # Bridge binding check
+        bridge_online = False
+        binding_rows = sb.table('semantic_model_bridge_bindings').select('bridge_id').eq('semantic_model_id', model_id).limit(1).execute().data or []
+        if binding_rows and binding_rows[0].get('bridge_id'):
+            b_rows = sb.table('vtab_data_bridges').select('status').eq('id', binding_rows[0]['bridge_id']).limit(1).execute().data or []
+            if b_rows:
+                bridge_online = b_rows[0].get('status') == 'online'
+
+        bridge_ready = bool(sources) and bridge_online
+
+        # Check table mappings
+        live_connections = [row for row in connections if row.get('source_type') != 'managed_file']
+        mapped_tables = {
+            str(item.get('table') or '').strip()
+            for row in live_connections if row.get('status') == 'connected'
+            for item in (row.get('table_mappings') or []) if item.get('table')
+        }
+        untested = [str(row.get('name') or row.get('id')) for row in live_connections if row.get('table_mappings') and row.get('status') != 'connected']
+        missing = sorted(definition_tables.difference(mapped_tables))
+        direct_ready = not (not live_connections or untested or missing)
+
+        is_ready = direct_ready or (all_cloud and has_connected_cloud) or bridge_ready
+
+        blockers = []
+        if not is_ready:
+            if not sources:
+                blockers = ['Republish from the updated Desktop to include source identity.']
+            elif all_cloud:
+                blockers = ['Configure and connect all cloud data sources.'] if not has_connected_cloud else []
+            elif bridge_ready:
+                blockers = []
+            else:
+                blockers = ['Connect an online Desktop Data Bridge or configure a direct connection.']
+
+        return {
+            'ok': True,
+            'has_model': True,
+            'model_id': model_id,
+            'model_name': model_name,
+            'workspace_id': workspace_id or None,
+            'is_ready': is_ready,
+            'status': 'ready' if is_ready else 'setup_required',
+            'blockers': blockers,
+        }
+    except Exception as exc:
+        return {
+            'ok': False,
+            'has_model': False,
+            'model_id': None,
+            'is_ready': False,
+            'status': 'error',
+            'blockers': [str(exc)]
+        }
 
 @app.post('/api/v1/publish')
 def publish_current_project():
@@ -1812,12 +1949,7 @@ def reporting_service_publish(payload: ServicePublishReq, request: Request, auth
             configured_url = f'{forwarded_proto}://{forwarded_host}'.rstrip('/') if forwarded_host else ''
         result = service_publish_report(payload.model_dump(), _service_access_token(authorization), configured_url)
         report_id = str(result.get('reportId') or payload.reportId or '')
-        with _cloud_project_cache_lock:
-            _cloud_project_cache.pop(report_id, None)
-        clear_service_runtime_caches()
-        from .rls_runtime import clear_rls_cache
-        clear_rls_cache()
-        clear_cache()
+        invalidate_report_cache(report_id)
         return result
     except Exception as error:
         _service_error(error)
@@ -1835,12 +1967,7 @@ def reporting_service_versions(report_id: str, authorization: str | None = Heade
 def reporting_service_restore_version(report_id: str, version_id: str, authorization: str | None = Header(default=None)):
     try:
         result = service_restore_version(report_id, version_id, _service_access_token(authorization))
-        with _cloud_project_cache_lock:
-            _cloud_project_cache.pop(report_id, None)
-        clear_service_runtime_caches()
-        from .rls_runtime import clear_rls_cache
-        clear_rls_cache()
-        clear_cache()
+        invalidate_report_cache(report_id)
         return result
     except Exception as error:
         _service_error(error)
@@ -2123,9 +2250,9 @@ def _automation_error(error:Exception):
 
 
 @app.get('/api/v1/service/subscriptions')
-def service_list_subscriptions(authorization:str|None=Header(default=None)):
+def service_list_subscriptions(report_id:str|None=None,authorization:str|None=Header(default=None)):
     from .automation_service import list_subscriptions
-    try:return list_subscriptions(_supabase_user_id_from_token(authorization))
+    try:return list_subscriptions(_supabase_user_id_from_token(authorization),report_id=report_id)
     except HTTPException:raise
     except Exception as error:_automation_error(error)
 
@@ -2238,9 +2365,9 @@ def service_update_workspace_notification_policy(workspace_id: str, payload: dic
 
 
 @app.get('/api/v1/service/alerts')
-def service_list_alerts(authorization:str|None=Header(default=None)):
+def service_list_alerts(report_id:str|None=None,authorization:str|None=Header(default=None)):
     from .automation_service import list_alerts
-    try:return list_alerts(_supabase_user_id_from_token(authorization))
+    try:return list_alerts(_supabase_user_id_from_token(authorization),report_id=report_id)
     except Exception as error:_automation_error(error)
 
 
@@ -3336,34 +3463,57 @@ def query_snapshot(req:AuthoringSnapshotQueryReq):
 _cloud_project_cache = {}
 _cloud_project_cache_lock = threading.Lock()
 _cloud_project_load_locks: dict[str, threading.Lock] = {}
-def _get_cloud_project(report_id: str):
+
+def _invalidate_server_cache(report_id: str):
+    if not report_id:
+        return
+    with _cloud_project_cache_lock:
+        _cloud_project_cache.pop(report_id, None)
+
+register_cache_invalidator(_invalidate_server_cache)
+
+def _get_cloud_project(report_id: str, bypass_cache: bool = False):
     import time, json
     now = time.time()
-    with _cloud_project_cache_lock:
-        item = _cloud_project_cache.get(report_id)
-        if item and now - item['time'] < 300:
-            return item['project']
-        load_lock = _cloud_project_load_locks.setdefault(report_id, threading.Lock())
-    # A report page starts all visuals together. Collapse those concurrent
-    # first loads so the full definition crosses the network only once.
-    with load_lock:
-        now = time.time()
+    if not bypass_cache:
         with _cloud_project_cache_lock:
             item = _cloud_project_cache.get(report_id)
             if item and now - item['time'] < 300:
                 return item['project']
+    load_lock = _cloud_project_load_locks.setdefault(report_id, threading.Lock())
+    # A report page starts all visuals together. Collapse those concurrent
+    # first loads so the full definition crosses the network only once.
+    with load_lock:
+        now = time.time()
+        if not bypass_cache:
+            with _cloud_project_cache_lock:
+                item = _cloud_project_cache.get(report_id)
+                if item and now - item['time'] < 300:
+                    return item['project']
         from .supabase_store import _admin_client
         sb = _admin_client()
         try:
-            res = sb.table("published_reports").select("project_json").eq("id", report_id).limit(1).execute()
+            res = sb.table("published_reports").select("project_json, updated_at, published_at, name").eq("id", report_id).limit(1).execute()
             if not res.data:
                 return None
-            p_json = res.data[0].get('project_json')
+            row = res.data[0]
+            p_json = row.get('project_json')
             p = json.loads(p_json) if isinstance(p_json, str) else p_json
+            if isinstance(p, dict):
+                p_report = p.setdefault('report', {})
+                if row.get('updated_at'):
+                    p_report.setdefault('updated_at', row.get('updated_at'))
+                    p['updated_at'] = row.get('updated_at')
+                if row.get('published_at'):
+                    p_report.setdefault('published_at', row.get('published_at'))
+                    p['published_at'] = row.get('published_at')
+                if row.get('name') and not p_report.get('name'):
+                    p_report['name'] = row.get('name')
             with _cloud_project_cache_lock:
                 _cloud_project_cache[report_id] = {'time': now, 'project': p}
             return p
-        except Exception:
+        except Exception as err:
+            print(f"VTAB _get_cloud_project error: {err}", flush=True)
             return None
 
 
@@ -3494,11 +3644,11 @@ def _published_visual_payload(project: dict, request: QueryReq) -> dict:
         'distinct': visual.get('type') == 'slicer',
     }
 
-def _published_query_context(report_id:str,authorization:str|None):
+def _published_query_context(report_id:str,authorization:str|None,bypass_cache:bool=False):
     """Resolve report, viewer security and snapshots once per page request."""
     from .rls_runtime import resolve_published_rls
     item=store.get_published(report_id)
-    p = item['project'] if item else _get_cloud_project(report_id)
+    p = item['project'] if (not bypass_cache and item and item.get('project')) else _get_cloud_project(report_id, bypass_cache=bypass_cache)
     if not p:raise HTTPException(404,'Published report not found')
     try:
         token = ""
@@ -3520,8 +3670,11 @@ def _published_query_context(report_id:str,authorization:str|None):
     except Exception as e:raise HTTPException(502,str(e))
 
 @app.post('/api/v1/published/{report_id}/query')
-def published_query(report_id:str,req:QueryReq,authorization:str|None=Header(default=None)):
-    p,resolved=_published_query_context(report_id,authorization)
+def published_query(report_id:str,req:QueryReq,request:Request=None,authorization:str|None=Header(default=None)):
+    bypass = bool(request and (request.query_params.get('_t') or request.query_params.get('bypass_cache')))
+    if bypass:
+        invalidate_report_cache(report_id)
+    p,resolved=_published_query_context(report_id,authorization,bypass_cache=bypass)
     try:
         payload=_published_visual_payload(p,req)
         rows,sql=execute(p['model'],payload,resolved['rules'])
@@ -3538,18 +3691,21 @@ def published_query(report_id:str,req:QueryReq,authorization:str|None=Header(def
     except Exception as e:raise HTTPException(400,str(e))
 
 @app.post('/api/v1/published/{report_id}/query-batch')
-def published_query_batch(report_id:str,req:PublishedBatchQueryReq,authorization:str|None=Header(default=None)):
+def published_query_batch(report_id:str,req:PublishedBatchQueryReq,request:Request=None,authorization:str|None=Header(default=None)):
     """Load every data visual on one report page with a single HTTP request.
 
     Authentication, RLS resolution, project loading and snapshot hydration are
     deliberately performed once. Individual query failures are returned beside
     successful visuals so one broken visual does not blank the entire page.
     """
+    bypass = bool(request and (request.query_params.get('_t') or request.query_params.get('bypass_cache')))
+    if bypass:
+        invalidate_report_cache(report_id)
     visual_ids=list(dict.fromkeys(str(value or '').strip() for value in req.visualIds if str(value or '').strip()))
     if len(visual_ids)>64:raise HTTPException(400,'A report page can request at most 64 data visuals at once.')
     if not visual_ids:return {'results':{},'durationMs':0,'security':{}}
     started=time.perf_counter()
-    p,resolved=_published_query_context(report_id,authorization)
+    p,resolved=_published_query_context(report_id,authorization,bypass_cache=bypass)
 
     def run_visual(visual_id:str):
         payload=_published_visual_payload(p,QueryReq(visualId=visual_id,filters=req.filters))
@@ -3681,12 +3837,12 @@ def public_get_report(report_id: str):
     }
 
 @app.post('/api/v1/public/reports/{report_id}/query-batch')
-def public_query_batch(report_id: str, req: PublishedBatchQueryReq):
-    return published_query_batch(report_id, req, authorization=None)
+def public_query_batch(report_id: str, req: PublishedBatchQueryReq, request: Request = None):
+    return published_query_batch(report_id, req, request=request, authorization=None)
 
 @app.post('/api/v1/public/reports/{report_id}/query')
-def public_query(report_id: str, req: QueryReq):
-    return published_query(report_id, req, authorization=None)
+def public_query(report_id: str, req: QueryReq, request: Request = None):
+    return published_query(report_id, req, request=request, authorization=None)
 
 
 # Mount static React SPA frontend for cloud deployments

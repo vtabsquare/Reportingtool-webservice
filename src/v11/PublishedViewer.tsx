@@ -29,12 +29,13 @@ function parseProjectJson(value:any):any{
   try{return JSON.parse(value)}catch{throw new Error('This published report contains an invalid project definition. Publish it again from Desktop.')}
 }
 
-async function fetchReportFromSupabase(reportId:string):Promise<any>{
+async function fetchReportFromSupabase(reportId:string,force=false):Promise<any>{
   // 1. Primary: load directly via Services API definition endpoint.
   // Uses backend service-role access & in-memory caching. Resolves in ~50ms,
   // completely eliminating client-side Supabase PostgREST RLS statement timeouts.
+  const qs = force ? `?_t=${Date.now()}&bypass_cache=1` : '';
   try{
-    const backendItem = await api<any>(`/published/${reportId}/definition`);
+    const backendItem = await api<any>(`/published/${reportId}/definition${qs}`);
     if(backendItem?.project){
       return backendItem;
     }
@@ -59,10 +60,11 @@ async function fetchReportFromSupabase(reportId:string):Promise<any>{
 }
 
 type VisualQueryResult={rows:any[];error?:string;conditionalValues?:Record<string,any>;conditionalError?:string};
-async function queryPageVisuals(reportId:string,visualIds:string[],extraFilters:VisualFilter[]=[],signal?:AbortSignal,userEmail:string='vtabdemouser@gmail.com'){
+async function queryPageVisuals(reportId:string,visualIds:string[],extraFilters:VisualFilter[]=[],signal?:AbortSignal,userEmail:string='vtabdemouser@gmail.com',force=false){
  // One page request replaces the previous N-request waterfall. The service
  // resolves authorization, RLS and private snapshots only once for the page.
- return api<{results:Record<string,VisualQueryResult>;durationMs:number}>(`/published/${reportId}/query-batch`,{method:'POST',headers:{'X-Vtab-User':userEmail},body:JSON.stringify({visualIds,filters:extraFilters}),signal});
+ const qs = force ? `?_t=${Date.now()}&bypass_cache=1` : '';
+ return api<{results:Record<string,VisualQueryResult>;durationMs:number}>(`/published/${reportId}/query-batch${qs}`,{method:'POST',headers:{'X-Vtab-User':userEmail},body:JSON.stringify({visualIds,filters:extraFilters}),signal});
 }
 function visualTitleIcon(type:string){
  if(['pie','donut'].includes(type))return <PieChart size={15}/>;
@@ -403,7 +405,7 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
   </div>;
   return <>{card}{focus&&createPortal(<div className="visualFocusBackdrop" onMouseDown={()=>setFocus(false)}><div className="visualFocusPanel viewerFocusPanel" onMouseDown={e=>e.stopPropagation()}><div className="visualFocusHeader"><div><small>FOCUS MODE</small><b>{v.title}</b></div><button onClick={()=>setFocus(false)}>Close</button></div><div className="visualFocusBody">{content}</div></div></div>,document.body)}</>;
 }
-export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId,userRole,onBack,onManageAccess,workspacePermissions,currentUserEmail="vtabdemouser@gmail.com"}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string,userRole?:string,onBack?:()=>void,onManageAccess?:()=>void,workspacePermissions?:Partial<ReportUiPermissions>,currentUserEmail?:string}){
+export default function PublishedViewer({reportId,initialItem,embedded=false,cloudMode=false,initialPaginatedId,userRole,onBack,onManageAccess,workspacePermissions,currentUserEmail="vtabdemouser@gmail.com",onRefreshSuccess}:{reportId:string,initialItem?:any,embedded?:boolean,cloudMode?:boolean,initialPaginatedId?:string,userRole?:string,onBack?:()=>void,onManageAccess?:()=>void,workspacePermissions?:Partial<ReportUiPermissions>,currentUserEmail?:string,onRefreshSuccess?:()=>void}){
  // Detect external iframe/embed context strictly from URL parameters.
  // The internal `embedded` prop is passed by CloudWorkspace to indicate the viewer is
  // rendered inside the workspace shell. That is NOT an external iframe embed and must
@@ -464,6 +466,153 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  const[settingsModalOpen,setSettingsModalOpen]=useState(false);
  const[automationMode,setAutomationMode]=useState<'subscription'|'alert'|null>(null);
  const[copied,setCopied]=useState(false);
+
+ // ── Unified Data Model readiness & dashboard refresh ────────────────────────
+ const [modelReadiness, setModelReadiness] = useState<{
+   loading: boolean;
+   hasModel: boolean;
+   modelId: string | null;
+   modelName: string;
+   isReady: boolean;
+   status: string;
+   blockers: string[];
+ }>({
+   loading: true,
+   hasModel: false,
+   modelId: null,
+   modelName: '',
+   isReady: false,
+   status: 'loading',
+   blockers: []
+ });
+ const [isRefreshing, setIsRefreshing] = useState(false);
+ const [refreshToast, setRefreshToast] = useState('');
+
+ useEffect(() => {
+   if (!reportId) return;
+   let cancelled = false;
+   setModelReadiness(prev => ({ ...prev, loading: true }));
+   api<any>(`/published/${reportId}/model-readiness`)
+     .then(res => {
+       if (!cancelled) {
+         setModelReadiness({
+           loading: false,
+           hasModel: !!res?.has_model,
+           modelId: res?.model_id || null,
+           modelName: res?.model_name || '',
+           isReady: res?.is_ready === true,
+           status: res?.status || 'unknown',
+           blockers: res?.blockers || []
+         });
+       }
+     })
+     .catch(err => {
+       if (!cancelled) {
+         setModelReadiness({
+           loading: false,
+           hasModel: false,
+           modelId: null,
+           modelName: '',
+           isReady: false,
+           status: 'error',
+           blockers: [err?.message || 'Failed to check data model readiness.']
+         });
+       }
+     });
+   return () => { cancelled = true; };
+ }, [reportId]);
+
+ const refreshDisabled = !allowed('can_refresh') || !modelReadiness.isReady || isRefreshing || modelReadiness.loading;
+ const refreshTitle = !allowed('can_refresh')
+   ? 'Refresh is disabled by report permissions'
+   : modelReadiness.loading
+   ? 'Checking data model readiness…'
+   : !modelReadiness.isReady
+   ? (modelReadiness.blockers.join(' ') || 'Setup required. Configure data source in workspace settings to enable refresh.')
+   : isRefreshing
+   ? 'Refreshing data from source…'
+   : 'Refresh data from data source';
+
+ const handleDashboardRefresh = async () => {
+   if (refreshDisabled || !modelReadiness.modelId) return;
+   setIsRefreshing(true);
+   setVisualLoading(true);
+   try {
+     const queued = await api<any>(`/service/semantic-models/${modelReadiness.modelId}/bridge-refresh`, { method: 'POST' });
+     const jobId = queued?.job_id;
+     if (!jobId) {
+       const refreshed = await load(true);
+       const nowIso = new Date().toISOString();
+       if (refreshed) {
+         setItem((prev: any) => ({
+           ...prev,
+           ...refreshed,
+           updated_at: nowIso,
+           project: {
+             ...(refreshed.project || prev?.project),
+             report: {
+               ...((refreshed.project || prev?.project)?.report || {}),
+               updated_at: nowIso
+             }
+           }
+         }));
+       }
+       setVisualReloadKey(k => k + 1);
+       setRefreshToast('Data refreshed successfully.');
+       setTimeout(() => setRefreshToast(''), 4000);
+       return;
+     }
+     for (let attempt = 0; attempt < 90; attempt++) {
+       await new Promise(resolve => setTimeout(resolve, 1500));
+       const state = await api<any>(`/service/semantic-models/${modelReadiness.modelId}/bridge-refresh/${jobId}`);
+       if (state.status === 'succeeded') {
+         // 1. Reload report definition from backend with bypass_cache
+         const refreshed = await load(true);
+         const nowIso = new Date().toISOString();
+         if (refreshed) {
+           setItem((prev: any) => ({
+             ...prev,
+             ...refreshed,
+             updated_at: nowIso,
+             project: {
+               ...(refreshed.project || prev?.project),
+               report: {
+                 ...((refreshed.project || prev?.project)?.report || {}),
+                 updated_at: nowIso
+               }
+             }
+           }));
+         }
+         // 2. Fetch fresh visual data
+         if (queryVisualIds.length > 0) {
+           try {
+             const res = await queryPageVisuals(reportId, queryVisualIds, combinedFilters, undefined, currentUserEmail, true);
+             if (res?.results) {
+               setVisualResults(res.results);
+             }
+           } catch (err: any) {
+             console.warn('Direct query visual reload failed:', err);
+           }
+         }
+         setVisualReloadKey(k => k + 1);
+         const rows = Number(state.result?.rows || 0);
+         setRefreshToast(`Data refreshed successfully${rows ? ` (${rows.toLocaleString()} rows)` : ''}.`);
+         setTimeout(() => setRefreshToast(''), 5000);
+         try { onRefreshSuccess?.(); } catch {}
+         return;
+       }
+       if (state.status === 'failed') {
+         throw new Error(state.error_message || 'Data refresh failed.');
+       }
+     }
+     throw new Error('Refresh is taking longer than expected. You can check Refresh History later.');
+   } catch (err: any) {
+     alert(err?.message || String(err));
+   } finally {
+     setIsRefreshing(false);
+     setVisualLoading(false);
+   }
+ };
  const[pagesPanelCollapsed,setPagesPanelCollapsed]=useState(false);
  const[isFavorite,setIsFavorite]=useState<boolean>(()=>{try{const favs=JSON.parse(localStorage.getItem('vtab_pbi_favorites')||'[]');return Array.isArray(favs)&&favs.includes(reportId)}catch{return false}});
  const toggleFavorite=()=>{try{const favs=JSON.parse(localStorage.getItem('vtab_pbi_favorites')||'[]');const next=favs.includes(reportId)?favs.filter((x:string)=>x!==reportId):[...favs,reportId];localStorage.setItem('vtab_pbi_favorites',JSON.stringify(next));setIsFavorite(next.includes(reportId))}catch{}};
@@ -507,22 +656,47 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
  },[full]);
  const stageRef=useRef<HTMLElement|null>(null);
  const actionPageHistoryRef=useRef<number[]>([]),runtimeVisibilityDefaultsRef=useRef<Record<string,boolean>>({});
- const load=()=>{
-  if(initialItem && initialItem.project){setItem(initialItem);setError('');return;}
-  if(isExternalEmbed){
-   api<any>(`/published/${reportId}/definition`)
-     .then(x=>{setItem({...x, role: userRole || initialItem?.role || x?.role || 'Viewer'});setError('')})
-     .catch(()=>fetchReportFromSupabase(reportId).then(x=>{setItem({...x, role: userRole || initialItem?.role || x?.role || 'Viewer'});setError('')}).catch(e=>setError(e.message||String(e))));
-   return;
+ const load=async(force=false)=>{
+  if(!force && initialItem && initialItem.project){setItem(initialItem);setError('');return initialItem;}
+  const qs = force ? `?_t=${Date.now()}&bypass_cache=1` : '';
+  try {
+    let x: any = null;
+    if(isExternalEmbed){
+      try {
+        x = await api<any>(`/published/${reportId}/definition${qs}`);
+      } catch {
+        x = await fetchReportFromSupabase(reportId, force);
+      }
+    } else if(WORKSPACE_ONLY){
+      x = await fetchReportFromSupabase(reportId, force);
+    } else {
+      x = await api<any>(`/published/${reportId}${qs}`);
+    }
+    if (x) {
+      setItem((prev: any) => ({...prev, ...x, role: userRole || initialItem?.role || x?.role || prev?.role || 'Viewer'}));
+      setError('');
+      if (force) setVisualReloadKey(k => k + 1);
+      return x;
+    }
+  } catch(e: any) {
+    setError(e.message || String(e));
+    throw e;
   }
-  if(WORKSPACE_ONLY){
-   fetchReportFromSupabase(reportId).then(x=>{setItem({...x, role: userRole || initialItem?.role || x?.role});setError('')}).catch(e=>setError(e.message||String(e)));
-   return;
-  }
-  api<any>(`/published/${reportId}`).then(x=>{setItem({...x, role: userRole || initialItem?.role || x?.role});setError('')}).catch(e=>setError(e.message||String(e)))
  };
  useEffect(()=>{
-  if(initialItem && initialItem.project){setItem(initialItem);setError('');return;}
+  if(initialItem && initialItem.project){
+    setItem(initialItem);
+    setError('');
+    api<any>(`/published/${reportId}?_t=${Date.now()}`)
+      .then(x=>{
+        if(x && x.project){
+          setItem((prev:any)=>({...prev, ...x, role: userRole || initialItem?.role || x?.role || prev?.role || 'Viewer'}));
+          setVisualReloadKey(k=>k+1);
+        }
+      })
+      .catch(()=>{});
+    return;
+  }
   if(WORKSPACE_ONLY){load();return;}
   api<any>('/auth/status').then(s=>{setAuthRequired(!!s.required);if(s.required){api('/auth/me').then(()=>{setSignedIn(true);load()}).catch(()=>setSignedIn(false))}else load()})
  },[reportId,initialItem?.id]);
@@ -540,7 +714,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    if(!queryVisualIds.length){setVisualResults({});setVisualLoadError('');setVisualLoading(false);return}
    const controller=new AbortController();
    setVisualLoading(true);setVisualLoadError('');
-   queryPageVisuals(reportId,queryVisualIds,combinedFilters,controller.signal,currentUserEmail)
+   queryPageVisuals(reportId,queryVisualIds,combinedFilters,controller.signal,currentUserEmail,visualReloadKey>0)
     .then(response=>{if(!controller.signal.aborted)setVisualResults(response.results||{})})
     .catch((error:any)=>{if(!controller.signal.aborted)setVisualLoadError(error?.message||String(error))})
     .finally(()=>{if(!controller.signal.aborted)setVisualLoading(false)});
@@ -760,8 +934,8 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
        )}
        <div className="fabric-brand-v">V</div>
        <div className="pbi-report-title-meta">
-         <b>{report.name}</b>
-         <small>Data updated {new Date(item.updated_at || item.published_at).toLocaleDateString()}</small>
+         <b>{report?.name || item?.name || 'Report'}</b>
+         <small>Data updated {(() => { const raw = item?.updated_at || item?.published_at || project?.report?.updated_at || project?.report?.published_at; if (!raw) return 'Recently'; const d = new Date(raw); return isNaN(d.getTime()) ? 'Recently' : `${d.toLocaleDateString(undefined, {month:'numeric', day:'numeric', year:'numeric'})} ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`; })()}</small>
        </div>
      </div>
 
@@ -908,8 +1082,23 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
         <button className="pbi-cmd-btn" disabled={!allowed('can_share')} onClick={onManageAccess || shareEmail}>
           <Share2 size={15} color="#0f6cbd" /> Share
         </button>
-        <button className="pbi-cmd-btn"  disabled={!allowed('can_refresh')} onClick={load}>
-          <RefreshCcw size={15} color="#16a34a" /> Refresh
+        <button
+          className="pbi-cmd-btn"
+          disabled={refreshDisabled}
+          title={refreshTitle}
+          onClick={handleDashboardRefresh}
+          style={{
+            opacity: refreshDisabled ? 0.45 : 1,
+            cursor: refreshDisabled ? (modelReadiness.loading || isRefreshing ? 'wait' : 'not-allowed') : 'pointer',
+            transition: 'opacity 0.15s ease'
+          }}
+        >
+          <RefreshCcw
+            size={15}
+            color={refreshDisabled ? '#94a3b8' : '#16a34a'}
+            style={isRefreshing ? { animation: 'pbiSpin 1s linear infinite' } : undefined}
+          />
+          <span>{isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
         </button>
         <button className="pbi-cmd-btn"  disabled={!allowed('can_subscribe')} onClick={()=>setAutomationMode('subscription')}>
           <Mail size={15} color="#0f6cbd" /> Subscribe
@@ -1027,7 +1216,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
    </nav>
    {/* Main canvas */}
    <main className="viewerStage" ref={stageRef} style={{position:"relative"}}>
-     {(visualLoading||visualLoadError)&&(
+     {!isRefreshing && (visualLoading||visualLoadError)&&(
        <div className={"viewerPageLoadNotice "+(visualLoadError?"error":"")} role="status">
          {visualLoading?(
            <>
@@ -1052,8 +1241,8 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     <div className={'viewerPage '+(pixelLayout?'pixelPublishedPage':'legacyPublishedPage')+(isPublishedDarkCanvas?' darkCanvasTheme':'')} data-page-id={String(page.id||'')} data-canvas-theme={isPublishedDarkCanvas?'dark':'light'} style={{width,height:effectiveHeight,background:publishedPageBackground,'--published-page-background':publishedPageBackground,transform:`scale(${scale})`,transformOrigin:'top left',transition:isZoomDragging?'none':'transform 0.15s ease'} as any}>
      {s.backgroundImage&&<div className={`viewerPageBg pageBackgroundImage fit-${s.backgroundImageFit||'cover'}`} style={{backgroundImage:`url(${s.backgroundImage})`,opacity:(s.backgroundImageOpacity!==undefined?s.backgroundImageOpacity:100)/100}}/>}
      <div className="viewerPageLayer">
-      {!pixelLayout&&s.header?.visible!==false&&<div className="viewerDashboardHeader" style={{background:s.header?.background||'#fff','--viewer-header-bg':s.header?.background||'#fff','--viewer-header-height':`${s.header?.height||84}px`,'--viewer-header-pad-top':`${s.header?.paddingTop??12}px`,'--viewer-header-pad-bottom':`${s.header?.paddingBottom??12}px`,'--viewer-header-pad-left':`${s.header?.paddingLeft??24}px`,'--viewer-header-pad-right':`${s.header?.paddingRight??24}px`,'--viewer-header-radius':`${s.header?.borderRadius??14}px`,'--viewer-header-title-size':`${s.header?.fontSize||28}px`,'--viewer-header-title-color':s.header?.titleColor||'#111827','--viewer-header-subtitle-size':`${s.header?.subtitleFontSize||12}px`,'--viewer-header-subtitle-color':s.header?.subtitleColor||'#475569'} as any}><div className="viewerDashboardHeaderCopy" style={{textAlign:s.header?.alignment||'left'}}><h1 style={{color:s.header?.titleColor||'#111827'}}>{s.header?.title||''}</h1><p style={{color:s.header?.subtitleColor||'#475569'}}>{s.header?.subtitle||''}</p></div>{s.header?.showGeneratedInfo!==false&&<div className="viewerReportMeta" style={{background:s.header?.generatedInfoBackground||'#f8fbff'}}><CalendarDays size={20}/><div><small>REPORT GENERATED</small><b>{new Date(item.updated_at||item.published_at).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})}</b><span>{new Date(item.updated_at||item.published_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span></div></div>}</div>}
-      <div className={'viewerGrid '+(pixelLayout?'pixelLayout':'legacyLayout')}>{visibleVisuals.map((v:Visual,index:number)=>{const visualField=v.bindings.axis?.[0]||'',publishedSlicerStyle=v.slicerStyle||(v.format as any)?.slicerStyle||'list';const activeFilter=interactionFilterMap[v.id]||(visualField?interactionFilters.find(filter=>filter.field===visualField||filter.field.endsWith('.'+visualField)||visualField.endsWith('.'+filter.field)):null)||null;return <div key={v.id} className={`viewerVisualWrapper ${v.geometryVersion===2?'viewerPixelObject':''}`} style={v.geometryVersion===2?{position:'absolute',left:v.x,top:v.y,width:v.w,height:v.h,zIndex:v.zIndex??index,transform:`rotate(${v.rotation||0}deg)`,transformOrigin:'center',display:'flex',flexDirection:'column',boxSizing:'border-box',overflow:(v.type==='slicer'&&publishedSlicerStyle==='dropdown')?'visible':'hidden'}:{gridColumn:`${v.x+1} / span ${v.w}`,gridRow:`${v.y+1} / span ${v.h}`}}><ViewerVisual v={v} model={project.model} result={visualResults[v.id]||(visualLoadError?{rows:[],error:visualLoadError}:undefined)} loading={v.type==='slicer'?(!visualResults[v.id]&&visualLoading):(!['textbox','button','image','shape'].includes(v.type)&&visualLoading&&!visualResults[v.id])} selected={buttonSelections[(v.format?.buttonSelectionGroup||'default').trim()||'default']===v.id} activeFilter={activeFilter} isDarkCanvas={s.canvasTheme==='dark'||isPublishedDarkCanvas} onCrossFilter={filter=>handleCrossFilter(v.id,filter)} onAction={executeAction}/></div>})}{visibleVisuals.length===0&&<div className="viewerEmptyPage"><b>No visible visuals on this published page</b><span>Open this page in Report Designer, verify visual visibility, save the report, and publish again.</span></div>}</div>
+      {!pixelLayout&&s.header?.visible!==false&&<div className="viewerDashboardHeader" style={{background:s.header?.background||'#fff','--viewer-header-bg':s.header?.background||'#fff','--viewer-header-height':`${s.header?.height||84}px`,'--viewer-header-pad-top':`${s.header?.paddingTop??12}px`,'--viewer-header-pad-bottom':`${s.header?.paddingBottom??12}px`,'--viewer-header-pad-left':`${s.header?.paddingLeft??24}px`,'--viewer-header-pad-right':`${s.header?.paddingRight??24}px`,'--viewer-header-radius':`${s.header?.borderRadius??14}px`,'--viewer-header-title-size':`${s.header?.fontSize||28}px`,'--viewer-header-title-color':s.header?.titleColor||'#111827','--viewer-header-subtitle-size':`${s.header?.subtitleFontSize||12}px`,'--viewer-header-subtitle-color':s.header?.subtitleColor||'#475569'} as any}><div className="viewerDashboardHeaderCopy" style={{textAlign:s.header?.alignment||'left'}}><h1 style={{color:s.header?.titleColor||'#111827'}}>{s.header?.title||''}</h1><p style={{color:s.header?.subtitleColor||'#475569'}}>{s.header?.subtitle||''}</p></div>{s.header?.showGeneratedInfo!==false&&<div className="viewerReportMeta" style={{background:s.header?.generatedInfoBackground||'#f8fbff'}}><CalendarDays size={20}/><div><small>REPORT GENERATED</small>{(() => { const raw = item?.updated_at || item?.published_at || project?.report?.updated_at || project?.report?.published_at; const d = raw ? new Date(raw) : null; const valid = d && !isNaN(d.getTime()); return <><b>{valid ? d.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}) : 'Recently'}</b><span>{valid ? d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) : '—'}</span></>; })()}</div></div>}</div>}
+      <div className={'viewerGrid '+(pixelLayout?'pixelLayout':'legacyLayout')}>{visibleVisuals.map((v:Visual,index:number)=>{const visualField=v.bindings.axis?.[0]||'',publishedSlicerStyle=v.slicerStyle||(v.format as any)?.slicerStyle||'list';const activeFilter=interactionFilterMap[v.id]||(visualField?interactionFilters.find(filter=>filter.field===visualField||filter.field.endsWith('.'+visualField)||visualField.endsWith('.'+filter.field)):null)||null;return <div key={v.id} className={`viewerVisualWrapper ${v.geometryVersion===2?'viewerPixelObject':''}`} style={v.geometryVersion===2?{position:'absolute',left:v.x,top:v.y,width:v.w,height:v.h,zIndex:v.zIndex??index,transform:`rotate(${v.rotation||0}deg)`,transformOrigin:'center',display:'flex',flexDirection:'column',boxSizing:'border-box',overflow:(v.type==='slicer'&&publishedSlicerStyle==='dropdown')?'visible':'hidden'}:{gridColumn:`${v.x+1} / span ${v.w}`,gridRow:`${v.y+1} / span ${v.h}`}}><ViewerVisual v={v} model={project.model} result={visualResults[v.id]||(visualLoadError?{rows:[],error:visualLoadError}:undefined)} loading={isRefreshing ? (!['textbox','button','image','shape'].includes(v.type)) : (v.type==='slicer'?(!visualResults[v.id]&&visualLoading):(!['textbox','button','image','shape'].includes(v.type)&&visualLoading&&!visualResults[v.id]))} selected={buttonSelections[(v.format?.buttonSelectionGroup||'default').trim()||'default']===v.id} activeFilter={activeFilter} isDarkCanvas={s.canvasTheme==='dark'||isPublishedDarkCanvas} onCrossFilter={filter=>handleCrossFilter(v.id,filter)} onAction={executeAction}/></div>})}{visibleVisuals.length===0&&<div className="viewerEmptyPage"><b>No visible visuals on this published page</b><span>Open this page in Report Designer, verify visual visibility, save the report, and publish again.</span></div>}</div>
      </div>
     </div>
     </div>
@@ -1219,7 +1408,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
          </div>
          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, margin: '14px 0', fontSize: 13 }}>
            <div><small style={{ color: '#64748b' }}>Name:</small> <b style={{ display: 'block' }}>{report.name}</b></div>
-           <div><small style={{ color: '#64748b' }}>Published At:</small> <span style={{ display: 'block' }}>{new Date(item.published_at || item.updated_at).toLocaleString()}</span></div>
+           <div><small style={{ color: '#64748b' }}>Published At:</small> <span style={{ display: 'block' }}>{(() => { const raw = item?.published_at || item?.updated_at || project?.report?.published_at || project?.report?.updated_at; if (!raw) return '—'; const d = new Date(raw); return isNaN(d.getTime()) ? '—' : d.toLocaleString(); })()}</span></div>
            <div><small style={{ color: '#64748b' }}>Pages Count:</small> <span style={{ display: 'block' }}>{pages.length} page{pages.length === 1 ? '' : 's'}</span></div>
            <div><small style={{ color: '#64748b' }}>Access Role:</small> <span style={{ display: 'block', fontWeight: 600, color: '#166534' }}>{effectiveRole || 'Viewer'}</span></div>
          </div>
@@ -1231,5 +1420,26 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
      </div>
    )}
    {automationMode&&<ReportAutomationDialog mode={automationMode} reportId={reportId} reportName={report.name} project={project} pageId={page?.id} filters={combinedFilters} workspaceId={item?.workspace_id} onClose={()=>setAutomationMode(null)}/>}
+   {refreshToast && (
+     <div style={{
+       position: 'fixed',
+       bottom: 24,
+       right: 28,
+       background: '#166534',
+       color: '#ffffff',
+       padding: '10px 18px',
+       borderRadius: 8,
+       boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+       zIndex: 99999,
+       fontSize: 13,
+       fontWeight: 600,
+       display: 'flex',
+       alignItems: 'center',
+       gap: 8,
+       animation: 'pbiSlideIn 0.2s ease-out'
+     }}>
+       <Check size={16} /> {refreshToast}
+     </div>
+   )}
  </div>
 }

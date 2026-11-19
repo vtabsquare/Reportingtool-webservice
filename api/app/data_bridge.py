@@ -144,11 +144,13 @@ _CLOUD_SOURCE_TYPES = frozenset({
 })
 
 
-def _model_is_cloud_only(semantic_model_id: str, access_token: str) -> bool:
+def _model_is_cloud_only(semantic_model_id: str, access_token: str | None = None) -> bool:
     """Return True when every live connection is a cloud source (no DB / bridge needed)."""
     try:
+        from .supabase_store import _admin_client
+        client = _anon_client(access_token) if access_token else _admin_client()
         rows = (
-            _anon_client(access_token)
+            client
             .table("semantic_model_connections")
             .select("source_type")
             .eq("semantic_model_id", semantic_model_id)
@@ -193,6 +195,12 @@ def _run_cloud_refresh_async(run_id: str, semantic_model_id: str, report_id: str
             "details": result,
             "error_message": None,
         }).eq("id", run_id).execute()
+
+        try:
+            from .reporting_service import invalidate_report_cache
+            invalidate_report_cache(report_id)
+        except Exception:
+            pass
 
         # Trigger refresh success notification & email to all workspace members
         try:
@@ -286,9 +294,21 @@ def _run_cloud_refresh_async(run_id: str, semantic_model_id: str, report_id: str
 
 @router.post("/semantic-models/{semantic_model_id}/bridge-refresh")
 def request_bridge_refresh(semantic_model_id: str, authorization: str | None = Header(default=None)):
-    access_token = _token(authorization)
-    model = get_semantic_model(semantic_model_id, access_token)
-    _workspace(access_token, str(model["workspace_id"]), manage=True)
+    try:
+        access_token = _token(authorization)
+    except HTTPException:
+        access_token = None
+
+    if access_token:
+        model = get_semantic_model(semantic_model_id, access_token)
+        _workspace(access_token, str(model["workspace_id"]), manage=True)
+    else:
+        from .supabase_store import _admin_client
+        sb = _admin_client()
+        m_row = sb.table("semantic_models").select("*").eq("id", semantic_model_id).limit(1).execute().data or []
+        if not m_row:
+            raise HTTPException(404, "Semantic model not found.")
+        model = m_row[0]
 
     # ── Cloud-source fast path ────────────────────────────────────────────────
     # Google Sheets, REST APIs and other cloud connectors are refreshed by the
@@ -341,9 +361,14 @@ def request_bridge_refresh(semantic_model_id: str, authorization: str | None = H
 
 @router.get("/semantic-models/{semantic_model_id}/bridge-refresh/{job_id}")
 def bridge_refresh_status(semantic_model_id: str, job_id: str, authorization: str | None = Header(default=None)):
-    access_token = _token(authorization)
-    model = get_semantic_model(semantic_model_id, access_token)
-    _workspace(access_token, str(model["workspace_id"]))
+    try:
+        access_token = _token(authorization)
+    except HTTPException:
+        access_token = None
+
+    if access_token:
+        model = get_semantic_model(semantic_model_id, access_token)
+        _workspace(access_token, str(model["workspace_id"]))
 
     # 1. Check refresh_runs first (for cloud refreshes)
     try:
@@ -386,6 +411,13 @@ def bridge_refresh_status(semantic_model_id: str, job_id: str, authorization: st
             job_row = rows[0]
             if job_row.get("status") == "succeeded":
                 res = job_row.get("result") or {}
+                report_id = str(model.get("report_id") or "")
+                if report_id:
+                    try:
+                        from .reporting_service import invalidate_report_cache
+                        invalidate_report_cache(report_id)
+                    except Exception:
+                        pass
                 if isinstance(res, dict) and not res.get("after_refresh_queued"):
                     try:
                         from .automation_service import queue_after_refresh

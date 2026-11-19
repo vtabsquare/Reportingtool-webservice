@@ -36,15 +36,16 @@ export default function SimpleSemanticModelSettings({model,runtime,role,onReload
   const connectionFor=(source:Source)=>runtime.connections.find(c=>(c.name&&c.name===source.name)||normalType(c.source_type)===normalType(source.type));
   const boundBridge:Bridge|null=binding?.bridge||bridges.find(b=>b.id===binding?.bridge_id)||null;
   const bridgeOnline=boundBridge?.status==='online';
-  const allCloud=sources.length>0&&sources.every(s=>['google_sheets','rest','odata','graphql','sharepoint','onedrive','google_drive','azure_blob','adls_gen2','s3','gcs'].includes(normalType(s.type)));
-  const canRefresh=sources.length>0&&(allCloud||bridgeOnline);
-  return <div style={{maxWidth:900}}><h2 style={{marginTop:0}}>Unified Data Model Settings</h2><p style={hint}>Only data connectivity and refresh settings are shown here. Model tables and published snapshot versions remain part of the Unified Data Model, not connection settings.</p>{error&&<Notice error>{error}</Notice>}{message&&<Notice>{message}</Notice>}
-    <Section title="1. Data sources"><p style={hint}>Each original database or cloud endpoint appears once, even when it supplies multiple model tables.</p>{sources.length?<div style={sourceGrid}><b>Source</b><b>Type</b><b>Mode</b><b>Status</b><span/>{sources.map(source=>{const connection=connectionFor(source);const local=/^(localhost|127\.0\.0\.1|::1)$/i.test(String(source.configuration?.host||source.configuration?.server||''));const status=connection?.status==='connected'?'Connected':local&&bridgeOnline?'Bridge online':'Setup required';return <div key={source.id} style={{display:'contents'}}><span><b style={{display:'block'}}>{source.name}</b>{source.configuration?.database&&<small style={hint}>{source.configuration.database}</small>}</span><span>{typeLabel(source.type)}</span><span>{source.mode}</span><span style={{color:status==='Connected'||status==='Bridge online'?'#166534':'#b45309',fontWeight:700}}>{status}</span><button disabled={!canManage(role)||local} style={link} onClick={()=>setEditing(source)}>{local?'Uses Data Bridge':connection?'Edit':'Configure'}</button></div>})}</div>:<Empty text="This published model contains imported data but no source identity. It was created before PostgreSQL source metadata was retained. In Desktop, reconnect to PostgreSQL, reimport the report tables once, save, and republish. The password remains local; Services will then show one PostgreSQL source entry."/>}</Section>
-    <Section title="2. Desktop Data Bridge"><p style={hint}>Use this only for localhost or private-network sources. Open Desktop Settings → Data Bridge on the database computer, select this workspace, and connect it.</p><div style={bridgeCard}><div><b>{boundBridge?.name||'No bridge selected'}</b><small>{boundBridge?`${boundBridge.machine_name} · ${boundBridge.status} · Last seen ${when(boundBridge.last_heartbeat)}`:'Select an online Desktop bridge below and save it.'}</small></div><span style={{...statusPill,background:bridgeOnline?'#dcfce7':'#f1f5f9',color:bridgeOnline?'#166534':'#64748b'}}>{bridgeOnline?'Online':boundBridge?'Offline':'Not selected'}</span></div><div style={{display:'flex',gap:9,alignItems:'end'}}><label style={{...label,flex:1}}>Available bridge<select value={bridgeId} disabled={!canManage(role)||busy} onChange={e=>setBridgeId(e.target.value)} style={control}><option value="">No bridge</option>{bridges.map(bridge=><option key={bridge.id} value={bridge.id} disabled={bridge.status!=='online'}>{bridge.name} · {bridge.machine_name} · {bridge.status}</option>)}</select></label><button disabled={!canManage(role)||busy||bridgeId===String(binding?.bridge_id||'')||(!!bridgeId&&bridges.find(b=>b.id===bridgeId)?.status!=='online')} style={primary} onClick={()=>void saveBridge()}>{busy?'Checking…':'Save bridge'}</button><button disabled={busy} style={secondary} onClick={()=>void loadBridges()}>Refresh status</button></div>{!bridges.length&&<Empty text="No Desktop Data Bridge is registered in this workspace."/>}</Section>
-    <Section title="3. Refresh"><p style={hint}>{allCloud?'Cloud data sources (such as Google Sheets) are refreshed directly by Services in the cloud.':'Refresh requests are executed on the selected Desktop Data Bridge. Database credentials remain protected on that computer and are never returned to Services.'}</p>{canRefresh?<div style={ready}><span>Ready for manual refresh{refreshState?.status?` · ${refreshState.status}`:''}</span><button disabled={refreshBusy} style={primary} onClick={()=>void runRefresh()}>{refreshBusy?'Refreshing…':'Refresh now'}</button></div>:<div style={warning}><b>Refresh is not ready.</b><span>{!sources.length?'Republish from the updated Desktop so the Unified Data Model includes its source identity.':allCloud?'Configure and connect all cloud data sources above.':!boundBridge?'Select and save a Desktop Data Bridge.':'Open VTAB Desktop and wait for the bridge to become Online.'}</span></div>}
-      <div style={{marginTop:12,padding:'10px 14px',background:'#f0fdf4',border:'1px solid #bbf7d0',borderRadius:8,display:'flex',alignItems:'center',gap:8}}>
-        <span style={{color:'#166534',fontWeight:600,fontSize:13}}>✓ Automatic Email & In-App Alerts Active</span>
-        <span style={{color:'#15803d',fontSize:12}}>— Whenever a refresh runs, an email will be automatically sent to your inbox on both success and failure.</span>
+  const allCloud=sources.length>0&&sources.every(s=>['google_sheets','rest','odata','graphql','sharepoint','onedrive','google_drive','azure_blob','adls_gen2','s3','gcs','salesforce','dynamics365','servicenow','jira','github'].includes(normalType(s.type)));
+  const cloudReady=allCloud&&sources.every(s=>connectionFor(s)?.status==='connected');
+  const canRefresh=sources.length>0&&(cloudReady||bridgeOnline||runtime.readiness?.refresh_ready===true);
+  return <div className="pbi-settings-wrap" style={{maxWidth:900}}><h2 style={{marginTop:0}}>Unified Data Model Settings</h2><p style={hint}>Only data connectivity and refresh settings are shown here. Model tables and published snapshot versions remain part of the Unified Data Model, not connection settings.</p>{error&&<Notice error>{error}</Notice>}{message&&<Notice>{message}</Notice>}
+    <Section title="1. Data sources"><p style={hint}>Each original database or cloud endpoint appears once, even when it supplies multiple model tables.</p>{sources.length?<div className="pbi-source-grid" style={sourceGrid}><b>Source</b><b>Type</b><b>Mode</b><b>Status</b><span/>{sources.map(source=>{const connection=connectionFor(source);const local=/^(localhost|127\.0\.0\.1|::1)$/i.test(String(source.configuration?.host||source.configuration?.server||''));const status=connection?.status==='connected'?'Connected':local&&bridgeOnline?'Bridge online':'Setup required';return <div key={source.id} style={{display:'contents'}}><span><b style={{display:'block'}}>{source.name}</b>{source.configuration?.database&&<small style={hint}>{source.configuration.database}</small>}</span><span>{typeLabel(source.type)}</span><span>{source.mode}</span><span style={{color:status==='Connected'||status==='Bridge online'?'#166534':'#b45309',fontWeight:700}}>{status}</span><button disabled={!canManage(role)||local} style={link} onClick={()=>setEditing(source)}>{local?'Uses Data Bridge':connection?'Edit':'Configure'}</button></div>})}</div>:<Empty text="This published model contains imported data but no source identity. It was created before PostgreSQL source metadata was retained. In Desktop, reconnect to PostgreSQL, reimport the report tables once, save, and republish. The password remains local; Services will then show one PostgreSQL source entry."/>}</Section>
+    <Section title="2. Desktop Data Bridge"><p style={hint}>Use this only for localhost or private-network sources. Open Desktop Settings → Data Bridge on the database computer, select this workspace, and connect it.</p><div className="pbi-bridge-card" style={bridgeCard}><div><b>{boundBridge?.name||'No bridge selected'}</b><small>{boundBridge?`${boundBridge.machine_name} · ${boundBridge.status} · Last seen ${when(boundBridge.last_heartbeat)}`:'Select an online Desktop bridge below and save it.'}</small></div><span className={`pbi-bridge-status-pill ${bridgeOnline?'online':'offline'}`} style={{...statusPill,background:bridgeOnline?'var(--svc-status-bg, #dcfce7)':'var(--svc-surface-3, #f1f5f9)',color:bridgeOnline?'var(--svc-status-color, #166534)':'var(--svc-muted, #64748b)'}}>{bridgeOnline?'Online':boundBridge?'Offline':'Not selected'}</span></div><div style={{display:'flex',gap:9,alignItems:'end'}}><label style={{...label,flex:1}}>Available bridge<select className="pbi-settings-control" value={bridgeId} disabled={!canManage(role)||busy} onChange={e=>setBridgeId(e.target.value)} style={control}><option value="">No bridge</option>{bridges.map(bridge=><option key={bridge.id} value={bridge.id} disabled={bridge.status!=='online'}>{bridge.name} · {bridge.machine_name} · {bridge.status}</option>)}</select></label><button disabled={!canManage(role)||busy||bridgeId===String(binding?.bridge_id||'')||(!!bridgeId&&bridges.find(b=>b.id===bridgeId)?.status!=='online')} className="pbi-settings-btn-primary" style={primary} onClick={()=>void saveBridge()}>{busy?'Checking…':'Save bridge'}</button><button disabled={busy} className="pbi-settings-btn-secondary" style={secondary} onClick={()=>void loadBridges()}>Refresh status</button></div>{!bridges.length&&<Empty text="No Desktop Data Bridge is registered in this workspace."/>}</Section>
+    <Section title="3. Refresh"><p style={hint}>{allCloud?'Cloud data sources (such as Google Sheets) are refreshed directly by Services in the cloud.':'Refresh requests are executed on the selected Desktop Data Bridge. Database credentials remain protected on that computer and are never returned to Services.'}</p>{canRefresh?<div className="pbi-settings-ready" style={ready}><span>Ready for manual refresh{refreshState?.status?` · ${refreshState.status}`:''}</span><button disabled={refreshBusy} className="pbi-settings-btn-primary" style={primary} onClick={()=>void runRefresh()}>{refreshBusy?'Refreshing…':'Refresh now'}</button></div>:<div className="pbi-settings-warning" style={warning}><b>Refresh is not ready.</b><span>{!sources.length?'Republish from the updated Desktop so the Unified Data Model includes its source identity.':allCloud?'Configure and connect all cloud data sources above.':!boundBridge?'Select and save a Desktop Data Bridge.':'Open VTAB Desktop and wait for the bridge to become Online.'}</span></div>}
+      <div className="pbi-settings-tip" style={{marginTop:12,padding:'10px 14px',background:'var(--svc-success-bg, #f0fdf4)',border:'1px solid var(--svc-success-border, #bbf7d0)',borderRadius:8,display:'flex',alignItems:'center',gap:8}}>
+        <span style={{color:'var(--svc-success-title, #166534)',fontWeight:600,fontSize:13}}>✓ Automatic Email & In-App Alerts Active</span>
+        <span style={{color:'var(--svc-success-text, #15803d)',fontSize:12}}>— Whenever a refresh runs, an email will be automatically sent to your inbox on both success and failure.</span>
       </div>
     </Section>
     {!!runtime.parameters?.length&&<Section title="4. Parameters"><p style={hint}>{runtime.parameters.length} published parameter{runtime.parameters.length===1?' is':'s are'} available. Parameter values remain unchanged by this connectivity update.</p></Section>}
@@ -148,8 +149,8 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
     : Boolean(form.host && form.database && form.username && (current || form.password));
 
   return (
-    <div style={backdrop} onMouseDown={onClose}>
-      <section style={dialog} onMouseDown={e => e.stopPropagation()}>
+    <div className="pbi-direct-conn-backdrop" style={backdrop} onMouseDown={onClose}>
+      <section className="pbi-direct-conn-dialog" style={dialog} onMouseDown={e => e.stopPropagation()}>
         <h3 style={{ marginTop: 0 }}>
           {current ? 'Edit' : 'Configure'} {source.name}
         </h3>
@@ -172,13 +173,14 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
               onChange={value => setForm({ ...form, sheet: value })}
             />
             <div
+              className="pbi-connection-tip"
               style={{
                 padding: '10px 12px',
-                background: '#f0fdf4',
-                border: '1px solid #bbf7d0',
+                background: 'var(--svc-success-bg, #f0fdf4)',
+                border: '1px solid var(--svc-success-border, #bbf7d0)',
                 borderRadius: 7,
                 fontSize: 12,
-                color: '#166534',
+                color: 'var(--svc-success-text, #166534)',
                 lineHeight: 1.5,
               }}
             >
@@ -194,7 +196,7 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
             <Field label="Password" type="password" value={form.password} onChange={value => setForm({ ...form, password: value })} />
             <label style={label}>
               Encryption
-              <select value={form.sslmode} onChange={e => setForm({ ...form, sslmode: e.target.value })} style={control}>
+              <select className="pbi-settings-control" value={form.sslmode} onChange={e => setForm({ ...form, sslmode: e.target.value })} style={control}>
                 <option value="require">Required</option>
                 <option value="prefer">Preferred</option>
                 <option value="disable">Disabled</option>
@@ -203,12 +205,13 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
           </div>
         )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
-          <button onClick={onClose} style={secondary}>
+          <button onClick={onClose} className="pbi-settings-btn-secondary" style={secondary}>
             Cancel
           </button>
           <button
             disabled={busy || !canSave}
             onClick={() => void testAndSave()}
+            className="pbi-settings-btn-primary"
             style={primary}
           >
             {busy ? 'Testing…' : 'Test and save'}
@@ -219,24 +222,24 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
   );
 }
 
-function Field({label:caption,value,type='text',onChange}:{label:string;value:any;type?:string;onChange:(value:string)=>void}){return <label style={label}>{caption}<input type={type} value={value} onChange={e=>onChange(e.target.value)} style={control}/></label>}
-function Section({title,children}:{title:string;children:any}){return <details open style={section}><summary style={summary}>{title}</summary><div style={{padding:'2px 16px 17px'}}>{children}</div></details>}
-function Notice({children,error=false}:{children:any;error?:boolean}){return <div style={{padding:11,marginBottom:11,border:`1px solid ${error?'#fecaca':'#bbf7d0'}`,background:error?'#fef2f2':'#f0fdf4',color:error?'#991b1b':'#166534',borderRadius:7,fontSize:12}}>{children}</div>}
-function Empty({text}:{text:string}){return <div style={{padding:14,border:'1px dashed #cbd5e1',borderRadius:7,color:'#64748b',fontSize:12,marginTop:10}}>{text}</div>}
+function Field({label:caption,value,type='text',onChange}:{label:string;value:any;type?:string;onChange:(value:string)=>void}){return <label style={label}>{caption}<input className="pbi-settings-control" type={type} value={value} onChange={e=>onChange(e.target.value)} style={control}/></label>}
+function Section({title,children}:{title:string;children:any}){return <details open className="pbi-settings-section" style={section}><summary className="pbi-settings-summary" style={summary}>{title}</summary><div style={{padding:'2px 16px 17px'}}>{children}</div></details>}
+function Notice({children,error=false}:{children:any;error?:boolean}){return <div className={`pbi-settings-notice ${error?'error':'success'}`} style={{padding:11,marginBottom:11,border:`1px solid ${error?'#fecaca':'#bbf7d0'}`,background:error?'var(--svc-error-bg, #fef2f2)':'var(--svc-success-bg, #f0fdf4)',color:error?'var(--svc-error-text, #991b1b)':'var(--svc-success-text, #166534)',borderRadius:7,fontSize:12}}>{children}</div>}
+function Empty({text}:{text:string}){return <div className="pbi-empty-box" style={{padding:14,border:'1px dashed var(--svc-border, #cbd5e1)',borderRadius:7,color:'var(--svc-muted, #64748b)',background:'var(--svc-surface-2, transparent)',fontSize:12,marginTop:10}}>{text}</div>}
 
-const hint:React.CSSProperties={fontSize:12,color:'#64748b',lineHeight:1.55,marginTop:0};
-const section:React.CSSProperties={border:'1px solid #e2e8f0',borderRadius:9,marginBottom:12,background:'#fff'};
-const summary:React.CSSProperties={padding:'14px 16px',fontWeight:800,fontSize:14,cursor:'pointer'};
-const sourceGrid:React.CSSProperties={display:'grid',gridTemplateColumns:'minmax(190px,1fr) 120px 80px 120px 100px',gap:0,alignItems:'center',border:'1px solid #e5e7eb',borderRadius:7,overflow:'hidden',fontSize:12};
-const bridgeCard:React.CSSProperties={display:'flex',alignItems:'center',gap:12,padding:13,border:'1px solid #e5e7eb',borderRadius:7,marginBottom:12};
+const hint:React.CSSProperties={fontSize:12,color:'var(--svc-muted, #64748b)',lineHeight:1.55,marginTop:0};
+const section:React.CSSProperties={border:'1px solid var(--svc-border, #e2e8f0)',borderRadius:9,marginBottom:12,background:'var(--svc-surface, #fff)',color:'var(--svc-text, inherit)'};
+const summary:React.CSSProperties={padding:'14px 16px',fontWeight:800,fontSize:14,cursor:'pointer',color:'var(--svc-text, inherit)'};
+const sourceGrid:React.CSSProperties={display:'grid',gridTemplateColumns:'minmax(190px,1fr) 120px 80px 120px 100px',gap:0,alignItems:'center',border:'1px solid var(--svc-border, #e5e7eb)',borderRadius:7,overflow:'hidden',fontSize:12,background:'var(--svc-surface-2, transparent)'};
+const bridgeCard:React.CSSProperties={display:'flex',alignItems:'center',gap:12,padding:13,border:'1px solid var(--svc-border, #e5e7eb)',borderRadius:7,marginBottom:12,background:'var(--svc-surface-2, transparent)',color:'var(--svc-text, inherit)'};
 const statusPill:React.CSSProperties={marginLeft:'auto',padding:'5px 9px',borderRadius:12,fontSize:11,fontWeight:800};
-const label:React.CSSProperties={display:'grid',gap:5,fontSize:12,fontWeight:700};
-const control:React.CSSProperties={height:38,border:'1px solid #cbd5e1',borderRadius:6,padding:'7px 9px',background:'#fff'};
-const secondary:React.CSSProperties={height:38,border:'1px solid #cbd5e1',borderRadius:6,padding:'7px 12px',background:'#fff',fontWeight:700,cursor:'pointer'};
+const label:React.CSSProperties={display:'grid',gap:5,fontSize:12,fontWeight:700,color:'var(--svc-text, inherit)'};
+const control:React.CSSProperties={height:38,border:'1px solid var(--svc-border, #cbd5e1)',borderRadius:6,padding:'7px 9px',background:'var(--svc-surface-2, #fff)',color:'var(--svc-text, inherit)'};
+const secondary:React.CSSProperties={height:38,border:'1px solid var(--svc-border, #cbd5e1)',borderRadius:6,padding:'7px 12px',background:'var(--svc-surface-3, #fff)',color:'var(--svc-text, inherit)',fontWeight:700,cursor:'pointer'};
 const primary:React.CSSProperties={...secondary,background:'#6d28d9',borderColor:'#6d28d9',color:'#fff'};
-const link:React.CSSProperties={border:0,background:'transparent',color:'#5b21b6',fontWeight:700,cursor:'pointer',textAlign:'left'};
-const ready:React.CSSProperties={display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:12,border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#166534',borderRadius:7,fontSize:12,fontWeight:800};
-const warning:React.CSSProperties={display:'grid',gap:4,padding:12,border:'1px solid #fde68a',background:'#fffbeb',color:'#92400e',borderRadius:7,fontSize:12};
-const backdrop:React.CSSProperties={position:'fixed',inset:0,zIndex:1500,background:'rgba(15,23,42,.45)',display:'grid',placeItems:'center',padding:20};
-const dialog:React.CSSProperties={width:'min(650px,95vw)',background:'#fff',borderRadius:10,padding:22,boxShadow:'0 24px 60px rgba(15,23,42,.3)'};
+const link:React.CSSProperties={border:0,background:'transparent',color:'var(--svc-accent, #5b21b6)',fontWeight:700,cursor:'pointer',textAlign:'left'};
+const ready:React.CSSProperties={display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:12,border:'1px solid var(--svc-success-border, #bbf7d0)',background:'var(--svc-success-bg, #f0fdf4)',color:'var(--svc-success-text, #166534)',borderRadius:7,fontSize:12,fontWeight:800};
+const warning:React.CSSProperties={display:'grid',gap:4,padding:12,border:'1px solid var(--svc-warning-border, #fde68a)',background:'var(--svc-warning-bg, #fffbeb)',color:'var(--svc-warning-text, #92400e)',borderRadius:7,fontSize:12};
+const backdrop:React.CSSProperties={position:'fixed',inset:0,zIndex:1500,background:'rgba(15,23,42,.6)',display:'grid',placeItems:'center',padding:20};
+const dialog:React.CSSProperties={width:'min(650px,95vw)',background:'var(--svc-surface, #fff)',color:'var(--svc-text, inherit)',borderRadius:10,padding:22,boxShadow:'0 24px 60px rgba(15,23,42,.3)'};
 const formGrid:React.CSSProperties={display:'grid',gridTemplateColumns:'1fr 1fr',gap:12};

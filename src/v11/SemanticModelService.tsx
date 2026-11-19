@@ -12,19 +12,242 @@ type Connection={id:string;name:string;source_type:string;connection_config?:any
 type Gateway={id:string;name:string;status:string;last_heartbeat?:string;version?:string;execution_mode?:'service_network'|'on_premises_agent';description?:string;region?:string;allow_cloud_sources?:boolean};
 type Parameter={name:string;data_type?:string;current_value?:any;default_value?:any;allowed_values?:any[]};
 type Runtime={workspace_id:string;source_manifest?:any;connections:Connection[];gateways:Gateway[];schedule?:any;parameters:Parameter[];readiness?:{refresh_ready:boolean;required_tables:string[];mapped_tables:string[];missing_tables:string[];tested_connection_count:number;blockers:string[]}};
-type Props={workspace:Workspace;reports:WorkspaceReport[];onOpenReport:(r:WorkspaceReport)=>void;onReportSettings:(r:WorkspaceReport)=>void;onShareReport:(r:WorkspaceReport)=>void;onDeleteReport:(r:WorkspaceReport)=>void;onRefresh:(m:SemanticModelAsset)=>void;onNewItem?:()=>void;otherWorkspaces?:Array<{id:string;name:string;report_count?:number}>;onSelectWorkspace?:(id:string)=>void};
+type Props={workspace:Workspace;reports:WorkspaceReport[];onOpenReport:(r:WorkspaceReport)=>void;onReportSettings:(r:WorkspaceReport)=>void;onShareReport:(r:WorkspaceReport)=>void;onDeleteReport:(r:WorkspaceReport)=>void;onRefresh:(m:SemanticModelAsset)=>void;onNewItem?:()=>void;otherWorkspaces?:Array<{id:string;name:string;report_count?:number}>;onSelectWorkspace?:(id:string)=>void;onRefreshSuccess?:()=>void};
 type View='model'|'settings'|'security'|'history';
 type Content={id:string;name:string;type:'Report'|'Paginated report'|'Unified Data Model';updated_at?:string;report?:WorkspaceReport;model?:SemanticModelAsset};
 const canManage=(role?:string)=>['Admin','Member','Contributor','Owner','Co-Owner'].includes(String(role||''));
 const canAccessSemanticModel=(role?:string)=>['Admin','Member','Contributor','Owner','Co-Owner'].includes(String(role||''));
-const when=(value?:string)=>value?new Date(value).toLocaleString():'—';
+const when=(value?:string)=>{if(!value)return '—';const d=new Date(value);return isNaN(d.getTime())?'—':d.toLocaleString()};
+const getTimestamp=(val?:string|number|null):number=>{if(!val)return 0;const t=new Date(val).getTime();return isNaN(t)?0:t};
+const formatModelName=(name?:string)=>(name||'').replace(/\bSemantic Model\b/gi,'Unified Data Model');
+const CLOUD_SOURCE_TYPES = new Set([
+  'google_sheets', 'rest', 'odata', 'graphql',
+  'sharepoint', 'onedrive', 'google_drive',
+  'azure_blob', 'adls_gen2', 's3', 'gcs',
+  'salesforce', 'dynamics365', 'servicenow', 'jira', 'github'
+]);
+const cleanSourceType = (value: any) => {
+  const key = String(value || '').toLowerCase();
+  if (key.includes('postgres')) return 'postgresql';
+  if (key.includes('sqlserver') || key.includes('sql_server') || key.includes('mssql')) return 'sqlserver';
+  if (key.includes('mysql')) return 'mysql';
+  if (key.includes('sheet')) return 'google_sheets';
+  return key || 'unknown';
+};
 
-export default function SemanticModelService({workspace,reports,onOpenReport,onReportSettings,onShareReport,onDeleteReport,onNewItem,otherWorkspaces,onSelectWorkspace}:Props){
-  const[models,setModels]=useState<SemanticModelAsset[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[selected,setSelected]=useState<SemanticModelAsset|null>(null),[view,setView]=useState<View>('model'),[search,setSearch]=useState(''),[menu,setMenu]=useState<string|null>(null),[readiness,setReadiness]=useState<Record<string,Runtime['readiness']>>({}),[pendingJobId,setPendingJobId]=useState('');
-  const load=async()=>{setBusy(true);setError('');try{if(workspace.access_scope==='report'){setModels([]);setReadiness({});return}if(!canAccessSemanticModel(workspace.role)){setModels([]);setReadiness({});return}const next=await api<SemanticModelAsset[]>(`/service/workspaces/${encodeURIComponent(workspace.id)}/semantic-models`);setModels(next);const runtimeRows=await Promise.all(next.map(async model=>{try{const[rt,binding]=await Promise.all([api<Runtime>(`/service/semantic-models/${model.id}/runtime`),api<any>(`/service/semantic-models/${model.id}/data-bridge`)]);const sources=(rt.source_manifest?.sources||[]).filter((s:any)=>!['managed_file','published_data','snapshot','file'].includes(String(s.type||'').toLowerCase()));const bridgeReady=!!sources.length&&binding?.bridge?.status==='online';const bridgeReadiness:NonNullable<Runtime['readiness']>={refresh_ready:bridgeReady,required_tables:rt.readiness?.required_tables||[],mapped_tables:rt.readiness?.mapped_tables||[],missing_tables:rt.readiness?.missing_tables||[],tested_connection_count:rt.readiness?.tested_connection_count||0,blockers:bridgeReady?[]:!sources.length?['Republish from the updated Desktop to include source identity.']:['Connect an online Desktop Data Bridge.']};return[model.id,bridgeReadiness]as const}catch{return[model.id,undefined]as const}}));setReadiness(Object.fromEntries(runtimeRows))}catch(e:any){setError(e?.message||String(e))}finally{setBusy(false)}};
+export default function SemanticModelService({workspace,reports,onOpenReport,onReportSettings,onShareReport,onDeleteReport,onNewItem,otherWorkspaces,onSelectWorkspace,onRefreshSuccess}:Props){
+  const[models,setModels]=useState<SemanticModelAsset[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[selected,setSelected]=useState<SemanticModelAsset|null>(null),[view,setView]=useState<View>('model'),[search,setSearch]=useState(''),[menu,setMenu]=useState<string|null>(null),[readiness,setReadiness]=useState<Record<string,Runtime['readiness']|'loading'>>({}),[pendingJobId,setPendingJobId]=useState(''),[sortColumn,setSortColumn]=useState<'name'|'status'|'type'|'refreshed'>('refreshed'),[sortDirection,setSortDirection]=useState<'asc'|'desc'>('desc');
+  const handleSort=(col:'name'|'status'|'type'|'refreshed')=>{
+    if(sortColumn===col){
+      setSortDirection(prev=>(prev==='asc'?'desc':'asc'));
+    }else{
+      setSortColumn(col);
+      setSortDirection(col==='refreshed'?'desc':'asc');
+    }
+  };
+  const load=async()=>{
+    setBusy(true);
+    setError('');
+    try{
+      if(workspace.access_scope==='report'){setModels([]);setReadiness({});return}
+      if(!canAccessSemanticModel(workspace.role)){setModels([]);setReadiness({});return}
+      const next=await api<SemanticModelAsset[]>(`/service/workspaces/${encodeURIComponent(workspace.id)}/semantic-models`);
+      setModels(next);
+      const initial: Record<string, 'loading'> = {};
+      next.forEach(m => { initial[m.id] = 'loading'; });
+      setReadiness(initial);
+      await Promise.all(next.map(async model=>{
+        try{
+          const[rt,binding]=await Promise.all([
+            api<Runtime>(`/service/semantic-models/${model.id}/runtime`),
+            api<any>(`/service/semantic-models/${model.id}/data-bridge`)
+          ]);
+          const sources=(rt.source_manifest?.sources||[]).filter((s:any)=>
+            !['managed_file','published_data','snapshot','file'].includes(cleanSourceType(s.type||s.sourceType))
+          );
+          const allCloud = sources.length > 0 && sources.every((s: any) =>
+            CLOUD_SOURCE_TYPES.has(cleanSourceType(s.type || s.sourceType))
+          );
+          const hasConnectedCloud = sources.length > 0 && sources.every((s: any) =>
+            CLOUD_SOURCE_TYPES.has(cleanSourceType(s.type || s.sourceType)) &&
+            (rt.connections || []).some((c: any) =>
+              ((c.name && c.name === s.name) || cleanSourceType(c.source_type) === cleanSourceType(s.type || s.sourceType)) &&
+              c.status === 'connected'
+            )
+          );
+          const bridgeReady = !!sources.length && binding?.bridge?.status === 'online';
+          const directReady = rt.readiness?.refresh_ready === true;
+          const isReady = directReady || (allCloud && hasConnectedCloud) || bridgeReady;
+
+          const blockers = isReady ? [] : (
+            !sources.length
+              ? ['Republish from the updated Desktop to include source identity.']
+              : allCloud
+              ? (rt.readiness?.blockers?.length ? rt.readiness.blockers : ['Configure and connect Google Sheets data source.'])
+              : bridgeReady
+              ? []
+              : ['Connect an online Desktop Data Bridge or configure a direct connection.']
+          );
+
+          const bridgeReadiness: NonNullable<Runtime['readiness']> = {
+            refresh_ready: isReady,
+            required_tables: rt.readiness?.required_tables || [],
+            mapped_tables: rt.readiness?.mapped_tables || [],
+            missing_tables: rt.readiness?.missing_tables || [],
+            tested_connection_count: rt.readiness?.tested_connection_count || (isReady ? 1 : 0),
+            blockers,
+          };
+          setReadiness(prev => ({ ...prev, [model.id]: bridgeReadiness }));
+        }catch{
+          setReadiness(prev => ({
+            ...prev,
+            [model.id]: {
+              refresh_ready: false,
+              required_tables: [],
+              mapped_tables: [],
+              missing_tables: [],
+              tested_connection_count: 0,
+              blockers: ['Failed to load status.']
+            }
+          }));
+        }
+      }));
+    }catch(e:any){
+      setError(e?.message||String(e));
+    }finally{
+      setBusy(false);
+    }
+  };
   useEffect(()=>{setSelected(null);setMenu(null);void load()},[workspace.id,workspace.role,workspace.access_scope]);
   useEffect(()=>{if(!menu)return;const dismiss=()=>setMenu(null);document.addEventListener('pointerdown',dismiss);return()=>document.removeEventListener('pointerdown',dismiss)},[menu]);
-  const items=useMemo(()=>{const reportMap=new Map<string,WorkspaceReport>();reports.forEach(r=>reportMap.set(r.itemKey||r.id,r));models.forEach(m=>(m.reports||[]).forEach(r=>{if(![...reportMap.values()].some(item=>item.id===r.id&&!item.paginatedId))reportMap.set(r.id,{...r,semantic_model_id:m.id})}));const modelById=new Map(models.map(m=>[m.id,m])),groups=new Map<string,WorkspaceReport[]>(),used=new Set<string>(),all:Content[]=[];[...reportMap.values()].forEach(report=>groups.set(report.id,[...(groups.get(report.id)||[]),report]));[...groups.values()].sort((a,b)=>(a.find(item=>!item.paginatedId)?.name||a[0]?.name||'').localeCompare(b.find(item=>!item.paginatedId)?.name||b[0]?.name||'')).forEach(group=>{const primary=group.find(item=>item.itemType!=='Paginated report'&&!item.paginatedId)||group[0];const ordered=[...group.filter(item=>item===primary),...group.filter(item=>item!==primary).sort((a,b)=>a.name.localeCompare(b.name))];ordered.forEach(report=>{const paginated=report.itemType==='Paginated report'||!!report.paginatedId;all.push({id:`report:${report.itemKey||report.id}`,name:report.name,type:paginated?'Paginated report':'Report',updated_at:report.updated_at||report.published_at,report})});const model=(primary.semantic_model_id&&modelById.get(primary.semantic_model_id))||models.find(m=>m.report_id===primary.id||(m.reports||[]).some(r=>r.id===primary.id));if(model&&!used.has(model.id)){all.push({id:`model:${model.id}`,name:model.name,type:'Unified Data Model',updated_at:model.updated_at,model});used.add(model.id)}});models.filter(m=>!used.has(m.id)).sort((a,b)=>a.name.localeCompare(b.name)).forEach(model=>all.push({id:`model:${model.id}`,name:model.name,type:'Unified Data Model',updated_at:model.updated_at,model}));const term=search.trim().toLowerCase();if(!term)return all;const matchingModelIds=new Set(models.filter(m=>m.name.toLowerCase().includes(term)||(m.reports||[]).some(r=>r.name.toLowerCase().includes(term))).map(m=>m.id));return all.filter(item=>item.name.toLowerCase().includes(term)||(item.report?.semantic_model_id&&matchingModelIds.has(item.report.semantic_model_id))||(item.model&&matchingModelIds.has(item.model.id)))},[reports,models,search]);
+  useEffect(()=>{if(reports.length>0){void load()}},[reports]);
+  const items=useMemo(()=>{
+    const reportMap=new Map<string,WorkspaceReport>();
+    reports.forEach(r=>reportMap.set(r.itemKey||r.id,r));
+    models.forEach(m=>(m.reports||[]).forEach(r=>{
+      if(![...reportMap.values()].some(item=>item.id===r.id&&!item.paginatedId))
+        reportMap.set(r.id,{...r,semantic_model_id:m.id});
+    }));
+
+    const modelById=new Map(models.map(m=>[m.id,m])),
+          groups=new Map<string,WorkspaceReport[]>(),
+          usedModelIds=new Set<string>();
+
+    [...reportMap.values()].forEach(report=>{
+      groups.set(report.id,[...(groups.get(report.id)||[]),report]);
+    });
+
+    type Cluster={
+      key:string;
+      name:string;
+      type:string;
+      latestTime:number;
+      items:Content[];
+    };
+    const clusters:Cluster[]=[];
+
+    [...groups.values()].forEach(group=>{
+      const primary=group.find(item=>item.itemType!=='Paginated report'&&!item.paginatedId)||group[0];
+      const ordered=[
+        ...group.filter(item=>item===primary),
+        ...group.filter(item=>item!==primary).sort((a,b)=>a.name.localeCompare(b.name))
+      ];
+      const clusterItems:Content[]=[];
+      let latestTime=0;
+
+      ordered.forEach(report=>{
+        const paginated=report.itemType==='Paginated report'||!!report.paginatedId;
+        const repTime=Math.max(getTimestamp(report.updated_at),getTimestamp(report.published_at));
+        if(repTime>latestTime)latestTime=repTime;
+        clusterItems.push({
+          id:`report:${report.itemKey||report.id}`,
+          name:report.name,
+          type:paginated?'Paginated report':'Report',
+          updated_at:report.updated_at||report.published_at,
+          report
+        });
+      });
+
+      const model=(primary.semantic_model_id&&modelById.get(primary.semantic_model_id))||
+        models.find(m=>m.report_id===primary.id||(m.reports||[]).some(r=>r.id===primary.id));
+
+      if(model&&!usedModelIds.has(model.id)){
+        const modTime=getTimestamp(model.updated_at);
+        if(modTime>latestTime)latestTime=modTime;
+        const formatted=formatModelName(model.name);
+        clusterItems.push({
+          id:`model:${model.id}`,
+          name:formatted,
+          type:'Unified Data Model',
+          updated_at:model.updated_at,
+          model:{...model,name:formatted}
+        });
+        usedModelIds.add(model.id);
+      }
+
+      clusters.push({
+        key:`report-group:${primary.id}`,
+        name:primary.name||'',
+        type:clusterItems[0]?.type||'Report',
+        latestTime,
+        items:clusterItems
+      });
+    });
+
+    models.filter(m=>!usedModelIds.has(m.id)).forEach(model=>{
+      const modTime=getTimestamp(model.updated_at);
+      const formatted=formatModelName(model.name);
+      clusters.push({
+        key:`model-standalone:${model.id}`,
+        name:formatted,
+        type:'Unified Data Model',
+        latestTime:modTime,
+        items:[{
+          id:`model:${model.id}`,
+          name:formatted,
+          type:'Unified Data Model',
+          updated_at:model.updated_at,
+          model:{...model,name:formatted}
+        }]
+      });
+    });
+
+    clusters.sort((a,b)=>{
+      if(sortColumn==='refreshed'){
+        if(b.latestTime!==a.latestTime){
+          return sortDirection==='desc'?b.latestTime-a.latestTime:a.latestTime-b.latestTime;
+        }
+        return a.name.localeCompare(b.name);
+      }
+      if(sortColumn==='name'){
+        const cmp=a.name.localeCompare(b.name);
+        return sortDirection==='asc'?cmp:-cmp;
+      }
+      if(sortColumn==='type'){
+        const cmp=a.type.localeCompare(b.type)||a.name.localeCompare(b.name);
+        return sortDirection==='asc'?cmp:-cmp;
+      }
+      if(sortColumn==='status'){
+        const cmp=a.name.localeCompare(b.name);
+        return sortDirection==='asc'?cmp:-cmp;
+      }
+      return 0;
+    });
+
+    const all:Content[]=[];
+    clusters.forEach(c=>all.push(...c.items));
+
+    const term=search.trim().toLowerCase();
+    if(!term)return all;
+    const matchingModelIds=new Set(
+      models.filter(m=>m.name.toLowerCase().includes(term)||(m.reports||[]).some(r=>r.name.toLowerCase().includes(term))).map(m=>m.id)
+    );
+    return all.filter(
+      item=>item.name.toLowerCase().includes(term)||
+      (item.report?.semantic_model_id&&matchingModelIds.has(item.report.semantic_model_id))||
+      (item.model&&matchingModelIds.has(item.model.id))
+    );
+  },[reports,models,search,sortColumn,sortDirection]);
   const open=async(m:SemanticModelAsset,next:View)=>{
     setMenu(null);
     setView(next);
@@ -54,7 +277,7 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
       setSelected(full);
     }catch(e:any){setError(e.message||String(e))}
   };
-  const refreshNow=async(m:SemanticModelAsset)=>{setMenu(null);const state=readiness[m.id];if(!state?.refresh_ready){setView('settings');setSelected(await api(`/service/semantic-models/${encodeURIComponent(m.id)}`));return}try{const result=await api<any>(`/service/semantic-models/${m.id}/bridge-refresh`,{method:'POST'});setPendingJobId(result.job_id||'');setView('history');setSelected(await api(`/service/semantic-models/${encodeURIComponent(m.id)}`))}catch(e:any){alert(e.message||String(e))}};
+  const refreshNow=async(m:SemanticModelAsset)=>{setMenu(null);const state=readiness[m.id];if(state==='loading'||!state?.refresh_ready){setView('settings');setSelected(await api(`/service/semantic-models/${encodeURIComponent(m.id)}`));return}try{const result=await api<any>(`/service/semantic-models/${m.id}/bridge-refresh`,{method:'POST'});setPendingJobId(result.job_id||'');setView('history');setSelected(await api(`/service/semantic-models/${encodeURIComponent(m.id)}`))}catch(e:any){alert(e.message||String(e))}};
   const removeModel=async(m:SemanticModelAsset)=>{setMenu(null);if(!confirm(`Delete Unified Data Model "${m.name}"? Connected reports keep their last published snapshot, but refresh will stop.`))return;try{await api(`/service/semantic-models/${m.id}`,{method:'DELETE'});await load()}catch(e:any){alert(e.message||String(e))}};
   return (
     <div>
@@ -90,11 +313,27 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
           <thead>
             <tr>
               <th style={{width:36,paddingLeft:28}}><input type="checkbox" style={{cursor:'pointer'}}/></th>
-              <th>Name</th>
-              <th>Status</th>
-              <th>Type</th>
+              <th onClick={()=>handleSort('name')} style={{cursor:'pointer',userSelect:'none',whiteSpace:'nowrap'}} title="Sort by Name">
+                <span style={{display:'inline-flex',alignItems:'center',gap:4}}>
+                  Name {sortColumn==='name'&&<span style={{fontSize:10,color:'#0d6257'}}>{sortDirection==='asc'?'▲':'▼'}</span>}
+                </span>
+              </th>
+              <th onClick={()=>handleSort('status')} style={{cursor:'pointer',userSelect:'none',whiteSpace:'nowrap'}} title="Sort by Status">
+                <span style={{display:'inline-flex',alignItems:'center',gap:4}}>
+                  Status {sortColumn==='status'&&<span style={{fontSize:10,color:'#0d6257'}}>{sortDirection==='asc'?'▲':'▼'}</span>}
+                </span>
+              </th>
+              <th onClick={()=>handleSort('type')} style={{cursor:'pointer',userSelect:'none',whiteSpace:'nowrap'}} title="Sort by Type">
+                <span style={{display:'inline-flex',alignItems:'center',gap:4}}>
+                  Type {sortColumn==='type'&&<span style={{fontSize:10,color:'#0d6257'}}>{sortDirection==='asc'?'▲':'▼'}</span>}
+                </span>
+              </th>
               <th>Owner</th>
-              <th>Refreshed</th>
+              <th onClick={()=>handleSort('refreshed')} style={{cursor:'pointer',userSelect:'none',whiteSpace:'nowrap'}} title="Sort by Refreshed (Newest first)">
+                <span style={{display:'inline-flex',alignItems:'center',gap:4}}>
+                  Refreshed {sortColumn==='refreshed'&&<span style={{fontSize:10,color:'#0d6257'}}>{sortDirection==='asc'?'▲':'▼'}</span>}
+                </span>
+              </th>
               <th>Access</th>
               <th style={{width:48}}></th>
             </tr>
@@ -102,7 +341,9 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
           <tbody>
             {items.map(item=>{
               const paginated=item.type==='Paginated report';
-              const isReady=item.model?readiness[item.model.id]?.refresh_ready:true;
+              const modelState=item.model?readiness[item.model.id]:undefined;
+              const isLoading=item.model?(!modelState||modelState==='loading'):false;
+              const isReady=item.model?(modelState&&modelState!=='loading'&&modelState.refresh_ready===true):true;
               return (
                 <tr key={item.id} style={{cursor:'pointer'}} onClick={()=>item.report?onOpenReport(item.report):item.model&&canAccessSemanticModel(workspace.role)&&void open(item.model,'model')}>
                   <td style={{paddingLeft:28}} onClick={e=>e.stopPropagation()}>
@@ -125,9 +366,10 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                       )}
                       {item.model && (
                         <button
-                          title="Refresh Now"
+                          title={isLoading ? 'Checking readiness...' : 'Refresh Now'}
+                          disabled={isLoading}
                           onClick={e=>{e.stopPropagation();void refreshNow(item.model!)}}
-                          style={{border:'none',background:'transparent',cursor:'pointer',color:'#616161',padding:2,display:'grid',placeItems:'center',marginLeft:4}}
+                          style={{border:'none',background:'transparent',cursor:isLoading?'wait':'pointer',color:'#616161',padding:2,display:'grid',placeItems:'center',marginLeft:4,opacity:isLoading?0.45:1}}
                         >
                           <RefreshCw size={13}/>
                         </button>
@@ -135,9 +377,26 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                     </div>
                   </td>
                   <td>
-                    <span className="pbi-model-status" data-status={item.model ? (isReady ? 'ready' : 'setup') : 'active'} style={{color:isReady?'#166534':'#b45309',fontWeight:600,fontSize:12}}>
-                      {item.model?(isReady?'Ready':'Setup required'):'Active'}
-                    </span>
+                    {item.model ? (
+                      isLoading ? (
+                        <span className="pbi-model-status" data-status="loading" style={{display:'inline-flex',alignItems:'center',gap:6,color:'#64748b',fontWeight:500,fontSize:12}}>
+                          <span className="vtab-status-dots">
+                            <span className="vtab-status-dot"/>
+                            <span className="vtab-status-dot"/>
+                            <span className="vtab-status-dot"/>
+                          </span>
+                          <span style={{fontSize:11}}>Checking...</span>
+                        </span>
+                      ) : (
+                        <span className="pbi-model-status" data-status={isReady ? 'ready' : 'setup'} style={{color:isReady?'#166534':'#b45309',fontWeight:600,fontSize:12}}>
+                          {isReady ? 'Ready' : 'Setup required'}
+                        </span>
+                      )
+                    ) : (
+                      <span className="pbi-model-status" data-status="active" style={{color:'#166534',fontWeight:600,fontSize:12}}>
+                        Active
+                      </span>
+                    )}
                   </td>
                   <td style={{color:'#616161'}}>{item.type}</td>
                   <td style={{color:'#616161'}}>{workspace.name}</td>
@@ -167,7 +426,7 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
                     {menu===item.id&&item.model&&canAccessSemanticModel(workspace.role)&&(
                       <div className="pbi-table-row-menu" style={menuStyle}>
                         <Menu label="Open Unified Data Model" onClick={()=>void open(item.model!,'model')}/>
-                        <Menu label="Refresh now" disabled={!readiness[item.model.id]?.refresh_ready} title={readiness[item.model.id]?.blockers?.join(' ')||''} onClick={()=>void refreshNow(item.model!)}/>
+                        <Menu label="Refresh now" disabled={isLoading || !isReady} title={isLoading ? 'Checking readiness...' : ((modelState && modelState !== 'loading' && modelState.blockers?.join(' ')) || '')} onClick={()=>void refreshNow(item.model!)}/>
                         <Menu label="Refresh history" onClick={()=>void open(item.model!,'history')}/>
                         <Menu label="Security" onClick={()=>void open(item.model!,'security')}/>
                         <Menu label="Settings" onClick={()=>void open(item.model!,'settings')}/>
@@ -232,8 +491,9 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
             role={workspace.role}
             workspaceName={workspace.name}
             pendingJobId={pendingJobId}
-            onPendingCleared={()=>{setPendingJobId('');void load()}}
+            onPendingCleared={()=>{setPendingJobId('');void load();onRefreshSuccess?.()}}
             onClose={()=>{setSelected(null);setPendingJobId('')}}
+            onRefreshSuccess={()=>{void load();onRefreshSuccess?.()}}
           />
         )
       )}
@@ -241,13 +501,13 @@ export default function SemanticModelService({workspace,reports,onOpenReport,onR
   );
 }
 
-function SemanticModelDialog({model,initialView,role,workspaceName,pendingJobId,onPendingCleared,onClose}:{model:SemanticModelAsset;initialView:View;role:string;workspaceName:string;pendingJobId:string;onPendingCleared:()=>void;onClose:()=>void}){
+function SemanticModelDialog({model,initialView,role,workspaceName,pendingJobId,onPendingCleared,onClose,onRefreshSuccess}:{model:SemanticModelAsset;initialView:View;role:string;workspaceName:string;pendingJobId:string;onPendingCleared:()=>void;onClose:()=>void;onRefreshSuccess?:()=>void}){
   const[view,setView]=useState<View>(initialView),[runtime,setRuntime]=useState<Runtime|null>(null),[history,setHistory]=useState<any[]>([]),[refreshStatus,setRefreshStatus]=useState<any>(pendingJobId?{status:'queued',message:'Refresh request accepted. Waiting for a worker.'}:null),[error,setError]=useState(''),[loading,setLoading]=useState(false);const d=model.definition||{},tables=d.tables||{},relationships=d.relationships||[],measures=d.measures||{},hierarchies=d.hierarchies||[];
   const loadRuntime=async()=>{setLoading(true);setError('');try{setRuntime(await api(`/service/semantic-models/${model.id}/runtime`))}catch(e:any){setError(e.message||String(e))}finally{setLoading(false)}};const loadHistory=async()=>{setLoading(true);setError('');try{setHistory(await api(`/service/semantic-models/${model.id}/bridge-refresh-history`))}catch(e:any){setError(e.message||String(e))}finally{setLoading(false)}};
   useEffect(()=>{if(view==='settings')void loadRuntime();if(view==='history')void loadHistory()},[view,model.id]);
-  useEffect(()=>{if(!pendingJobId)return;let cancelled=false,timer:any;const poll=async()=>{try{const status=await api<any>(`/service/semantic-models/${model.id}/bridge-refresh/${pendingJobId}`);if(cancelled)return;setRefreshStatus({...status,message:status.error_message||''});await loadHistory();if(['succeeded','failed'].includes(String(status.status).toLowerCase())){onPendingCleared();return}timer=setTimeout(poll,2000)}catch(e:any){if(!cancelled){setRefreshStatus({status:'failed',message:e.message||String(e)});onPendingCleared()}}};void poll();return()=>{cancelled=true;if(timer)clearTimeout(timer)}},[pendingJobId,model.id]);
+  useEffect(()=>{if(!pendingJobId)return;let cancelled=false,timer:any;const poll=async()=>{try{const status=await api<any>(`/service/semantic-models/${model.id}/bridge-refresh/${pendingJobId}`);if(cancelled)return;setRefreshStatus({...status,message:status.error_message||''});await loadHistory();if(['succeeded','failed'].includes(String(status.status).toLowerCase())){if(String(status.status).toLowerCase()==='succeeded'){onRefreshSuccess?.()}onPendingCleared();return}timer=setTimeout(poll,2000)}catch(e:any){if(!cancelled){setRefreshStatus({status:'failed',message:e.message||String(e)});onPendingCleared()}}};void poll();return()=>{cancelled=true;if(timer)clearTimeout(timer)}},[pendingJobId,model.id]);
   const navItems:Array<[View,string,string]>=[['model','Overview','Tables, measures and reports'],['settings','Connections & refresh','Sources, bridge and schedule'],['security','Security','Roles, users and groups'],['history','Refresh history','Runs, status and errors']];
-  return <div style={backdrop} onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section style={dialog} onMouseDown={e=>e.stopPropagation()}><header style={modelHeader}><div style={modelGlyph}>⠿</div><div style={{minWidth:0}}><small style={modelKicker}>UNIFIED DATA MODEL</small><h2 style={{margin:'2px 0 3px',fontSize:20,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{model.name}</h2><span style={modelMeta}>{workspaceName} · Updated {when(model.updated_at)} · {role}</span></div><span style={modelStatus}>{model.status||'Published'}</span><button aria-label="Close Unified Data Model" onClick={onClose} style={close}>×</button></header><div style={modelShell}><nav style={modelNav}>{navItems.map(([id,label,description])=><button key={id} onClick={()=>setView(id)} style={modelNavButton(view===id)}><b>{label}</b><small>{description}</small></button>)}</nav><main style={modelMain}>{refreshStatus&&<div style={['failed','cancelled'].includes(String(refreshStatus.status).toLowerCase())?errorStyle:successStyle}><b>{statusLabel(refreshStatus.status)}</b>{refreshStatus.message&&<span> · {refreshStatus.message}</span>}</div>}{error&&<div style={errorStyle}>{error}</div>}{loading&&<p style={hint}>Loading…</p>}{view==='model'&&<><div style={overviewHero}><div><small style={modelKicker}>MODEL OVERVIEW</small><h2 style={{margin:'5px 0'}}>Published Unified Data Model definition</h2><p style={hint}>Review the governed model used by connected reports. Structural changes are made in Desktop and applied here on the next publish.</p></div><div style={governedBadge}>✓ Governed</div></div><Stats values={[[Object.keys(tables).length,'Tables'],[Object.keys(measures).length,'Measures'],[relationships.length,'Relationships'],[model.reports?.length||0,'Reports']]}/><div style={overviewGrid}><section style={overviewCard}><h3 style={{marginTop:0}}>Tables</h3>{Object.entries<any>(tables).map(([name,value])=><details key={name} style={row}><summary><b>{name}</b> · {Object.keys(value?.columns||{}).length} columns</summary><div>{Object.keys(value?.columns||{}).map(c=><span key={c} style={chip}>{c}</span>)}</div></details>)}{!Object.keys(tables).length&&<Empty text="No published tables."/>}</section><section style={overviewCard}><h3 style={{marginTop:0}}>Measures & model</h3>{Object.keys(measures).map(m=><span key={m} style={chip}>{m}</span>)}{!Object.keys(measures).length&&<Empty text="No published measures."/>}<div style={modelFacts}><span><b>{relationships.length}</b> relationships</span><span><b>{hierarchies.length}</b> hierarchies</span><span><b>{model.reports?.length||0}</b> connected reports</span></div></section></div></>}{view==='settings'&&runtime&&<Settings model={model} runtime={runtime} role={role} tables={Object.keys(tables)} onReload={loadRuntime}/>} {view==='security'&&<RlsSecurityPanel modelId={model.id}/>} {view==='history'&&!loading&&<History rows={history}/>}</main></div></section></div>;
+  return <div className="pbi-semantic-backdrop" style={backdrop} onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="pbi-semantic-dialog" style={dialog} onMouseDown={e=>e.stopPropagation()}><header className="pbi-semantic-header" style={modelHeader}><div className="pbi-semantic-glyph" style={modelGlyph}>⠿</div><div style={{minWidth:0}}><small className="pbi-semantic-kicker" style={modelKicker}>UNIFIED DATA MODEL</small><h2 className="pbi-semantic-title" style={{margin:'2px 0 2px',fontSize:17,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{formatModelName(model.name)}</h2><span className="pbi-semantic-meta" style={modelMeta}>{workspaceName} · Updated {when(model.updated_at)} · {role}</span></div><span className="pbi-semantic-status" style={modelStatus}>{model.status||'Published'}</span><button className="pbi-semantic-close" aria-label="Close Unified Data Model" onClick={onClose} style={close}>×</button></header><div className="pbi-semantic-shell" style={modelShell}><nav className="pbi-semantic-nav" style={modelNav}>{navItems.map(([id,label,description])=><button key={id} className={`pbi-semantic-nav-btn ${view===id?'active':''}`} data-active={view===id} onClick={()=>setView(id)} style={modelNavButton(view===id)}><b>{label}</b><small>{description}</small></button>)}</nav><main className="pbi-semantic-main" style={modelMain}>{refreshStatus&&<div style={['failed','cancelled'].includes(String(refreshStatus.status).toLowerCase())?errorStyle:successStyle}><b>{statusLabel(refreshStatus.status)}</b>{refreshStatus.message&&<span> · {refreshStatus.message}</span>}</div>}{error&&<div style={errorStyle}>{error}</div>}{loading&&<p style={hint}>Loading…</p>}{view==='model'&&<><div className="pbi-overview-hero" style={overviewHero}><div><small className="pbi-semantic-kicker" style={modelKicker}>MODEL OVERVIEW</small><h2 style={{margin:'5px 0'}}>Published Unified Data Model definition</h2><p style={hint}>Review the governed model used by connected reports. Structural changes are made in Desktop and applied here on the next publish.</p></div><div className="pbi-governed-badge" style={governedBadge}>✓ Governed</div></div><div className="pbi-overview-stats"><Stats values={[[Object.keys(tables).length,'Tables'],[Object.keys(measures).length,'Measures'],[relationships.length,'Relationships'],[model.reports?.length||0,'Reports']]}/></div><div style={overviewGrid}><section className="pbi-overview-card" style={overviewCard}><h3 style={{marginTop:0}}>Tables</h3>{Object.entries<any>(tables).map(([name,value])=><details key={name} className="pbi-overview-row" style={row}><summary><b>{name}</b> · {Object.keys(value?.columns||{}).length} columns</summary><div>{Object.keys(value?.columns||{}).map(c=><span key={c} className="pbi-overview-chip" style={chip}>{c}</span>)}</div></details>)}{!Object.keys(tables).length&&<Empty text="No published tables."/>}</section><section className="pbi-overview-card" style={overviewCard}><h3 style={{marginTop:0}}>Measures & model</h3>{Object.keys(measures).map(m=><span key={m} className="pbi-overview-chip" style={chip}>{m}</span>)}{!Object.keys(measures).length&&<Empty text="No published measures."/>}<div className="pbi-overview-facts" style={modelFacts}><span><b>{relationships.length}</b> relationships</span><span><b>{hierarchies.length}</b> hierarchies</span><span><b>{model.reports?.length||0}</b> connected reports</span></div></section></div></>}{view==='settings'&&runtime&&<Settings model={model} runtime={runtime} role={role} tables={Object.keys(tables)} onReload={async()=>{await loadRuntime();onRefreshSuccess?.()}}/>} {view==='security'&&<RlsSecurityPanel modelId={model.id}/>} {view==='history'&&!loading&&<History rows={history}/>}</main></div></section></div>;
 }
 
 function Settings({model,runtime,role,onReload}:{model:SemanticModelAsset;runtime:Runtime;role:string;tables:string[];onReload:()=>Promise<void>}){
@@ -286,9 +546,9 @@ function Empty({text}:{text:string}){return <div style={{padding:12,border:'1px 
 function Menu({label,onClick,danger=false,disabled=false,title=''}:{label:string;onClick:()=>void;danger?:boolean;disabled?:boolean;title?:string}){return <button title={title} disabled={disabled} onClick={onClick} style={{display:'block',width:'100%',border:0,background:'transparent',padding:'9px 11px',textAlign:'left',cursor:disabled?'not-allowed':'pointer',fontSize:13,color:disabled?'#9ca3af':danger?'#b91c1c':'var(--pbi-text, #202124)'}}>{label}</button>}
 function Divider(){return <div style={{height:1,background:'#e5e7eb',margin:'4px 0'}}/>} function Stats({values}:{values:Array<[number,string]>}){return <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:22}}>{values.map(([v,l])=><div key={l} style={{padding:14,border:'1px solid #e5e7eb',borderRadius:8}}><b style={{fontSize:22,display:'block'}}>{v}</b><small>{l}</small></div>)}</div>}
 const sourceLabel=(v?:string)=>({sqlserver:'SQL Server',postgresql:'PostgreSQL',mysql:'MySQL',mariadb:'MariaDB',rest:'REST API',managed_file:'Published Data',google_sheets:'Google Sheets'} as any)[v||'']||v||'Unknown';const statusLabel=(v?:string)=>String(v||'not_configured').split('_').map(x=>x[0]?.toUpperCase()+x.slice(1)).join(' ');const sourceAccess=(c:Connection)=>c.source_type==='managed_file'?'Snapshot':!c.id?'Not Configured':c.gateway_id?'Gateway':'Direct';
-const control:React.CSSProperties={border:'1px solid #cbd5e1',borderRadius:7,padding:'8px 10px',background:'#fff',fontSize:13};const secondary:React.CSSProperties={border:'1px solid #cbd5e1',borderRadius:7,padding:'8px 11px',background:'#fff',cursor:'pointer',fontWeight:650};const primary:React.CSSProperties={...secondary,background:'#6d28d9',borderColor:'#6d28d9',color:'#fff'};const errorStyle:React.CSSProperties={padding:12,marginBottom:12,border:'1px solid #fecaca',background:'#fef2f2',color:'#991b1b',borderRadius:8,fontSize:13};const successStyle:React.CSSProperties={padding:12,marginBottom:12,border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#166534',borderRadius:8,fontSize:13};const warningStyle:React.CSSProperties={padding:12,marginBottom:12,border:'1px solid #fde68a',background:'#fffbeb',color:'#92400e',borderRadius:8,fontSize:13};
-const gridHeader:React.CSSProperties={display:'grid',gridTemplateColumns:'minmax(280px,1fr) 110px 150px 120px 180px 50px',padding:'11px 16px',borderBottom:'1px solid #e5e7eb',fontSize:11,fontWeight:800,color:'#64748b'};const gridRow:React.CSSProperties={position:'relative',display:'grid',gridTemplateColumns:'minmax(280px,1fr) 110px 150px 120px 180px 50px',padding:'12px 16px',borderBottom:'1px solid #f1f5f9',alignItems:'center',fontSize:13,color:'#475569'};const nameButton:React.CSSProperties={display:'flex',alignItems:'center',gap:10,border:0,background:'transparent',textAlign:'left',cursor:'pointer',padding:0,color:'#111827'};const reportIcon:React.CSSProperties={width:28,height:28,border:'1px solid #d1d5db',borderRadius:5,display:'grid',placeItems:'center',color:'#d97706',background:'#fffbeb'};const modelIcon:React.CSSProperties={...reportIcon,color:'#7c3aed',background:'#f5f3ff'};const moreButton:React.CSSProperties={width:34,height:30,border:'none',background:'transparent',fontSize:22,cursor:'pointer'};const menuStyle:React.CSSProperties={position:'absolute',right:0,top:34,zIndex:20,width:220,background:'#fff',border:'1px solid #d1d5db',borderRadius:7,padding:5,boxShadow:'0 10px 28px #0003'};
+const control:React.CSSProperties={border:'1px solid var(--svc-border, #cbd5e1)',borderRadius:7,padding:'8px 10px',background:'var(--svc-surface-2, #fff)',color:'var(--svc-text, inherit)',fontSize:13};const secondary:React.CSSProperties={border:'1px solid var(--svc-border, #cbd5e1)',borderRadius:7,padding:'8px 11px',background:'var(--svc-surface-3, #fff)',color:'var(--svc-text, inherit)',cursor:'pointer',fontWeight:650};const primary:React.CSSProperties={...secondary,background:'#6d28d9',borderColor:'#6d28d9',color:'#fff'};const errorStyle:React.CSSProperties={padding:12,marginBottom:12,border:'1px solid #fecaca',background:'#fef2f2',color:'#991b1b',borderRadius:8,fontSize:13};const successStyle:React.CSSProperties={padding:12,marginBottom:12,border:'1px solid #bbf7d0',background:'#f0fdf4',color:'#166534',borderRadius:8,fontSize:13};const warningStyle:React.CSSProperties={padding:12,marginBottom:12,border:'1px solid #fde68a',background:'#fffbeb',color:'#92400e',borderRadius:8,fontSize:13};
+const gridHeader:React.CSSProperties={display:'grid',gridTemplateColumns:'minmax(280px,1fr) 110px 150px 120px 180px 50px',padding:'11px 16px',borderBottom:'1px solid var(--svc-border, #e5e7eb)',fontSize:11,fontWeight:800,color:'var(--svc-muted, #64748b)'};const gridRow:React.CSSProperties={position:'relative',display:'grid',gridTemplateColumns:'minmax(280px,1fr) 110px 150px 120px 180px 50px',padding:'12px 16px',borderBottom:'1px solid var(--svc-border-soft, #f1f5f9)',alignItems:'center',fontSize:13,color:'var(--svc-text, #475569)'};const nameButton:React.CSSProperties={display:'flex',alignItems:'center',gap:10,border:0,background:'transparent',textAlign:'left',cursor:'pointer',padding:0,color:'var(--svc-text, #111827)'};const reportIcon:React.CSSProperties={width:28,height:28,border:'1px solid #d1d5db',borderRadius:5,display:'grid',placeItems:'center',color:'#d97706',background:'#fffbeb'};const modelIcon:React.CSSProperties={...reportIcon,color:'#7c3aed',background:'#f5f3ff'};const moreButton:React.CSSProperties={width:34,height:30,border:'none',background:'transparent',fontSize:22,cursor:'pointer',color:'var(--svc-muted, inherit)'};const menuStyle:React.CSSProperties={position:'absolute',right:0,top:34,zIndex:20,width:220,background:'var(--svc-surface, #fff)',color:'var(--svc-text, inherit)',border:'1px solid var(--svc-border, #d1d5db)',borderRadius:7,padding:5,boxShadow:'0 10px 28px rgba(0,0,0,.3)'};
 const paginatedIcon:React.CSSProperties={...reportIcon,color:'#0369a1',background:'#f0f9ff'};
-const backdrop:React.CSSProperties={position:'fixed',inset:0,zIndex:1250,background:'rgba(15,23,42,.42)',display:'grid',placeItems:'center',padding:12};const dialog:React.CSSProperties={width:'min(1480px,98vw)',height:'min(940px,96vh)',background:'#fff',borderRadius:12,overflow:'hidden',display:'flex',flexDirection:'column'};const dialogHeader:React.CSSProperties={height:60,padding:'0 20px',display:'flex',alignItems:'center',borderBottom:'1px solid #e5e7eb'};const close:React.CSSProperties={border:0,background:'transparent',fontSize:24,cursor:'pointer'};const linkButton:React.CSSProperties={border:0,background:'transparent',padding:0,color:'#0f766e',textDecoration:'underline',cursor:'pointer',fontSize:12};const row:React.CSSProperties={border:'1px solid #e5e7eb',borderRadius:8,padding:13,marginBottom:9};const chip:React.CSSProperties={display:'inline-block',padding:'4px 8px',margin:3,borderRadius:12,background:'#f1f5f9',fontSize:11};const hint:React.CSSProperties={fontSize:12,color:'#64748b',lineHeight:1.55,margin:'3px 0'};const label:React.CSSProperties={display:'grid',gap:5,fontSize:12,fontWeight:700,marginBottom:12};const simpleTable:React.CSSProperties={display:'grid',gridTemplateColumns:'2fr 1.2fr 1.2fr 1.5fr',gap:10,alignItems:'center',padding:10,border:'1px solid #e5e7eb',borderRadius:8,fontSize:12};const gatewayTable:React.CSSProperties={...simpleTable,gridTemplateColumns:'1.5fr 1.2fr .8fr 1.2fr .6fr'};const sourceTable:React.CSSProperties={...simpleTable,gridTemplateColumns:'1.7fr 1fr 1fr 1fr 1.3fr'};const historyTable:React.CSSProperties={...simpleTable,gridTemplateColumns:'1.4fr .8fr .8fr 2fr'};const mappingRow:React.CSSProperties={display:'grid',gridTemplateColumns:'1fr 30px 1fr',gap:8,padding:'8px 0',borderBottom:'1px solid #f1f5f9',fontSize:12};const mappingEdit:React.CSSProperties={display:'grid',gridTemplateColumns:'22px 160px 1fr',alignItems:'center',gap:8,marginBottom:8};const editor:React.CSSProperties={marginTop:16,padding:18,border:'1px solid #c4b5fd',borderRadius:10,background:'#fafaff'};const formGrid:React.CSSProperties={display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:'4px 16px'};const parameterRow:React.CSSProperties={display:'grid',gridTemplateColumns:'1fr 1.5fr',gap:14,alignItems:'center',padding:'8px 0',borderBottom:'1px solid #f1f5f9'};
-const guideStyle:React.CSSProperties={padding:14,marginBottom:14,border:'1px solid #bae6fd',background:'#f0f9ff',color:'#0c4a6e',borderRadius:9,fontSize:12,lineHeight:1.55};
-const modelHeader:React.CSSProperties={minHeight:82,padding:'12px 22px',display:'flex',alignItems:'center',gap:13,borderBottom:'1px solid #e2e8f0',background:'linear-gradient(135deg,#ffffff,#f8fafc)'};const modelGlyph:React.CSSProperties={width:42,height:42,display:'grid',placeItems:'center',borderRadius:11,background:'#ede9fe',color:'#6d28d9',fontSize:22,fontWeight:900};const modelKicker:React.CSSProperties={fontSize:9,fontWeight:900,letterSpacing:'1.35px',color:'#6d28d9'};const modelMeta:React.CSSProperties={display:'block',fontSize:11,color:'#64748b'};const modelStatus:React.CSSProperties={marginLeft:'auto',padding:'6px 10px',borderRadius:999,background:'#dcfce7',color:'#166534',fontSize:10,fontWeight:800,textTransform:'capitalize'};const modelShell:React.CSSProperties={display:'grid',gridTemplateColumns:'250px minmax(0,1fr)',flex:1,minHeight:0};const modelNav:React.CSSProperties={padding:16,background:'#f8fafc',borderRight:'1px solid #e2e8f0',display:'flex',flexDirection:'column',gap:6};const modelNavButton=(active:boolean):React.CSSProperties=>({display:'grid',gap:3,border:'1px solid '+(active?'#c4b5fd':'transparent'),borderRadius:9,borderLeft:`3px solid ${active?'#7c3aed':'transparent'}`,background:active?'#f5f3ff':'transparent',color:active?'#4c1d95':'#334155',padding:'12px 13px',textAlign:'left',cursor:'pointer'});const modelMain:React.CSSProperties={padding:28,overflow:'auto',minWidth:0,background:'#f8fafc'};const overviewHero:React.CSSProperties={display:'flex',justifyContent:'space-between',gap:16,alignItems:'flex-start',padding:18,marginBottom:16,border:'1px solid #e2e8f0',borderRadius:12,background:'#fff'};const governedBadge:React.CSSProperties={padding:'7px 10px',borderRadius:8,background:'#ecfdf5',border:'1px solid #bbf7d0',color:'#166534',fontSize:11,fontWeight:800};const overviewGrid:React.CSSProperties={display:'grid',gridTemplateColumns:'1.35fr 1fr',gap:14};const overviewCard:React.CSSProperties={padding:16,border:'1px solid #e2e8f0',borderRadius:11,background:'#fff'};const modelFacts:React.CSSProperties={display:'grid',gap:8,marginTop:16,paddingTop:14,borderTop:'1px solid #e2e8f0',fontSize:12,color:'#475569'};
+const backdrop:React.CSSProperties={position:'fixed',inset:0,zIndex:1250,background:'rgba(15,23,42,.65)',display:'grid',placeItems:'center',padding:'24px 16px'};const dialog:React.CSSProperties={width:'min(1080px,90vw)',height:'min(680px,85vh)',background:'var(--svc-surface, #fff)',color:'var(--svc-text, inherit)',borderRadius:12,overflow:'hidden',display:'flex',flexDirection:'column',boxShadow:'0 24px 60px rgba(0,0,0,0.35)'};const dialogHeader:React.CSSProperties={height:60,padding:'0 20px',display:'flex',alignItems:'center',borderBottom:'1px solid var(--svc-border, #e5e7eb)'};const close:React.CSSProperties={border:0,background:'transparent',fontSize:24,cursor:'pointer',color:'var(--svc-muted, inherit)'};const linkButton:React.CSSProperties={border:0,background:'transparent',padding:0,color:'var(--svc-accent, #0f766e)',textDecoration:'underline',cursor:'pointer',fontSize:12};const row:React.CSSProperties={border:'1px solid var(--svc-border, #e5e7eb)',borderRadius:8,padding:13,marginBottom:9,background:'var(--svc-surface-2, transparent)'};const chip:React.CSSProperties={display:'inline-block',padding:'4px 8px',margin:3,borderRadius:12,background:'var(--svc-surface-3, #f1f5f9)',color:'var(--svc-text, inherit)',fontSize:11};const hint:React.CSSProperties={fontSize:12,color:'var(--svc-muted, #64748b)',lineHeight:1.55,margin:'3px 0'};const label:React.CSSProperties={display:'grid',gap:5,fontSize:12,fontWeight:700,marginBottom:12,color:'var(--svc-text, inherit)'};const simpleTable:React.CSSProperties={display:'grid',gridTemplateColumns:'2fr 1.2fr 1.2fr 1.5fr',gap:10,alignItems:'center',padding:10,border:'1px solid var(--svc-border, #e5e7eb)',borderRadius:8,fontSize:12,background:'var(--svc-surface, transparent)'};const gatewayTable:React.CSSProperties={...simpleTable,gridTemplateColumns:'1.5fr 1.2fr .8fr 1.2fr .6fr'};const sourceTable:React.CSSProperties={...simpleTable,gridTemplateColumns:'1.7fr 1fr 1fr 1fr 1.3fr'};const historyTable:React.CSSProperties={...simpleTable,gridTemplateColumns:'1.4fr .8fr .8fr 2fr'};const mappingRow:React.CSSProperties={display:'grid',gridTemplateColumns:'1fr 30px 1fr',gap:8,padding:'8px 0',borderBottom:'1px solid var(--svc-border-soft, #f1f5f9)',fontSize:12};const mappingEdit:React.CSSProperties={display:'grid',gridTemplateColumns:'22px 160px 1fr',alignItems:'center',gap:8,marginBottom:8};const editor:React.CSSProperties={marginTop:16,padding:18,border:'1px solid var(--svc-border, #c4b5fd)',borderRadius:10,background:'var(--svc-surface-2, #fafaff)'};const formGrid:React.CSSProperties={display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:'4px 16px'};const parameterRow:React.CSSProperties={display:'grid',gridTemplateColumns:'1fr 1.5fr',gap:14,alignItems:'center',padding:'8px 0',borderBottom:'1px solid var(--svc-border-soft, #f1f5f9)'};
+const guideStyle:React.CSSProperties={padding:14,marginBottom:14,border:'1px solid var(--svc-border, #bae6fd)',background:'var(--svc-surface-2, #f0f9ff)',color:'var(--svc-text, #0c4a6e)',borderRadius:9,fontSize:12,lineHeight:1.55};
+const modelHeader:React.CSSProperties={minHeight:62,padding:'10px 20px',display:'flex',alignItems:'center',gap:12,borderBottom:'1px solid var(--svc-border, #e2e8f0)',background:'var(--svc-header-gradient, linear-gradient(135deg,#ffffff,#f8fafc))'};const modelGlyph:React.CSSProperties={width:36,height:36,display:'grid',placeItems:'center',borderRadius:9,background:'var(--svc-glyph-bg, #ede9fe)',color:'var(--svc-glyph-color, #6d28d9)',fontSize:18,fontWeight:900};const modelKicker:React.CSSProperties={fontSize:9,fontWeight:800,letterSpacing:'1.2px',color:'var(--svc-kicker-color, #6d28d9)'};const modelMeta:React.CSSProperties={display:'block',fontSize:11,color:'var(--svc-muted, #64748b)'};const modelStatus:React.CSSProperties={marginLeft:'auto',padding:'5px 9px',borderRadius:999,background:'var(--svc-status-bg, #dcfce7)',color:'var(--svc-status-color, #166534)',fontSize:10,fontWeight:800,textTransform:'capitalize'};const modelShell:React.CSSProperties={display:'grid',gridTemplateColumns:'220px minmax(0,1fr)',flex:1,minHeight:0};const modelNav:React.CSSProperties={padding:'12px 10px',background:'var(--svc-surface, #f8fafc)',borderRight:'1px solid var(--svc-border, #e2e8f0)',display:'flex',flexDirection:'column',gap:4};const modelNavButton=(active:boolean):React.CSSProperties=>({display:'grid',gap:2,border:'1px solid '+(active?'var(--svc-nav-active-border, #c4b5fd)':'transparent'),borderRadius:8,borderLeft:`3px solid ${active?'var(--svc-nav-active-accent, #7c3aed)':'transparent'}`,background:active?'var(--svc-nav-active-bg, #f5f3ff)':'transparent',color:active?'var(--svc-nav-active-text, #4c1d95)':'var(--svc-text, #334155)',padding:'9px 11px',textAlign:'left',cursor:'pointer',fontSize:13});const modelMain:React.CSSProperties={padding:20,overflow:'auto',minWidth:0,background:'var(--svc-canvas, #f8fafc)',color:'var(--svc-text, inherit)'};const overviewHero:React.CSSProperties={display:'flex',justifyContent:'space-between',gap:16,alignItems:'flex-start',padding:18,marginBottom:16,border:'1px solid var(--svc-border, #e2e8f0)',borderRadius:12,background:'var(--svc-surface, #fff)',color:'var(--svc-text, inherit)'};const governedBadge:React.CSSProperties={padding:'7px 10px',borderRadius:8,background:'var(--svc-status-bg, #ecfdf5)',border:'1px solid var(--svc-status-border, #bbf7d0)',color:'var(--svc-status-color, #166534)',fontSize:11,fontWeight:800};const overviewGrid:React.CSSProperties={display:'grid',gridTemplateColumns:'1.35fr 1fr',gap:14};const overviewCard:React.CSSProperties={padding:16,border:'1px solid var(--svc-border, #e2e8f0)',borderRadius:11,background:'var(--svc-surface, #fff)',color:'var(--svc-text, inherit)'};const modelFacts:React.CSSProperties={display:'grid',gap:8,marginTop:16,paddingTop:14,borderTop:'1px solid var(--svc-border, #e2e8f0)',fontSize:12,color:'var(--svc-muted, #475569)'};

@@ -195,6 +195,11 @@ def execute_refresh(job: dict[str, Any], client=None) -> dict[str, Any]:
     client.table("published_reports").update({"project_json": json.dumps(project), "updated_at": utc_now()}).eq("id", report_id).execute()
     if semantic_model_id:
         client.table("semantic_models").update({"definition": project.get("model") or {}, "updated_at": utc_now()}).eq("id", semantic_model_id).execute()
+    try:
+        from .reporting_service import invalidate_report_cache
+        invalidate_report_cache(report_id)
+    except Exception as inv_err:
+        print(f"VTAB invalidate_report_cache error: {inv_err}", flush=True)
     return {"tables": refreshed, "rows": sum(item["rows"] for item in refreshed)}
 
 

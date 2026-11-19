@@ -12,20 +12,34 @@ class CredentialConfigurationError(RuntimeError):
 
 
 def _fernet():
-    secret = os.environ.get("VTAB_CREDENTIAL_ENCRYPTION_KEY", "").strip()
-    if not secret or secret.startswith("REPLACE_WITH_"):
+    keys: list[str] = []
+    primary = os.environ.get("VTAB_CREDENTIAL_ENCRYPTION_KEY", "").strip()
+    if primary and not primary.startswith("REPLACE_WITH_"):
+        if len(primary) < 32:
+            raise CredentialConfigurationError("VTAB_CREDENTIAL_ENCRYPTION_KEY must contain at least 32 characters.")
+        keys.append(primary)
+
+    # Server-only fallback: SUPABASE_SERVICE_ROLE_KEY is always present on the production backend
+    fallback = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    if fallback and not fallback.startswith("YOUR_") and len(fallback) >= 32 and fallback not in keys:
+        keys.append(fallback)
+
+    if not keys:
         raise CredentialConfigurationError(
             "VTAB_CREDENTIAL_ENCRYPTION_KEY is not configured on the Services API. "
             "Add a private random value of at least 32 characters before saving refresh credentials."
         )
-    if len(secret) < 32:
-        raise CredentialConfigurationError("VTAB_CREDENTIAL_ENCRYPTION_KEY must contain at least 32 characters.")
+
     try:
-        from cryptography.fernet import Fernet
+        from cryptography.fernet import Fernet, MultiFernet
     except ImportError as error:
         raise CredentialConfigurationError("The cryptography package is required for scheduled refresh.") from error
-    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
-    return Fernet(key)
+
+    fernets = [
+        Fernet(base64.urlsafe_b64encode(hashlib.sha256(k.encode("utf-8")).digest()))
+        for k in keys
+    ]
+    return MultiFernet(fernets) if len(fernets) > 1 else fernets[0]
 
 
 def encrypt_credentials(credentials: dict[str, Any]) -> str:

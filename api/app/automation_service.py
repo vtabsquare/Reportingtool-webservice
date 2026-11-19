@@ -57,10 +57,10 @@ def _managed_row(sb, table: str, item_id: str, user_id: str) -> dict:
     row = rows[0]
     if str(row.get("owner_id")) == user_id or is_admin_user(user_id):
         return row
-    membership = sb.table("workspace_members").select("role").eq("workspace_id", row.get("workspace_id")).eq("user_id", user_id).eq("role", "Admin").limit(1).execute().data or []
-    if not membership:
-        raise PermissionError("You cannot manage another user's automation.")
-    return row
+    members = sb.table("workspace_members").select("role").eq("workspace_id", row.get("workspace_id")).eq("user_id", user_id).execute().data or []
+    if any(m.get("role") in ("Admin", "Owner", "Co-Owner", "Contributor", "Member") for m in members):
+        return row
+    raise PermissionError("You cannot manage another user's automation.")
 
 
 def _schedule(payload: dict) -> tuple[str | None, str | None]:
@@ -116,7 +116,7 @@ def _recipient(sb, email: str, report_id: str, allow_external: bool) -> dict:
     return {"user_id": user_id, "email": value, "external": False}
 
 
-def list_subscriptions(user_id: str) -> list[dict]:
+def list_subscriptions(user_id: str, report_id: str | None = None) -> list[dict]:
     sb = _admin_client()
     owned = sb.table("report_subscriptions").select("*").eq("owner_id", user_id).order("updated_at", desc=True).execute().data or []
     memberships = sb.table("workspace_members").select("workspace_id").eq("user_id", user_id).eq("role", "Admin").execute().data or []
@@ -124,9 +124,34 @@ def list_subscriptions(user_id: str) -> list[dict]:
     if memberships:
         administered = sb.table("report_subscriptions").select("*").in_("workspace_id", [row["workspace_id"] for row in memberships]).order("updated_at", desc=True).execute().data or []
     by_id = {row["id"]: row for row in [*owned, *administered]}
+
+    # If scoped to a specific report, include all subscriptions on that report if user has access
+    if report_id:
+        try:
+            report_subs = sb.table("report_subscriptions").select("*").eq("report_id", report_id).order("updated_at", desc=True).execute().data or []
+            for r in report_subs:
+                by_id[r["id"]] = r
+        except Exception:
+            pass
+
+    # Enrich each subscription with the dashboard / report name
+    rep_ids = list({row.get("report_id") for row in by_id.values() if row.get("report_id")})
+    rep_names: dict[str, str] = {}
+    if rep_ids:
+        try:
+            r_rows = sb.table("published_reports").select("id, name").in_("id", rep_ids).execute().data or []
+            rep_names = {r["id"]: r.get("name") or "Report" for r in r_rows}
+        except Exception:
+            pass
+
     for item in by_id.values():
+        item["report_name"] = rep_names.get(item.get("report_id")) or "Report"
         item["recipients"] = sb.table("subscription_recipients").select("id,user_id,email,status").eq("subscription_id", item["id"]).execute().data or []
-    return sorted(by_id.values(), key=lambda row: row.get("updated_at") or "", reverse=True)
+
+    results = sorted(by_id.values(), key=lambda row: row.get("updated_at") or "", reverse=True)
+    if report_id:
+        return [row for row in results if str(row.get("report_id") or "") == str(report_id)]
+    return results
 
 
 def save_subscription(payload: dict, user_id: str, subscription_id: str | None = None) -> dict:
@@ -334,11 +359,97 @@ def test_subscription(subscription_id: str,user_id: str)->dict:
     sb=_admin_client();row=_managed_row(sb,"report_subscriptions",subscription_id,user_id);row={**row,"next_run":utc_now()};return execute_subscription(row,"test")
 
 
-def list_alerts(user_id:str)->list[dict]:
-    sb=_admin_client();owned=sb.table("alert_rules").select("*").eq("owner_id",user_id).order("updated_at",desc=True).execute().data or []
-    memberships=sb.table("workspace_members").select("workspace_id").eq("user_id",user_id).eq("role","Admin").execute().data or [];admin=[]
-    if memberships:admin=sb.table("alert_rules").select("*").in_("workspace_id",[row["workspace_id"] for row in memberships]).execute().data or []
-    return sorted({row["id"]:row for row in [*owned,*admin]}.values(),key=lambda row:row.get("updated_at") or "",reverse=True)
+def list_alerts(user_id: str, report_id: str | None = None) -> list[dict]:
+    sb = _admin_client()
+    owned = sb.table("alert_rules").select("*").eq("owner_id", user_id).order("updated_at", desc=True).execute().data or []
+    memberships = sb.table("workspace_members").select("workspace_id").eq("user_id", user_id).eq("role", "Admin").execute().data or []
+    admin = []
+    if memberships:
+        admin = sb.table("alert_rules").select("*").in_("workspace_id", [row["workspace_id"] for row in memberships]).execute().data or []
+    by_id = {row["id"]: row for row in [*owned, *admin]}
+
+    # If scoped to a specific report, include alerts on that report if user has access
+    if report_id:
+        try:
+            report_alerts = sb.table("alert_rules").select("*").eq("report_id", report_id).order("updated_at", desc=True).execute().data or []
+            for r in report_alerts:
+                by_id[r["id"]] = r
+        except Exception:
+            pass
+
+    # Enrich each alert with the dashboard / report name
+    rep_ids = list({row.get("report_id") for row in by_id.values() if row.get("report_id")})
+    rep_names: dict[str, str] = {}
+    if rep_ids:
+        try:
+            r_rows = sb.table("published_reports").select("id, name").in_("id", rep_ids).execute().data or []
+            rep_names = {r["id"]: r.get("name") or "Report" for r in r_rows}
+        except Exception:
+            pass
+
+    for item in by_id.values():
+        item["report_name"] = rep_names.get(item.get("report_id")) or "Report"
+
+    results = sorted(by_id.values(), key=lambda row: row.get("updated_at") or "", reverse=True)
+    if report_id:
+        return [row for row in results if str(row.get("report_id") or "") == str(report_id)]
+    return results
+
+
+def _is_valid_alert_measure(measure_name: str, project: dict) -> bool:
+    if not measure_name:
+        return False
+    model = project.get("model") or {}
+    measures = model.get("measures") or {}
+    if measure_name in measures:
+        return True
+    from .semantic_engine import resolve_measure_name, compile_query
+    if resolve_measure_name(measure_name, measures) is not None:
+        return True
+
+    tables = model.get("tables") or {}
+    clean_name = measure_name.split("::")[0].strip()
+    if "." in clean_name:
+        t_part, c_part = clean_name.split(".", 1)
+        t_part = t_part.strip().strip("'\"")
+        c_part = c_part.strip().strip("'\"")
+        for t_key, t_val in tables.items():
+            if t_key.lower() == t_part.lower():
+                cols = t_val.get("columns") or {}
+                col_names = list(cols.keys()) if isinstance(cols, dict) else list(cols)
+                if any(str(c).lower() == c_part.lower() for c in col_names):
+                    return True
+
+    for t_key, t_val in tables.items():
+        cols = t_val.get("columns") or {}
+        col_names = list(cols.keys()) if isinstance(cols, dict) else list(cols)
+        if any(str(c).lower() == clean_name.lower() for c in col_names):
+            return True
+
+    for page in (project.get("report") or {}).get("pages") or []:
+        for visual in page.get("visuals") or []:
+            b = visual.get("bindings") or {}
+            raw_candidates = [
+                *(b.get("values") if isinstance(b.get("values"), list) else []),
+                *(b.get("target") if isinstance(b.get("target"), list) else []),
+                *(b.get("measures") if isinstance(b.get("measures"), list) else []),
+                *(visual.get("measures") if isinstance(visual.get("measures"), list) else []),
+                *(visual.get("values") if isinstance(visual.get("values"), list) else []),
+                *(visual.get("fields") if isinstance(visual.get("fields"), list) else []),
+                visual.get("measure"),
+                visual.get("value"),
+                visual.get("field"),
+            ]
+            if any(str(cand or "").strip().lower() == measure_name.lower() for cand in raw_candidates if cand):
+                return True
+
+    try:
+        compile_query(model, {"dimensions": [], "measures": [measure_name], "filters": []})
+        return True
+    except Exception:
+        pass
+
+    return False
 
 
 def save_alert(payload:dict,user_id:str,alert_id:str|None=None)->dict:
@@ -350,7 +461,8 @@ def save_alert(payload:dict,user_id:str,alert_id:str|None=None)->dict:
     if isinstance(project,str):
         import json;project=json.loads(project or "{}")
     measure_name=str(payload.get("measure_name") or "").strip()
-    if measure_name not in ((project.get("model") or {}).get("measures") or {}):raise ValueError("Choose an existing semantic-model measure.")
+    if not _is_valid_alert_measure(measure_name, project):
+        raise ValueError("Choose an existing semantic-model measure or visual metric.")
     operator=str(payload.get("operator") or "gte");
     if operator not in OPERATORS:raise ValueError("Choose a supported comparison operator.")
     try:threshold=Decimal(str(payload.get("threshold")))
@@ -377,7 +489,16 @@ def evaluate_alert(rule:dict,trigger_type:str="interval")->dict:
         from .rls_runtime import resolve_published_rls_for_user
         resolved=resolve_published_rls_for_user(rule["report_id"],project,rule["owner_id"])
         rows,_=execute(project["model"],{"dimensions":[],"measures":[rule["measure_name"]],"filters":rule.get("filter_context") or [],"sort":[],"limit":1},resolved["rules"])
-        value=_numeric((rows[0] if rows else {}).get(rule["measure_name"]));threshold=_numeric(rule["threshold"]);met=OPERATORS[rule["operator"]](value,threshold)
+        row = rows[0] if rows else {}
+        raw_val = row.get(rule["measure_name"])
+        if raw_val is None and len(row) == 1:
+            raw_val = next(iter(row.values()))
+        if raw_val is None:
+            for k, v in row.items():
+                if k.lower() == str(rule["measure_name"]).lower():
+                    raw_val = v
+                    break
+        value=_numeric(raw_val);threshold=_numeric(rule["threshold"]);met=OPERATORS[rule["operator"]](value,threshold)
         if met:new_state="triggered" if previous in ("normal","recovered","error") else "sustained"
         else:new_state="recovered" if previous in ("triggered","sustained") else "normal"
         evaluation=(sb.table("alert_evaluations").insert({"alert_rule_id":rule["id"],"value":str(value),"previous_state":previous,"new_state":new_state,"condition_met":met,"data_context":{"trigger":trigger_type}}).execute().data or [])[0]

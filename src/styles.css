@@ -1076,7 +1076,8 @@ button,input,select,textarea,label{font-size:var(--ui-small)}
 [data-theme="vtab"] .steps{background:#f8fafc!important}.step{background:#fff!important;border-color:#d9e3ea!important;color:#263d51!important}
 
 /* Model — light canvas, white cards, blue links, green validation */
-[data-theme="vtab"] .modelCanvas,[data-theme="vtab"] .react-flow{background:#eef3f6!important}
+[data-theme="vtab"]:not([data-color-mode="dark"]) .modelCanvas,[data-theme="vtab"]:not([data-color-mode="dark"]) .react-flow{background:#eef3f6!important}
+html[data-color-mode="dark"] .modelCanvas,html[data-color-mode="dark"] .react-flow{background:#090d16!important}
 [data-theme="vtab"] .modelNode{background:#fff!important;color:#12283b!important;border-color:#bfd0dc!important;box-shadow:0 10px 26px rgba(20,50,80,.08)!important}
 [data-theme="vtab"] .modelNodeHead{background:#f1f6f9!important;border-color:#d6e2e8!important}.modelNodeHead b{color:#0c253a!important}
 [data-theme="vtab"] .modelField{color:#2b4358!important;border-color:#e0e8ed!important}

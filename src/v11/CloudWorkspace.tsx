@@ -54,7 +54,9 @@ const isPersonalReport = (report?: Report | null) =>
 
 const relativeTime = (d: string) => {
   if (!d) return '—';
-  const diff = Date.now() - new Date(d).getTime();
+  const t = new Date(d).getTime();
+  if (isNaN(t)) return '—';
+  const diff = Date.now() - t;
   const m = Math.floor(diff / 60000);
   if (m < 1) return 'just now';
   if (m < 60) return `${m}m ago`;
@@ -433,12 +435,26 @@ export default function CloudWorkspace({ session }: { session: any }) {
           <PublishedViewer 
             reportId={viewing.id} 
             userRole={viewing.role} 
-            initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project, role: viewing.role, workspace_id: viewing.workspace_id || viewingWorkspace?.id }} 
+            initialItem={{ id: viewing.id, name: viewing.name, published_at: viewing.published_at, updated_at: viewing.updated_at || viewing.published_at, project: viewing.project, role: viewing.role, workspace_id: viewing.workspace_id || viewingWorkspace?.id, semantic_model_id: viewing.semantic_model_id }} 
             embedded 
             cloudMode 
             initialPaginatedId={viewing.paginatedId}
             workspacePermissions={userUiPermissions}
-            onBack={() => { setViewing(null); setSharing(null); history.replaceState(null, '', location.pathname + '?workspace=1'); }}
+            onRefreshSuccess={() => {
+              if (activeWorkspace) {
+                void loadWorkspace(activeWorkspace.id, { silent: true });
+              }
+              void loadData();
+            }}
+            onBack={() => {
+              setViewing(null);
+              setSharing(null);
+              history.replaceState(null, '', location.pathname + '?workspace=1');
+              if (activeWorkspace) {
+                void loadWorkspace(activeWorkspace.id, { silent: true });
+              }
+              void loadData();
+            }}
             onManageAccess={userUiPermissions.can_share && (viewing.role === "Co-Owner" || viewing.role === "Owner" || viewing.role === "Admin") && !isPersonalReport(viewing) ? () => setSharing(viewing) : undefined}
           />
         </div>
@@ -1054,7 +1070,11 @@ export default function CloudWorkspace({ session }: { session: any }) {
                           )}
 
                           {visibleCols.refreshed && (
-                            <td style={{ color: '#616161' }}>{r.updated_at ? new Date(r.updated_at).toLocaleString() : '—'}</td>
+                            <td style={{ color: '#616161' }}>{(() => {
+                              if (!r.updated_at) return '—';
+                              const d = new Date(r.updated_at);
+                              return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+                            })()}</td>
                           )}
 
                           {visibleCols.location && (
@@ -1254,6 +1274,7 @@ export default function CloudWorkspace({ session }: { session: any }) {
                 onNewItem={['Admin','Member','Contributor','Owner','Co-Owner'].includes(activeWorkspace.role) ? () => fileInput.current?.click() : undefined}
                 otherWorkspaces={workspaces.filter(w => w.id !== activeWorkspace.id)}
                 onSelectWorkspace={id => void loadWorkspace(id)}
+                onRefreshSuccess={() => { void loadWorkspace(activeWorkspace.id, { silent: true }); void loadData(); }}
                 onOpenReport={r => {
                   const report = reports.find(item => (r.itemKey && item.itemKey === r.itemKey) || (item.id === r.id && item.paginatedId === r.paginatedId)) || { ...r, role: r.role || activeWorkspace.role, pages: 0, published_at: r.published_at || r.updated_at || new Date().toISOString() };
                   history.replaceState(null, '', `${location.pathname}?workspace=1&report=${encodeURIComponent(r.id)}`);

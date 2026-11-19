@@ -173,6 +173,27 @@ function ModelCanvasInner({
   const [editingRel, setEditingRel] = useState<any>(null);
   const [zoomLevel, setZoomLevel] = useState(100);
 
+  // Dark mode listener
+  const [isDark, setIsDark] = useState(() => {
+    return typeof document !== 'undefined' && document.documentElement.getAttribute('data-color-mode') === 'dark';
+  });
+
+  useEffect(() => {
+    const updateTheme = () => {
+      const dark = document.documentElement.getAttribute('data-color-mode') === 'dark';
+      setIsDark(dark);
+    };
+    updateTheme();
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-color-mode', 'data-theme'] });
+    return () => observer.disconnect();
+  }, []);
+
+  const iconAccent = isDark ? '#58a6ff' : '#0f6cbd';
+  const iconMuted = isDark ? '#94a3b8' : '#64748b';
+  const iconActive = isDark ? '#38bdf8' : '#0d6257';
+  const iconGreen = isDark ? '#4ade80' : '#16a34a';
+
   // Parse model definition tables & relationships
   const d = model.definition || {};
   const rawTables: Record<string, any> = d.tables || {};
@@ -278,14 +299,14 @@ function ModelCanvasInner({
           strokeDasharray: r.active === false ? '5 5' : undefined
         },
         labelStyle: {
-          fill: '#242424',
+          fill: isDark ? '#f4f8fc' : '#242424',
           fontWeight: 700,
           fontSize: 11
         },
         labelBgStyle: {
-          fill: '#ffffff',
+          fill: isDark ? '#161b22' : '#ffffff',
           fillOpacity: 0.95,
-          stroke: '#cbd5e1',
+          stroke: isDark ? '#30363d' : '#cbd5e1',
           strokeWidth: 1
         },
         labelBgPadding: [6, 3] as [number, number],
@@ -294,7 +315,7 @@ function ModelCanvasInner({
     });
 
     setEdges(initialEdges);
-  }, [tables, relationships, selectedElement]);
+  }, [tables, relationships, selectedElement, isDark]);
 
   // Initial fit view
   useEffect(() => {
@@ -330,7 +351,7 @@ function ModelCanvasInner({
   };
 
   return (
-    <div className="fabric-model-view-shell">
+    <div className={`fabric-model-view-shell ${isDark ? 'dark-mode' : ''}`}>
       {/* ── 1. Top Power BI / Fabric App Bar ────────────────────────────── */}
       <header className="fabric-top-app-bar">
         <div className="fabric-app-bar-left">
@@ -339,7 +360,7 @@ function ModelCanvasInner({
           </button>
           <div className="fabric-brand-v">V</div>
           <div className="fabric-title-meta">
-            <span className="fabric-model-title">{model.name}</span>
+            <span className="fabric-model-title">{(model.name || '').replace(/\bSemantic Model\b/gi, 'Unified Data Model')}</span>
             <span className="fabric-model-date">
               Data updated {model.updated_at ? new Date(model.updated_at).toLocaleDateString() : new Date().toLocaleDateString()}
             </span>
@@ -418,16 +439,16 @@ function ModelCanvasInner({
         {activeRibbonTab === 'View' && (
           <div className="pbi-ribbon-command-bar" style={{ minHeight: 38, borderBottom: 'none' }}>
             <button className="pbi-cmd-btn" onClick={() => fitView({ padding: 0.25 })} title="Fit all tables to screen">
-              <Maximize2 size={14} color="#0f6cbd" /> Fit to screen
+              <Maximize2 size={14} color={iconAccent} /> Fit to screen
             </button>
             <button className="pbi-cmd-btn" onClick={() => zoomIn()} title="Zoom in">
-              <ZoomIn size={14} color="#0f6cbd" /> Zoom in
+              <ZoomIn size={14} color={iconAccent} /> Zoom in
             </button>
             <button className="pbi-cmd-btn" onClick={() => zoomOut()} title="Zoom out">
-              <ZoomOut size={14} color="#0f6cbd" /> Zoom out
+              <ZoomOut size={14} color={iconAccent} /> Zoom out
             </button>
             <button className="pbi-cmd-btn" onClick={() => setViewport({ x: 60, y: 60, zoom: 1 })} title="Reset zoom to 100%">
-              <RefreshCw size={14} color="#64748b" /> Reset zoom
+              <RefreshCw size={14} color={iconMuted} /> Reset zoom
             </button>
             <div className="pbi-cmd-divider" />
             <button 
@@ -435,28 +456,28 @@ function ModelCanvasInner({
               onClick={() => setPropertiesOpen(!propertiesOpen)}
               title="Toggle Properties pane"
             >
-              <SlidersHorizontal size={14} color={propertiesOpen ? '#0d6257' : '#64748b'} /> Properties
+              <SlidersHorizontal size={14} color={propertiesOpen ? iconActive : iconMuted} /> Properties
             </button>
             <button 
               className={`pbi-cmd-btn ${dataPaneOpen ? 'active' : ''}`} 
               onClick={() => setDataPaneOpen(!dataPaneOpen)}
               title="Toggle Data pane"
             >
-              <Table2 size={14} color={dataPaneOpen ? '#0d6257' : '#64748b'} /> Data
+              <Table2 size={14} color={dataPaneOpen ? iconActive : iconMuted} /> Data
             </button>
             <button 
               className={`pbi-cmd-btn ${showMiniMap ? 'active' : ''}`} 
               onClick={() => setShowMiniMap(!showMiniMap)}
               title="Toggle Minimap navigation"
             >
-              <Layers size={14} color={showMiniMap ? '#0d6257' : '#64748b'} /> MiniMap
+              <Layers size={14} color={showMiniMap ? iconActive : iconMuted} /> MiniMap
             </button>
             <div className="pbi-cmd-divider" />
             <button className="pbi-cmd-btn" onClick={() => setRelModalOpen(true)} title="View table relationships">
-              <Link2 size={14} color="#0f6cbd" /> Relationships ({relationships.length})
+              <Link2 size={14} color={iconAccent} /> Relationships ({relationships.length})
             </button>
             <button className="pbi-cmd-btn" onClick={exportSchemaJson} title="Export model schema (.json)">
-              <Download size={14} color="#16a34a" /> Export schema
+              <Download size={14} color={iconGreen} /> Export schema
             </button>
           </div>
         )}
@@ -490,15 +511,23 @@ function ModelCanvasInner({
             minZoom={0.2}
             maxZoom={2.0}
           >
-            <Background color="#cbd5e1" gap={24} size={1} />
+            <Background color={isDark ? "#21262d" : "#cbd5e1"} gap={24} size={1} />
             <Controls showInteractive={false} />
             {showMiniMap && (
               <MiniMap 
                 pannable 
                 zoomable 
-                nodeColor="#ffffff" 
-                maskColor="rgba(241,245,249,0.7)"
-                style={{ bottom: 44, right: 12, height: 100, width: 140, borderRadius: 6, border: '1px solid #cbd5e1' }}
+                nodeColor={isDark ? "#21262d" : "#ffffff"} 
+                maskColor={isDark ? "rgba(9, 13, 22, 0.75)" : "rgba(241,245,249,0.7)"}
+                style={{ 
+                  bottom: 44, 
+                  right: 12, 
+                  height: 100, 
+                  width: 140, 
+                  borderRadius: 6, 
+                  border: isDark ? '1px solid #30363d' : '1px solid #cbd5e1',
+                  background: isDark ? '#161b22' : '#ffffff'
+                }}
               />
             )}
           </ReactFlow>
@@ -648,7 +677,7 @@ function ModelCanvasInner({
                           <span className="fabric-tree-chevron">
                             {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                           </span>
-                          <Table2 size={14} color="#0f6cbd" />
+                          <Table2 size={14} color={iconAccent} />
                           <b className="fabric-tree-name">{name}</b>
                         </div>
 
@@ -677,21 +706,21 @@ function ModelCanvasInner({
       {/* ── 6. Manage Relationships Dialog ──────────────────────────────── */}
       {relModalOpen && (
         <div className="modalShade" onMouseDown={() => setRelModalOpen(false)}>
-          <div className="modalCard wide" onMouseDown={e => e.stopPropagation()} style={{ maxWidth: 740 }}>
-            <div className="modalHead">
+          <div className="modalCard wide" onMouseDown={e => e.stopPropagation()} style={{ maxWidth: 740, background: isDark ? '#161b22' : undefined, color: isDark ? '#f4f8fc' : undefined, border: isDark ? '1px solid #30363d' : undefined }}>
+            <div className="modalHead" style={{ borderBottomColor: isDark ? '#30363d' : undefined }}>
               <div>
-                <span className="eyebrow">DATA MODEL</span>
-                <h3>Manage Relationships</h3>
+                <span className="eyebrow" style={{ color: isDark ? '#79c0ff' : undefined }}>DATA MODEL</span>
+                <h3 style={{ color: isDark ? '#f4f8fc' : undefined }}>Manage Relationships</h3>
               </div>
-              <button onClick={() => setRelModalOpen(false)}>×</button>
+              <button onClick={() => setRelModalOpen(false)} style={{ color: isDark ? '#c9d1d9' : undefined }}>×</button>
             </div>
-            <p style={{ margin: '8px 0 16px', color: '#616161', fontSize: 13 }}>
+            <p style={{ margin: '8px 0 16px', color: isDark ? '#8b949e' : '#616161', fontSize: 13 }}>
               Review the active relationships between tables in this Unified Data Model.
             </p>
-            <div style={{ maxHeight: 360, overflow: 'auto', border: '1px solid #e1dfdd', borderRadius: 6 }}>
+            <div style={{ maxHeight: 360, overflow: 'auto', border: `1px solid ${isDark ? '#30363d' : '#e1dfdd'}`, borderRadius: 6 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
-                  <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e1dfdd', textAlign: 'left' }}>
+                  <tr style={{ background: isDark ? '#21262d' : '#f8fafc', borderBottom: `1px solid ${isDark ? '#30363d' : '#e1dfdd'}`, textAlign: 'left', color: isDark ? '#f4f8fc' : 'inherit' }}>
                     <th style={{ padding: '8px 12px' }}>From Table (Column)</th>
                     <th style={{ padding: '8px 12px' }}>To Table (Column)</th>
                     <th style={{ padding: '8px 12px' }}>Cardinality</th>
@@ -700,16 +729,16 @@ function ModelCanvasInner({
                 </thead>
                 <tbody>
                   {relationships.map((r, i) => (
-                    <tr key={r.id || i} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <tr key={r.id || i} style={{ borderBottom: `1px solid ${isDark ? '#21262d' : '#f1f5f9'}`, color: isDark ? '#f4f8fc' : 'inherit' }}>
                       <td style={{ padding: '8px 12px' }}><b>{r.fromTable}</b> [{r.fromColumn}]</td>
                       <td style={{ padding: '8px 12px' }}><b>{r.toTable}</b> [{r.toColumn}]</td>
-                      <td style={{ padding: '8px 12px' }}><span style={{ padding: '2px 6px', background: '#e0f2fe', borderRadius: 4, color: '#0369a1', fontSize: 11, fontWeight: 600 }}>{r.cardinality || '1:*'}</span></td>
-                      <td style={{ padding: '8px 12px', color: r.active !== false ? '#166534' : '#64748b' }}>{r.active !== false ? 'Active' : 'Inactive'}</td>
+                      <td style={{ padding: '8px 12px' }}><span style={{ padding: '2px 6px', background: isDark ? '#1f293d' : '#e0f2fe', borderRadius: 4, color: isDark ? '#79c0ff' : '#0369a1', fontSize: 11, fontWeight: 600 }}>{r.cardinality || '1:*'}</span></td>
+                      <td style={{ padding: '8px 12px', color: r.active !== false ? (isDark ? '#4ade80' : '#166534') : (isDark ? '#8b949e' : '#64748b') }}>{r.active !== false ? 'Active' : 'Inactive'}</td>
                     </tr>
                   ))}
                   {relationships.length === 0 && (
                     <tr>
-                      <td colSpan={4} style={{ padding: 24, textAlign: 'center', color: '#64748b' }}>
+                      <td colSpan={4} style={{ padding: 24, textAlign: 'center', color: isDark ? '#8b949e' : '#64748b' }}>
                         No relationships configured in this model.
                       </td>
                     </tr>

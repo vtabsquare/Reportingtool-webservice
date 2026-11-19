@@ -52,6 +52,34 @@ def clear_service_runtime_caches() -> None:
         _HYDRATION_LOCKS.clear()
 
 
+_CACHE_INVALIDATOR: Any = None
+
+
+def register_cache_invalidator(fn: Any) -> None:
+    global _CACHE_INVALIDATOR
+    _CACHE_INVALIDATOR = fn
+
+
+def invalidate_report_cache(report_id: str) -> None:
+    """Purge in-memory definition, hydrated snapshot, RLS, and DuckDB caches for a report."""
+    if _CACHE_INVALIDATOR:
+        try:
+            _CACHE_INVALIDATOR(report_id)
+        except Exception as error:
+            print(f"VTAB registered cache invalidator error: {error}", flush=True)
+    clear_service_runtime_caches()
+    try:
+        from .rls_runtime import clear_rls_cache
+        clear_rls_cache()
+    except Exception:
+        pass
+    try:
+        from .semantic_engine import clear_cache
+        clear_cache()
+    except Exception:
+        pass
+
+
 class ServiceValidationError(ValueError):
     """Raised when a desktop report cannot safely be published."""
 
@@ -530,7 +558,7 @@ def list_workspace_semantic_models(workspace_id: str, access_token: str) -> list
     models = response.data or []
     report_response = (
         client.table("published_reports")
-        .select("id,name,semantic_model_id,updated_at")
+        .select("id,name,semantic_model_id,updated_at,published_at")
         .eq("workspace_id", workspace_id)
         .execute()
     )
@@ -698,6 +726,13 @@ def publish_report(payload: dict[str, Any], access_token: str, service_base_url:
         raise RuntimeError("The Reporting Service returned an invalid publish response.")
 
     report_id = str(data["report_id"])
+    model_id = str(data.get("semantic_model_id") or "")
+    if model_id:
+        try:
+            from .supabase_store import _admin_client
+            _admin_client().table("semantic_models").update({"name": f"{report_name} Unified Data Model"}).eq("id", model_id).execute()
+        except Exception:
+            pass
     base = service_base_url.rstrip("/")
     data.update({
         "ok": True,
@@ -706,8 +741,8 @@ def publish_report(payload: dict[str, Any], access_token: str, service_base_url:
         "workspaceId": str(data.get("workspace_id") or workspace_id),
         "versionId": str(data.get("version_id") or ""),
         "version": str(data.get("version") or "1.0"),
-        "semanticModelId": str(data.get("semantic_model_id") or ""),
-        "semanticModelName": str(data.get("semantic_model_name") or f"{report_name} Unified Data Model"),
+        "semanticModelId": model_id,
+        "semanticModelName": f"{report_name} Unified Data Model",
         "semanticModelVersionId": str(data.get("semantic_model_version_id") or ""),
         "semanticModelVersion": str(data.get("semantic_model_version") or data.get("version") or "1.0"),
         "publishedAt": data.get("published_at"),
