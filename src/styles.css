@@ -742,8 +742,8 @@ body,#root,.app,.studio,.shell{background:var(--app)!important;color:var(--text)
 input,textarea,select{color-scheme:dark}
 [data-theme="white"] input,[data-theme="white"] textarea,[data-theme="white"] select{color-scheme:light}
 [data-theme="white"] .react-flow,[data-theme="white"] .modelCanvas,[data-theme="white"] .canvasStage{background:#edf2f7!important}
-[data-theme="white"] .modelNode,[data-theme="white"] .visualCard{background:#ffffff!important;color:#0f172a!important;border-color:#cbd5e1!important}
-[data-theme="black"] .modelNode,[data-theme="black"] .visualCard{background:#080808!important;color:#fff!important;border-color:#303030!important}
+[data-theme="white"] .modelNode,[data-theme="white"] .canvasStage .visualCard{background:#ffffff!important;color:#0f172a!important;border-color:#cbd5e1!important}
+[data-theme="black"] .modelNode,[data-theme="black"] .canvasStage .visualCard{background:#080808!important;color:#fff!important;border-color:#303030!important}
 
 /* v2.0 local acceleration/storage */
 .storageAccelerationCard{margin-top:16px;display:grid;grid-template-columns:42px 1fr 150px auto;gap:12px;align-items:center;border:1px solid var(--border,#24465d);background:linear-gradient(135deg,var(--panel2,#091a29),color-mix(in srgb,var(--accent,#22d3ee) 7%,var(--panel,#08131f)));border-radius:12px;padding:13px}
@@ -1097,9 +1097,9 @@ html[data-color-mode="dark"] .modelCanvas,html[data-color-mode="dark"] .react-fl
 [data-theme="vtab"] .reportRibbon{background:#ffffff!important;border-bottom:1px solid #d6e1e8!important}
 [data-theme="vtab"] .canvasStage,[data-theme="vtab"] .canvasWrap{background:#e8eef2!important}
 [data-theme="vtab"] .dashboardPage,[data-theme="vtab"] .reportCanvas{background:#ffffff!important;box-shadow:0 14px 38px rgba(18,45,72,.10)!important}
-[data-theme="vtab"] .visualCard{background:#fff!important;color:#102438!important;border-color:#cddbe5!important;box-shadow:0 8px 22px rgba(20,50,80,.08)!important}
-[data-theme="vtab"] .visualCard.selected{outline:2px solid #2563eb!important;box-shadow:0 0 0 3px #dbeafe,0 10px 28px rgba(37,99,235,.12)!important}
-[data-theme="vtab"] .visualTitle{background:#fff!important;color:#15324a!important;border-color:#e0e8ee!important}
+[data-theme="vtab"] .reportWorkspace .visualCard,[data-theme="vtab"] .canvasStage .visualCard{background:#fff!important;color:#102438!important;border-color:#cddbe5!important;box-shadow:0 8px 22px rgba(20,50,80,.08)!important}
+[data-theme="vtab"] .reportWorkspace .visualCard.selected,[data-theme="vtab"] .canvasStage .visualCard.selected{outline:2px solid #2563eb!important;box-shadow:0 0 0 3px #dbeafe,0 10px 28px rgba(37,99,235,.12)!important}
+[data-theme="vtab"] .reportWorkspace .visualTitle,[data-theme="vtab"] .canvasStage .visualTitle{background:#fff!important;color:#15324a!important;border-color:#e0e8ee!important}
 [data-theme="vtab"] .fieldsPane,[data-theme="vtab"] .formatPane,[data-theme="vtab"] .professionalRightPane{background:#fff!important;border-color:#d6e1e8!important;color:#19344a!important}
 [data-theme="vtab"] .rightVisualGallery button{background:#f7fafc!important;border-color:#d5e0e8!important;color:#274258!important}
 [data-theme="vtab"] .rightVisualGallery button:hover{background:#eaf4ff!important;border-color:#92bbe0!important}
@@ -1965,13 +1965,13 @@ main,.mainPanel,.workspace,.reportWorkspace,.modelWorkspace,.measuresWorkspace{p
 .viewerGrid{grid-auto-rows:54px!important;gap:16px!important;padding:6px 16px 18px!important;align-content:start!important}
 .viewerGrid.pixelLayout{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;padding:0!important;margin:0!important;display:block!important}
 .viewerPage.pixelPublishedPage .viewerPageLayer{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;padding:0!important;margin:0!important;display:block!important}
-.viewerVisual{border:var(--viewer-border,1px solid #d9e3ed);border-radius:var(--viewer-radius,8px);background:var(--viewer-background,#fff);box-shadow:var(--viewer-shadow,0 2px 8px rgba(15,23,42,.04));transition:none!important}
+.viewerVisual{border:var(--viewer-border,1px solid #d9e3ed);border-radius:var(--viewer-radius,8px);background:var(--viewer-background,transparent);box-shadow:var(--viewer-shadow,0 2px 8px rgba(15,23,42,.04));transition:none!important}
 .viewerVisual:hover{transform:none!important;box-shadow:var(--viewer-shadow,0 4px 14px rgba(15,23,42,.08))!important}
-.viewerVisualTitle{min-height:26px!important;padding:3px 10px!important;background:var(--viewer-title-background,#fff)!important;border-bottom:1px solid #edf2f7!important;font-size:12px!important;font-weight:700!important}
+.viewerVisualTitle{min-height:26px!important;padding:3px 10px!important;background:var(--viewer-title-background,transparent)!important;border-bottom:1px solid #edf2f7!important;font-size:12px!important;font-weight:700!important}
 .viewerVisual.visualCompact .viewerVisualTitle{min-height:22px!important;height:22px!important;padding:0 6px!important;font-size:10px!important}
 .viewerVisual-slicer .viewerVisualTitle{min-height:24px!important;padding:2px 8px!important}
 .viewerVisualTitleLabel{display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:1px;min-width:0;text-align:var(--visual-title-align,left)}.viewerVisualTitleLabel>span,.visualTitleText>span{display:block;width:100%;text-align:inherit}.viewerVisualTitleLabel small,.visualTitleText>small{display:block;width:100%;text-align:var(--visual-subtitle-align,inherit)}.viewerVisualTitleLabel>div{display:flex;flex-direction:column;min-width:0}.viewerVisualTitleLabel>div>span{color:inherit;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.viewerVisualTitleLabel small{font-size:9px;color:#718096;font-weight:500;margin-top:1px}.viewerVisualTitleIcon{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;flex:none}
-.viewerVisualBody{padding:var(--viewer-padding-top,8px) var(--viewer-padding-right,8px) var(--viewer-padding-bottom,8px) var(--viewer-padding-left,8px);background:#fff}
+.viewerVisualBody{padding:var(--viewer-padding-top,8px) var(--viewer-padding-right,8px) var(--viewer-padding-bottom,8px) var(--viewer-padding-left,8px);background:transparent}
 .viewerVisual-slicer .viewerVisualBody{padding:0!important;display:flex!important;flex-direction:column!important;justify-content:center!important;flex:1!important;min-height:0!important}
 .viewerVisual-slicer .viewerSlicerContents{flex:1!important;display:flex!important;flex-direction:column!important;justify-content:center!important;min-height:0!important;padding:2px 8px!important;box-sizing:border-box!important}
 .viewerVisual-slicer .viewerSlicerDropdown{margin:0!important;width:100%!important;height:28px!important;min-height:28px!important;box-sizing:border-box!important}
@@ -3419,7 +3419,8 @@ main,.mainPanel,.workspace,.reportWorkspace,.modelWorkspace,.measuresWorkspace{p
     linear-gradient(90deg,rgba(203,213,225,0.30) 1px,transparent 1px)!important;
   background-size:20px 20px!important;
 }
-[data-theme="vtab"] .visualCard{
+[data-theme="vtab"] .advancedReport .visualCard,
+[data-theme="vtab"] .canvasStage .visualCard{
   background:rgba(255,255,255,0.92)!important;
   backdrop-filter:blur(8px)!important;
   border:1px solid rgba(203,213,225,0.65)!important;
@@ -3427,15 +3428,18 @@ main,.mainPanel,.workspace,.reportWorkspace,.modelWorkspace,.measuresWorkspace{p
   box-shadow:0 4px 16px rgba(15,23,42,0.07),0 1px 4px rgba(15,23,42,0.04)!important;
   transition:border-color var(--g-transition),box-shadow var(--g-transition),transform var(--g-transition)!important;
 }
-[data-theme="vtab"] .visualCard:hover{
+[data-theme="vtab"] .advancedReport .visualCard:hover,
+[data-theme="vtab"] .canvasStage .visualCard:hover{
   border-color:#93c5fd!important;
   box-shadow:0 8px 28px rgba(15,23,42,0.12),0 2px 8px rgba(15,23,42,0.06)!important;
 }
-[data-theme="vtab"] .visualCard.selected{
+[data-theme="vtab"] .advancedReport .visualCard.selected,
+[data-theme="vtab"] .canvasStage .visualCard.selected{
   outline:2px solid #2563eb!important;outline-offset:2px!important;
   box-shadow:0 0 0 4px rgba(37,99,235,0.12),0 12px 32px rgba(15,23,42,0.12)!important;
 }
-[data-theme="vtab"] .visualTitle{
+[data-theme="vtab"] .advancedReport .visualTitle,
+[data-theme="vtab"] .canvasStage .visualTitle{
   background:rgba(255,255,255,0.95)!important;
   border-bottom:1px solid rgba(203,213,225,0.40)!important;
   color:#0f172a!important;font-weight:700!important;
