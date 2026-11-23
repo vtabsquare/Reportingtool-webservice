@@ -231,12 +231,12 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
  const edges=f.borderEdges||{top:true,right:true,bottom:true,left:true};
  const border=f.borderVisible?`${f.borderWidth??1}px ${f.borderStyle||'solid'} ${f.borderColor||'#c8c8c8'}`:'none';
  const radius=`${f.cornerRadii?.topLeft??f.cornerRadius??0}px ${f.cornerRadii?.topRight??f.cornerRadius??0}px ${f.cornerRadii?.bottomRight??f.cornerRadius??0}px ${f.cornerRadii?.bottomLeft??f.cornerRadius??0}px`;
+ const background=publishedColor(bg,transparency);
  const darkVisualBackground=resolveDarkSurface(f.background,DARK_REPORT_THEME.surface);
- const visualBackground=backgroundOn===false?'transparent':isDarkCanvas?publishedColor(darkVisualBackground,transparency):publishedColor(bg,transparency);
- const background=visualBackground;
- const titleBackgroundOn=f.titleBackgroundEnabled!==false,titleBg=f.titleBackground||'#fff',titleTransparency=titleBackgroundOn?Math.max(0,Math.min(100,f.titleBackgroundTransparency||0)):100;
+ const visualBackground=backgroundOn===false?'transparent':(isDarkCanvas?publishedColor(darkVisualBackground,transparency):background);
+ const titleBackgroundOn=f.titleBackgroundEnabled!==false,titleBg=f.titleBackground||'#fff',titleTransparency=titleBackgroundOn?Math.max(0,Math.min(100,f.titleBackgroundTransparency||0)):100,titleBackground=publishedColor(titleBg,titleTransparency);
  const darkTitleBackground=titleBackgroundOn?resolveDarkSurface(f.titleBackground,darkVisualBackground):'transparent';
- const visualTitleBackground=titleBackgroundOn?(isDarkCanvas?publishedColor(darkTitleBackground,titleTransparency):publishedColor(titleBg,titleTransparency)):'transparent';
+ const visualTitleBackground=titleBackgroundOn?(isDarkCanvas?publishedColor(darkTitleBackground,titleTransparency):titleBackground):'transparent';
  const titleRadius=titleBackgroundOn?`${f.cornerRadii?.topLeft??f.cornerRadius??0}px ${f.cornerRadii?.topRight??f.cornerRadius??0}px 0 0`:'0';
  const darkBorderColor=resolveDarkBorder(f.borderColor,darkVisualBackground);
  const darkDefaultBorder='none';
@@ -315,7 +315,7 @@ function ViewerVisual({v,result,model,loading,selected,activeFilter,onCrossFilte
     overflow:v.type==='slicer'&&slicerDropdownOpen?'visible':'hidden',
     display:'flex',
     flexDirection:'column',
-    background,
+    background: visualBackground,
     border:'0',
     borderTop:edges.top?border:'0',
     borderRight:edges.right?border:'0',
@@ -750,9 +750,10 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
   image.src=img;
   return()=>{cancelled=true};
  },[s.backgroundImage]);
+ const isThemeExplicitlyLight=s.canvasTheme==='light'||s.themeId==='light-professional'||s.themeId==='vtab-classic';
  const isPublishedDarkCanvas=canvasThemeOverride!==null
   ? canvasThemeOverride==='dark'
-  : (s.canvasTheme==='dark'||isColorDark(s.background)||bgImageDark===true);
+  : (s.canvasTheme==='dark'||(!isThemeExplicitlyLight&&(Boolean(s.themeId&&s.themeId!=='light-professional'&&s.themeId!=='vtab-classic')||isColorDark(s.background))));
  const publishedPageBackground=s.canvasTheme==='dark'?DARK_REPORT_THEME.canvas:(isPublishedDarkCanvas?DARK_REPORT_THEME.canvas:(s.background||'#f5f7fb'));
  const fixedPagePreset=['16:9','HD 16:9','Full HD 16:9','QHD 16:9','16:10','4:3','Letter','Tooltip','A4 Landscape','A4 Portrait'].includes(String(s.pageSizePreset||''));
  // Older snapshots may contain pixel coordinates without the migration flag.
