@@ -161,7 +161,7 @@ export default function PublishToServiceDialog({
       <section className="servicePublishDialog" role="dialog" aria-modal="true" aria-labelledby="servicePublishTitle">
         <header>
           <div><small>REPORTING SERVICE</small><h2 id="servicePublishTitle">Publish report</h2></div>
-          <button className="icon" onClick={onClose} disabled={busy} aria-label="Close"><X size={18}/></button>
+          <button className="icon servicePublishCloseBtn" onClick={onClose} disabled={busy} aria-label="Close" title="Close"><X size={18}/></button>
         </header>
 
         {result ? (
@@ -201,8 +201,7 @@ export default function PublishToServiceDialog({
             {context && !publishable.length && <div className="servicePublishWarning">Your account has Viewer access only. Ask a workspace Admin for Contributor, Member, or Admin access.</div>}
             {!!publishable.length && <>
               <label>Workspace<select value={workspaceId} onChange={event => setWorkspaceId(event.target.value)}>{publishable.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name} · {workspace.role}</option>)}</select></label>
-              {selected?.isPersonal ? <div className="servicePublishWarning"><b>Private destination.</b><span>Reports in My Workspace are visible only to you and cannot be shared. Choose or create a team workspace for collaboration.</span></div> : <div className="servicePublishDescription"><b>Team workspace.</b> Workspace members can access published content according to their role. Viewer access remains restricted by RLS.</div>}
-              {selected?.description && <p className="servicePublishDescription">{selected.description}</p>}
+              {selected?.isPersonal && <div className="servicePublishWarning"><b>Private destination.</b><span>Reports in My Workspace are visible only to you and cannot be shared. Choose or create a team workspace for collaboration.</span></div>}
               <label>Report name<input value={name} maxLength={160} onChange={event => setName(event.target.value)}/></label>
               <label>What changed? <span>Optional</span><textarea rows={3} value={changeDescription} maxLength={500} onChange={event => setChangeDescription(event.target.value)} placeholder="Describe this version"/></label>
               {paginatedReportCount>0&&<fieldset className="paginatedPublishChoice"><legend>Publish paginated reports</legend><p>{paginatedReportCount} paginated report{paginatedReportCount===1?' is':'s are'} included in this project.</p><label className={paginatedMode==='together'?'selected':''}><input type="radio" name="paginatedMode" value="together" checked={paginatedMode==='together'} onChange={()=>setPaginatedMode('together')}/><span><b>Publish together</b><small>Keep one package and add a Paginated Reports entry inside the published dashboard.</small></span></label><label className={paginatedMode==='separate'?'selected':''}><input type="radio" name="paginatedMode" value="separate" checked={paginatedMode==='separate'} onChange={()=>setPaginatedMode('separate')}/><span><b>Publish separately</b><small>Publish the dashboard and each paginated report as separate workspace items using the same Unified Data Model.</small></span></label></fieldset>}

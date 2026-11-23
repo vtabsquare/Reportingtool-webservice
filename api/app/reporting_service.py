@@ -148,6 +148,65 @@ def _sanitize(value: Any) -> Any:
     return clean
 
 
+def _optimize_base64_image(b64_str: str, max_dimension: int = 1920, quality: int = 85) -> str:
+    """Compress and downscale oversized inline base64 images before cloud publish.
+
+    Preserves small images (<= 150 KB) without recompression.
+    Converts oversized uncompressed PNGs into high-quality WebP or JPEG.
+    Safely falls back to the original string if PIL is unavailable or parsing fails.
+    """
+    if not isinstance(b64_str, str) or not b64_str.startswith("data:image"):
+        return b64_str
+    try:
+        import base64
+        from io import BytesIO
+        from PIL import Image
+
+        parts = b64_str.split(",", 1)
+        if len(parts) != 2:
+            return b64_str
+        raw = base64.b64decode(parts[1])
+        if len(raw) <= 150 * 1024:
+            return b64_str
+        img = Image.open(BytesIO(raw))
+        w, h = img.size
+        if max(w, h) > max_dimension:
+            scale = max_dimension / max(w, h)
+            new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        out = BytesIO()
+        if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+            img.save(out, format="WEBP", quality=quality)
+            mime = "image/webp"
+        else:
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(out, format="JPEG", quality=quality, optimize=True)
+            mime = "image/jpeg"
+        opt_bytes = out.getvalue()
+        if len(opt_bytes) < len(raw):
+            return f"data:{mime};base64," + base64.b64encode(opt_bytes).decode("ascii")
+    except Exception:
+        pass
+    return b64_str
+
+
+def _optimize_report_images(project: dict[str, Any]) -> None:
+    """Optimize embedded report background and visual images."""
+    report = project.get("report")
+    if not isinstance(report, dict):
+        return
+    for page in report.get("pages", []) or []:
+        if not isinstance(page, dict):
+            continue
+        settings = page.get("settings")
+        if isinstance(settings, dict) and "backgroundImage" in settings:
+            settings["backgroundImage"] = _optimize_base64_image(settings["backgroundImage"])
+        for visual in page.get("visuals", []) or []:
+            if isinstance(visual, dict) and "imageSrc" in visual:
+                visual["imageSrc"] = _optimize_base64_image(visual["imageSrc"])
+
+
 def prepare_report_snapshot(project: dict[str, Any]) -> dict[str, Any]:
     """Validate the common report definition and remove inline credentials."""
     if not isinstance(project, dict):
@@ -223,6 +282,9 @@ def prepare_report_snapshot(project: dict[str, Any]) -> dict[str, Any]:
                 raise ServiceValidationError(f"Paginated report {index} contains an invalid table column.")
 
     clean = _sanitize(copy.deepcopy(project))
+    for k in ("report_json", "model_json", "transform_json", "security_json"):
+        clean.pop(k, None)
+    _optimize_report_images(clean)
     encoded = json.dumps(clean, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if len(encoded) > MAX_REPORT_BYTES:
         raise ServiceValidationError(
