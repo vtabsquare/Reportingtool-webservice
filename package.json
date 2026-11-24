@@ -21,6 +21,7 @@
     "test:admin-services-permissions": "node test_admin_services_permission_contract.cjs",
     "desktop": "electron .",
     "push": "python scripts/push_service.py",
+    "push:ui": "python scripts/push_service.py --ui",
     "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-backend.ps1",
     "release": "npm run build:backend && npm run build && electron-builder --win nsis --publish never --config.electronDownload.cache=.electron-cache"
   },
