@@ -1,7 +1,7 @@
 {
   "name": "vtab-reporting-studio-web",
   "private": true,
-  "version": "6.1.18",
+  "version": "6.0.0",
   "description": "VTAB Reporting Services with governed scheduled refresh",
   "author": "VTAB Square",
   "main": "electron/main.cjs",
@@ -20,6 +20,7 @@
     "test:notification-visibility": "node test_services_notification_dark_mode_visibility_contract.cjs",
     "test:admin-services-permissions": "node test_admin_services_permission_contract.cjs",
     "desktop": "electron .",
+    "push": "python scripts/push_service.py",
     "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-backend.ps1",
     "release": "npm run build:backend && npm run build && electron-builder --win nsis --publish never --config.electronDownload.cache=.electron-cache"
   },
@@ -49,7 +50,7 @@
     "npmRebuild": false,
     "appId": "com.vtabsquare.reportingstudio",
     "productName": "VTAB Reporting Studio",
-    "copyright": "Copyright © 2026 VTAB Square",
+    "copyright": "Copyright \u00a9 2026 VTAB Square",
     "directories": {
       "output": "release",
       "buildResources": "build-resources"
