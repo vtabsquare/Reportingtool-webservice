@@ -24,6 +24,7 @@ Services now follows Desktop: positioning wrappers use visible overflow, while t
 6. Republish the report so the latest Desktop project snapshot is used.
 7. Republish the report so the latest Desktop project snapshot is used.
 8. Republish the report so the latest Desktop project snapshot is used.
+9. Republish the report so the latest Desktop project snapshot is used.
 ## Verification
 
 - Published visual parity: 9/9 passed.
