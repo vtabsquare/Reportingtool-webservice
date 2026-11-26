@@ -389,6 +389,41 @@ def _sqlite_connect(cfg:dict):
     if not path.is_file():raise ValueError(f'SQLite database file was not found: {path}')
     return sqlite3.connect(f'file:{path.resolve().as_posix()}?mode=ro',uri=True)
 
+def _snowflake_connect(cfg:dict):
+    try:import snowflake.connector
+    except Exception as exc:_driver_error('Snowflake','snowflake-connector-python',exc)
+    account=str(cfg.get('account') or cfg.get('host') or cfg.get('server') or '').strip()
+    user=str(cfg.get('user') or cfg.get('username') or '').strip()
+    database=str(cfg.get('database') or '').strip()
+    warehouse=str(cfg.get('warehouse') or '').strip()
+    if not account:raise ValueError('Snowflake account identifier is required (for example, myorg-myaccount).')
+    if not user:raise ValueError('Snowflake user is required.')
+    if not database:raise ValueError('Snowflake database is required.')
+    if not warehouse:raise ValueError('Snowflake warehouse is required.')
+    authenticator=str(cfg.get('authenticator') or 'snowflake').strip()
+    browser_authenticators=('externalbrowser','oauth_authorization_code')
+    params={
+      'account':account,'user':user,'database':database,'warehouse':warehouse,
+      'authenticator':authenticator,
+      'login_timeout':180 if authenticator.lower() in browser_authenticators else 15,
+      'network_timeout':120,'client_session_keep_alive':False,
+      'application':'VTAB_Reporting_Services'
+    }
+    for key in ('schema','role'):
+        value=str(cfg.get(key) or '').strip()
+        if value:params[key]=value
+    if authenticator.lower()=='oauth':
+        token=str(cfg.get('token') or cfg.get('accessToken') or cfg.get('password') or '').strip()
+        if not token:raise ValueError('Snowflake OAuth access token is required.')
+        params['token']=token
+    elif authenticator.lower() not in (*browser_authenticators,'username_password_mfa'):
+        password=str(cfg.get('password') or '').strip()
+        if not password:raise ValueError('Snowflake password is required.')
+        params['password']=password
+    elif cfg.get('password'):
+        params['password']=cfg.get('password')
+    return snowflake.connector.connect(**params)
+
 def _database_family(source_type:str)->str:
     aliases={'postgres':'postgresql','redshift':'postgresql','mariadb':'mysql','synapse':'sqlserver','fabric_warehouse':'sqlserver','access':'odbc'}
     return aliases.get((source_type or '').lower(),(source_type or '').lower())
@@ -404,19 +439,20 @@ def _database_connect(source_type:str,cfg:dict):
     if family=='mysql':return _mysql_connect(cfg)
     if family=='sqlite':return _sqlite_connect(cfg)
     if family=='odbc':return _odbc_connect(cfg)
+    if family=='snowflake':return _snowflake_connect(cfg)
     raise ValueError(f'{source_type} does not currently provide a database navigator. Use a supported relational connector or install its VTAB plugin.')
 
 def test_connection(payload):
     typ=(payload.get('type') or '').lower()
     cfg=payload.get('config') or {}
     if typ=='demo':return {'ok':True,'message':'Local DuckDB columnar workspace is ready.'}
-    if typ in ('postgresql','postgres','redshift','sqlserver','synapse','fabric_warehouse','mysql','mariadb','sqlite','odbc','access'):
+    if typ in ('postgresql','postgres','redshift','sqlserver','synapse','fabric_warehouse','mysql','mariadb','sqlite','odbc','access','snowflake'):
         conn=_database_connect(typ,cfg)
         try:
             cur=conn.cursor();cur.execute('SELECT 1');cur.fetchone();cur.close()
         finally:conn.close()
         return {'ok':True,'message':f'{next((x["name"] for x in SOURCE_CATALOG if x["id"]==typ),typ)} connection successful.'}
-    if typ in ('oracle','db2','snowflake','databricks','bigquery'):
+    if typ in ('oracle','db2','databricks','bigquery'):
         raise ValueError(f'{typ} requires a dedicated VTAB connector plugin; it is not a working connector in this build.')
     if typ in ('rest','odata','graphql'):
         url=cfg.get('url','') or cfg.get('endpoint','') or cfg.get('base_url','')
@@ -488,6 +524,14 @@ def list_database_tables(source_type:str,config:dict):
                 rows.append({'schema':schema,'name':name,'qualifiedName':qualified,'query':query})
             return sorted(rows,key=lambda x:x['qualifiedName'].casefold())
         finally:conn.close()
+    if family=='snowflake':
+        conn=_snowflake_connect(config)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT table_catalog,table_schema,table_name,table_type FROM information_schema.tables WHERE table_schema <> 'INFORMATION_SCHEMA' AND table_type IN ('BASE TABLE','VIEW') ORDER BY table_schema,table_name")
+                rows=cur.fetchall()
+            return [{'catalog':c,'schema':s,'name':n,'qualifiedName':f'{s}.{n}','objectType':'VIEW' if str(t).upper()=='VIEW' else 'TABLE','query':f'SELECT * FROM {qident(c)}.{qident(s)}.{qident(n)}'} for c,s,n,t in rows]
+        finally:conn.close()
     raise ValueError(f'Database table discovery is not implemented for {source_type}.')
 
 def qident(value:str)->str:return '"'+str(value).replace('"','""')+'"'
@@ -511,6 +555,15 @@ def import_database(source_type:str,config:dict,query:str,name:str|None=None):
         conn=_sqlite_connect(config)
         try:df=pd.read_sql_query(query,conn)
         finally:conn.close()
+    elif family=='snowflake':
+        conn=_snowflake_connect(config)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(query)
+                rows=cur.fetchall()
+                columns=[str(item[0]) for item in (cur.description or [])]
+            df=pd.DataFrame.from_records(rows,columns=columns)
+        finally:conn.close()
     else:raise ValueError(f'Database import is not implemented for {source_type}.')
     table=safe_table_name(name or f'{source_type}_query')
     rows=write_dataframe(df,table,None,'managed');meta=next(x for x in local_metadata() if x['name']==table)
@@ -529,7 +582,7 @@ SOURCE_CATALOG=[
  {'id':'odbc','name':'ODBC','category':'Database','mode':'Import','status':'driver'},
  {'id':'jdbc','name':'JDBC','category':'Database','mode':'Import','status':'plugin'},
  # Warehouses / lakehouses
- {'id':'snowflake','name':'Snowflake','category':'Cloud Warehouse','mode':'DirectQuery / Import','status':'plugin'},
+ {'id':'snowflake','name':'Snowflake','category':'Cloud Warehouse','mode':'Import / Refresh','status':'native'},
  {'id':'databricks','name':'Databricks SQL / Lakehouse','category':'Cloud Warehouse','mode':'DirectQuery / Import','status':'plugin'},
  {'id':'bigquery','name':'Google BigQuery','category':'Cloud Warehouse','mode':'DirectQuery / Import','status':'plugin'},
  {'id':'redshift','name':'Amazon Redshift','category':'Cloud Warehouse','mode':'Import','status':'native'},

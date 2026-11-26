@@ -18,6 +18,10 @@ services:
         value: 1
       - key: VTAB_REFRESH_POLL_SECONDS
         value: 30
+      - key: VTAB_EMAIL_WORKER_ENABLED
+        value: 1
+      - key: VTAB_AUTOMATION_WORKER_ENABLED
+        value: 1
       - key: VTAB_QUERY_BATCH_WORKERS
         value: 4
       - key: VTAB_SNAPSHOT_CACHE_DIR
@@ -26,6 +30,10 @@ services:
         sync: false
       - key: BREVO_API_KEY
         sync: false
+      - key: VTAB_BREVO_FROM_EMAIL
+        sync: false
+      - key: VTAB_BREVO_SENDER_NAME
+        value: VTAB Reporting Services
       - key: VTAB_SMTP_FROM
         sync: false
       - key: VTAB_ALLOWED_ORIGINS

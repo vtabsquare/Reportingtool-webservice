@@ -105,7 +105,7 @@ try{
     assert(/select\('mapMode','Map type','bubble',\['bubble','filled'\]\)/.test(schema),'Map type is not limited to Bubble and Filled.');
     assert(/id:'mapLabels',title:'Labels'/.test(schema)&&! /id:'mapLegend',title:'Legend'/.test(schema),'Map labels must remain while the unused map legend card stays removed.');
     assert(/id:'displayUnits',title:'Display units'/.test(schema),'General display-units formatting is missing.');
-    assert(/id:'mapAreas',title:'Color grading'/.test(schema)&&schema.includes("['table','matrix','map'].includes(type)"),'Map still exposes the generic conditional-formatting card.');
+    assert(/id:'mapAreas',title:'Color grading'/.test(schema)&&/\['table','matrix','map'(?:,'kpi')?\]\.includes\(type\)/.test(schema),'Map still exposes the generic conditional-formatting card.');
     const workspace=fs.readFileSync('src/components/FormattingWorkspace.tsx','utf8');
     assert(workspace.includes('function MapColorGrading')&&workspace.includes('Select color measure'),'Measure mode does not provide the color-measure dropdown.');
     assert(!workspace.includes('Select numeric measure')&&workspace.includes('Rules use the numeric field or measure already placed in Detail / value.'),'Rules mode still exposes a measure selector.');

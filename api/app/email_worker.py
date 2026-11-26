@@ -36,6 +36,7 @@ class EmailDeliveryWorker:
         self.poll_seconds = poll_seconds or int(os.environ.get("VTAB_EMAIL_POLL_SECONDS", "15"))
         self.worker_id = os.environ.get("VTAB_EMAIL_WORKER_ID") or f"email-{uuid.uuid4()}"
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self):
@@ -47,8 +48,13 @@ class EmailDeliveryWorker:
 
     def stop(self):
         self._stop.set()
+        self._wake.set()
         if self._thread:
             self._thread.join(timeout=5)
+
+    def wake(self):
+        self._wake.set()
+        return self
 
     def _loop(self):
         while not self._stop.is_set():
@@ -56,7 +62,8 @@ class EmailDeliveryWorker:
                 self.run_once()
             except Exception as error:
                 print(f"VTAB email worker poll failed: {error}", flush=True)
-            self._stop.wait(self.poll_seconds)
+            self._wake.wait(self.poll_seconds)
+            self._wake.clear()
 
     def run_once(self):
         from .supabase_store import _admin_client
@@ -112,4 +119,9 @@ def start_email_worker() -> EmailDeliveryWorker:
     if _worker is None:
         _worker = EmailDeliveryWorker().start()
     return _worker
+
+
+def trigger_email_worker() -> EmailDeliveryWorker:
+    """Start the durable delivery worker if needed and process new mail promptly."""
+    return start_email_worker().wake()
 

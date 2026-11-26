@@ -294,6 +294,73 @@ def prepare_report_snapshot(project: dict[str, Any]) -> dict[str, Any]:
     return clean
 
 
+def _extract_sheet_name(config: Any) -> str:
+    """Extract a worksheet title from a Google Sheets sourceConfig/mapping dict."""
+    if not isinstance(config, dict):
+        return ""
+    direct = str(config.get("sheet") or config.get("sheetName") or config.get("sheet_name") or "").strip()
+    if direct:
+        return direct
+    sheet_range = str(config.get("sheetRange") or config.get("sheet_range") or "").strip()
+    if "!" in sheet_range:
+        return sheet_range.split("!", 1)[0].strip().strip("'\"").replace("''", "'")
+    return ""
+
+
+def _build_manifest_table_entry(
+    table_name: str,
+    source_object: str,
+    query_text: str,
+    storage_path: str,
+    source_config: Any = None,
+) -> dict[str, Any]:
+    cfg = source_config if isinstance(source_config, dict) else {}
+    sheet_name = _extract_sheet_name(cfg)
+    table_url = str(cfg.get("url") or "").strip()
+    entry: dict[str, Any] = {
+        "modelTable": table_name,
+        "sourceObject": str(source_object or sheet_name or "").strip(),
+        "query": str(query_text or ""),
+        "managedStoragePath": storage_path or None,
+    }
+    if sheet_name:
+        entry["sheet"] = sheet_name
+    if cfg.get("sheetRange"):
+        entry["sheetRange"] = str(cfg.get("sheetRange"))
+    if table_url:
+        entry["url"] = table_url
+    return entry
+
+
+def enrich_source_manifest(definition: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of sourceManifest enriched with per-table sourceConfig metadata."""
+    manifest = copy.deepcopy((definition or {}).get("sourceManifest") or {"version": 1, "sources": []})
+    model_tables = (definition or {}).get("tables") or {}
+    for source in manifest.get("sources") or []:
+        if not isinstance(source, dict):
+            continue
+        source_cfg = source.get("configuration") if isinstance(source.get("configuration"), dict) else {}
+        for item in source.get("tables") or []:
+            if not isinstance(item, dict):
+                continue
+            table_name = str(item.get("modelTable") or "").strip()
+            table_def = model_tables.get(table_name) if isinstance(model_tables.get(table_name), dict) else {}
+            table_cfg = table_def.get("sourceConfig") if isinstance(table_def.get("sourceConfig"), dict) else {}
+            if not item.get("sheet"):
+                sheet = _extract_sheet_name(item) or _extract_sheet_name(table_cfg)
+                if sheet:
+                    item["sheet"] = sheet
+            if not item.get("sheetRange") and table_cfg.get("sheetRange"):
+                item["sheetRange"] = str(table_cfg.get("sheetRange"))
+            if not item.get("url"):
+                url = str(table_cfg.get("url") or source_cfg.get("url") or "").strip()
+                if url:
+                    item["url"] = url
+            if not item.get("sourceObject") and item.get("sheet"):
+                item["sourceObject"] = item["sheet"]
+    return manifest
+
+
 def _attach_source_manifest(snapshot: dict[str, Any]) -> None:
     """Persist non-secret source lineage with the Unified Data Model.
 
@@ -311,19 +378,23 @@ def _attach_source_manifest(snapshot: dict[str, Any]) -> None:
         data_sources = [{"id": key, **(value if isinstance(value, dict) else {"name": str(value)})} for key, value in data_sources.items()]
 
     sources: list[dict[str, Any]] = []
+    source_by_id: dict[str, dict[str, Any]] = {}
     for index, raw in enumerate(data_sources if isinstance(data_sources, list) else []):
         if not isinstance(raw, dict):
             continue
         source_id = str(raw.get("id") or raw.get("name") or f"source-{index + 1}")
-        sources.append({
+        if source_id in source_by_id:
+            continue
+        entry = {
             "id": source_id,
             "name": str(raw.get("name") or raw.get("displayName") or source_id),
             "type": str(raw.get("type") or raw.get("sourceType") or "unknown"),
             "configuration": _sanitize(raw.get("configuration") or raw.get("config") or {}),
             "tables": [],
-        })
+        }
+        sources.append(entry)
+        source_by_id[source_id] = entry
 
-    source_by_id = {item["id"]: item for item in sources}
     model_tables = model.get("tables") or {}
     for index, query in enumerate(queries if isinstance(queries, list) else []):
         if not isinstance(query, dict):
@@ -349,12 +420,18 @@ def _attach_source_manifest(snapshot: dict[str, Any]) -> None:
                 inferred_type = "managed_file"
             if str(source.get("type") or "unknown").lower() in ("", "unknown", "file"):
                 source["type"] = inferred_type
-            source["tables"].append({
-                "modelTable": table_name,
-                "sourceObject": str(query.get("sourceObject") or query.get("physicalTable") or query.get("physical") or ""),
-                "query": str(query.get("sourceQuery") or query.get("query") or query.get("sql") or ""),
-                "managedStoragePath": storage_path or None,
-            })
+            table_cfg = query.get("sourceConfig") if isinstance(query.get("sourceConfig"), dict) else {}
+            if not table_cfg and isinstance(table_definition.get("sourceConfig"), dict):
+                table_cfg = table_definition.get("sourceConfig")
+            source["tables"].append(
+                _build_manifest_table_entry(
+                    table_name=table_name,
+                    source_object=str(query.get("sourceObject") or query.get("physicalTable") or query.get("physical") or ""),
+                    query_text=str(query.get("sourceQuery") or query.get("query") or query.get("sql") or ""),
+                    storage_path=storage_path,
+                    source_config=_sanitize(table_cfg),
+                )
+            )
 
     mapped = {str(item.get("modelTable")) for source in sources for item in source.get("tables", [])}
     for table_name in table_names:
@@ -368,12 +445,15 @@ def _attach_source_manifest(snapshot: dict[str, Any]) -> None:
             if target_source is None:
                 target_source = {"id": f"source-{source_type}-{len(sources) + 1}", "name": "Managed files" if source_type == "managed_file" else source_type, "type": source_type, "configuration": {}, "tables": []}
                 sources.append(target_source)
-            target_source["tables"].append({
-                "modelTable": table_name,
-                "sourceObject": str(table.get("physical") or table.get("physicalName") or table_name),
-                "query": "",
-                "managedStoragePath": storage_path or None,
-            })
+            target_source["tables"].append(
+                _build_manifest_table_entry(
+                    table_name=table_name,
+                    source_object=str(table.get("physical") or table.get("physicalName") or table_name),
+                    query_text="",
+                    storage_path=storage_path,
+                    source_config=_sanitize(table.get("sourceConfig") or {}),
+                )
+            )
 
     model["sourceManifest"] = {"version": 1, "sources": sources}
     parameters = transform.get("parameters") or snapshot.get("parameters") or model.get("parameters")
@@ -556,7 +636,9 @@ def publish_context(access_token: str) -> dict[str, Any]:
         raise PermissionError(data["error"])
     return {
         "user": user,
-        "workspaces": [w for w in (data.get("workspaces", []) if isinstance(data, dict) else []) if w.get("role") in ("Admin", "Owner")],
+        # Return every visible workspace. The client uses canPublish to disable
+        # Viewer destinations, while Contributor/Member roles remain valid.
+        "workspaces": data.get("workspaces", []) if isinstance(data, dict) else [],
         "serviceApiVersion": SERVICE_API_VERSION,
         "reportSchemaVersion": REPORT_SCHEMA_VERSION,
     }
@@ -716,10 +798,6 @@ def publish_report(payload: dict[str, Any], access_token: str, service_base_url:
     desktop_version = str(payload.get("desktopVersion") or "").strip()
     schema_version = str(payload.get("reportSchemaVersion") or REPORT_SCHEMA_VERSION).strip()
 
-    context = publish_context(access_token)
-    if not any(str(w.get("id")) == workspace_id for w in context.get("workspaces", [])):
-        raise PermissionError("Only Co-Owners and Owners are allowed to publish reports to this workspace.")
-
     if not workspace_id:
         raise ServiceValidationError("Select a workspace before publishing.")
     if not report_name:
@@ -737,15 +815,22 @@ def publish_report(payload: dict[str, Any], access_token: str, service_base_url:
     report_id = str(payload.get("reportId") or report.get("id") or "").strip()
     overwrite = bool(payload.get("overwrite", False))
     existing_reports = list_workspace_reports(workspace_id, access_token)
-    existing = next((item for item in existing_reports if report_id and str(item.get("id")) == report_id), None)
+    existing_by_id = next((item for item in existing_reports if report_id and str(item.get("id")) == report_id), None)
+    existing = existing_by_id
     if not existing:
         existing = next((item for item in existing_reports if str(item.get("name") or "").strip().casefold() == report_name.casefold()), None)
-    if existing and not overwrite:
+    # Re-publishing the same persisted report identity is an update, not a
+    # conflicting new report. A name-only collision still requires confirmation.
+    if existing and not overwrite and not existing_by_id:
         raise ServiceConflictError(
             f'A report named "{existing.get("name") or report_name}" already exists in this workspace. Confirm Replace to publish the updated version.'
         )
     if existing:
         report_id = str(existing["id"])
+    else:
+        # A desktop-local id can belong to no report (or a different workspace).
+        # Never send that stale id to the transactional RPC for a new publish.
+        report_id = ""
     report["name"] = report_name
     report["id"] = report_id or report.get("id")
     snapshot["name"] = report_name

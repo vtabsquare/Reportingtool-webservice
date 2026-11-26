@@ -2,16 +2,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 
 type Bridge={id:string;name:string;machine_name:string;status:string;last_heartbeat?:string;version?:string;enabled:boolean};
-type Connection={id:string;name:string;source_type:string;status?:string;last_error?:string;last_tested_at?:string;gateway_id?:string;connection_config?:any};
+type Connection={id:string;name:string;source_type:string;status?:string;last_error?:string;last_tested_at?:string;gateway_id?:string;connection_config?:any;table_mappings?:any[]};
 type Runtime={workspace_id:string;source_manifest?:any;connections:Connection[];schedule?:any;parameters?:any[];readiness?:{refresh_ready:boolean;blockers:string[]}};
 type Model={id:string;name:string;workspace_id:string};
 type Source={id:string;name:string;type:string;mode:string;configuration:any;tables:any[]};
 
 const canManage=(role:string)=>['Admin','Member','Contributor','Owner','Co-Owner'].includes(role);
 const when=(value?:string)=>value?new Date(value).toLocaleString():'Never';
-const normalType=(value:any)=>{const key=String(value||'').toLowerCase();if(key.includes('postgres'))return'postgresql';if(key.includes('sqlserver')||key.includes('sql_server')||key.includes('mssql'))return'sqlserver';if(key.includes('mysql'))return'mysql';if(key.includes('sheet'))return'google_sheets';return key||'unknown'};
-const typeLabel=(value:string)=>({postgresql:'PostgreSQL',sqlserver:'SQL Server',mysql:'MySQL',google_sheets:'Google Sheets',rest:'REST API'} as any)[normalType(value)]||value||'Source';
-const sourceKey=(source:Source)=>`${normalType(source.type)}|${source.configuration?.host||source.configuration?.server||source.configuration?.url||''}|${source.configuration?.database||''}`;
+const normalType=(value:any)=>{const key=String(value||'').toLowerCase();if(key.includes('postgres'))return'postgresql';if(key.includes('sqlserver')||key.includes('sql_server')||key.includes('mssql'))return'sqlserver';if(key.includes('mysql'))return'mysql';if(key.includes('snowflake'))return'snowflake';if(key.includes('sheet'))return'google_sheets';return key||'unknown'};
+const typeLabel=(value:string)=>({postgresql:'PostgreSQL',sqlserver:'SQL Server',mysql:'MySQL',snowflake:'Snowflake',google_sheets:'Google Sheets',rest:'REST API'} as any)[normalType(value)]||value||'Source';
+const sourceKey=(source:Source)=>`${normalType(source.type)}|${source.configuration?.account||source.configuration?.host||source.configuration?.server||source.configuration?.url||''}|${source.configuration?.database||''}|${source.configuration?.warehouse||''}`;
+const schedulePreset=(schedule:any)=>{const label=String(schedule?.interval_label||'').toLowerCase(),cron=String(schedule?.cron_expr||'');if(label.includes('hour')||cron==='0 * * * *')return'hourly';if(label.includes('week')||/\s[1-7]$/.test(cron))return'weekly';return'daily'};
+const scheduleTime=(schedule:any)=>{const parts=String(schedule?.cron_expr||'0 6 * * *').trim().split(/\s+/);return `${String(Number(parts[1])||0).padStart(2,'0')}:${String(Number(parts[0])||0).padStart(2,'0')}`};
+const cronFor=(preset:string,time:string)=>{const[hour,minute]=time.split(':').map(Number);if(preset==='hourly')return'0 * * * *';if(preset==='weekly')return`${minute||0} ${hour||0} * * 1`;return`${minute||0} ${hour||0} * * *`};
 
 function sourcesFrom(runtime:Runtime):Source[]{
   const raw=runtime.source_manifest?.sources||[];
@@ -28,7 +31,8 @@ function sourcesFrom(runtime:Runtime):Source[]{
 
 export default function SimpleSemanticModelSettings({model,runtime,role,onReload}:{model:Model;runtime:Runtime;role:string;onReload:()=>Promise<void>}){
   const sources=useMemo(()=>sourcesFrom(runtime),[runtime.source_manifest]);
-  const[bridges,setBridges]=useState<Bridge[]>([]),[bridgeId,setBridgeId]=useState(''),[binding,setBinding]=useState<any>(null),[busy,setBusy]=useState(false),[refreshBusy,setRefreshBusy]=useState(false),[refreshState,setRefreshState]=useState<any>(null),[message,setMessage]=useState(''),[error,setError]=useState(''),[editing,setEditing]=useState<Source|null>(null);
+  const[bridges,setBridges]=useState<Bridge[]>([]),[bridgeId,setBridgeId]=useState(''),[binding,setBinding]=useState<any>(null),[busy,setBusy]=useState(false),[refreshBusy,setRefreshBusy]=useState(false),[refreshState,setRefreshState]=useState<any>(null),[message,setMessage]=useState(''),[error,setError]=useState(''),[editing,setEditing]=useState<Source|null>(null),[scheduleBusy,setScheduleBusy]=useState(false),[schedule,setSchedule]=useState<any>({enabled:runtime.schedule?.status!=='paused',preset:schedulePreset(runtime.schedule),time:scheduleTime(runtime.schedule),timezone:runtime.schedule?.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC',notify_on_failure:runtime.schedule?.notify_on_failure!==false,notify_on_success:runtime.schedule?.notify_on_success===true,retry_count:runtime.schedule?.retry_count??3,retry_interval_minutes:runtime.schedule?.retry_interval_minutes??5,timeout_minutes:runtime.schedule?.timeout_minutes??30});
+  useEffect(()=>{setSchedule({enabled:runtime.schedule?.status!=='paused',preset:schedulePreset(runtime.schedule),time:scheduleTime(runtime.schedule),timezone:runtime.schedule?.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC',notify_on_failure:runtime.schedule?.notify_on_failure!==false,notify_on_success:runtime.schedule?.notify_on_success===true,retry_count:runtime.schedule?.retry_count??3,retry_interval_minutes:runtime.schedule?.retry_interval_minutes??5,timeout_minutes:runtime.schedule?.timeout_minutes??30})},[runtime.schedule]);
   const loadBridges=async()=>{setBusy(true);setError('');try{const[list,current]=await Promise.all([api<Bridge[]>(`/service/workspaces/${model.workspace_id}/data-bridges`),api<any>(`/service/semantic-models/${model.id}/data-bridge`)]);const savedId=String(current?.bridge_id||'');const savedBridge=current?.bridge||list.find(item=>item.id===savedId)||null;setBridges(list);setBinding({...current,bridge_id:savedId||null,bridge:savedBridge});setBridgeId(savedId)}catch(e:any){setError(e?.message||String(e))}finally{setBusy(false)}};
   useEffect(()=>{void loadBridges()},[model.id,model.workspace_id]);
   const saveBridge=async()=>{setBusy(true);setError('');setMessage('');try{const result=await api<any>(`/service/semantic-models/${model.id}/data-bridge`,{method:'PUT',body:JSON.stringify({bridgeId})});setBinding(result);setMessage(bridgeId?'Desktop Data Bridge connected to this Unified Data Model.':'Data Bridge mapping removed.');await loadBridges()}catch(e:any){setError(e?.message||String(e));setBusy(false)}};
@@ -39,22 +43,70 @@ export default function SimpleSemanticModelSettings({model,runtime,role,onReload
   const allCloud=sources.length>0&&sources.every(s=>['google_sheets','rest','odata','graphql','sharepoint','onedrive','google_drive','azure_blob','adls_gen2','s3','gcs','salesforce','dynamics365','servicenow','jira','github'].includes(normalType(s.type)));
   const cloudReady=allCloud&&sources.every(s=>connectionFor(s)?.status==='connected');
   const canRefresh=sources.length>0&&(cloudReady||bridgeOnline||runtime.readiness?.refresh_ready===true);
+  const saveSchedule=async()=>{if(!canRefresh)return;setScheduleBusy(true);setError('');setMessage('');try{const labels:any={hourly:'Hourly',daily:`Daily at ${schedule.time}`,weekly:`Weekly on Monday at ${schedule.time}`};await api(`/service/semantic-models/${model.id}/schedule`,{method:'PUT',body:JSON.stringify({enabled:schedule.enabled,cron_expr:cronFor(schedule.preset,schedule.time),interval_label:labels[schedule.preset],timezone:schedule.timezone,notify_on_failure:schedule.notify_on_failure,notify_on_success:schedule.notify_on_success,notification_channels:['in_app','email'],retry_count:schedule.retry_count,retry_interval_minutes:schedule.retry_interval_minutes,timeout_minutes:schedule.timeout_minutes})});setMessage(schedule.enabled?'Scheduled refresh saved and activated.':'Scheduled refresh saved in paused state.');await onReload()}catch(e:any){setError(e?.message||String(e))}finally{setScheduleBusy(false)}};
   return <div className="pbi-settings-wrap" style={{maxWidth:900}}><h2 style={{marginTop:0}}>Unified Data Model Settings</h2><p style={hint}>Only data connectivity and refresh settings are shown here. Model tables and published snapshot versions remain part of the Unified Data Model, not connection settings.</p>{error&&<Notice error>{error}</Notice>}{message&&<Notice>{message}</Notice>}
     <Section title="1. Data sources"><p style={hint}>Each original database or cloud endpoint appears once, even when it supplies multiple model tables.</p>{sources.length?<div className="pbi-source-grid" style={sourceGrid}><b>Source</b><b>Type</b><b>Mode</b><b>Status</b><span/>{sources.map(source=>{const connection=connectionFor(source);const local=/^(localhost|127\.0\.0\.1|::1)$/i.test(String(source.configuration?.host||source.configuration?.server||''));const status=connection?.status==='connected'?'Connected':local&&bridgeOnline?'Bridge online':'Setup required';return <div key={source.id} style={{display:'contents'}}><span><b style={{display:'block'}}>{source.name}</b>{source.configuration?.database&&<small style={hint}>{source.configuration.database}</small>}</span><span>{typeLabel(source.type)}</span><span>{source.mode}</span><span style={{color:status==='Connected'||status==='Bridge online'?'#166534':'#b45309',fontWeight:700}}>{status}</span><button disabled={!canManage(role)||local} style={link} onClick={()=>setEditing(source)}>{local?'Uses Data Bridge':connection?'Edit':'Configure'}</button></div>})}</div>:<Empty text="This published model contains imported data but no source identity. It was created before PostgreSQL source metadata was retained. In Desktop, reconnect to PostgreSQL, reimport the report tables once, save, and republish. The password remains local; Services will then show one PostgreSQL source entry."/>}</Section>
     <Section title="2. Desktop Data Bridge"><p style={hint}>Use this only for localhost or private-network sources. Open Desktop Settings → Data Bridge on the database computer, select this workspace, and connect it.</p><div className="pbi-bridge-card" style={bridgeCard}><div><b>{boundBridge?.name||'No bridge selected'}</b><small>{boundBridge?`${boundBridge.machine_name} · ${boundBridge.status} · Last seen ${when(boundBridge.last_heartbeat)}`:'Select an online Desktop bridge below and save it.'}</small></div><span className={`pbi-bridge-status-pill ${bridgeOnline?'online':'offline'}`} style={{...statusPill,background:bridgeOnline?'var(--svc-status-bg, #dcfce7)':'var(--svc-surface-3, #f1f5f9)',color:bridgeOnline?'var(--svc-status-color, #166534)':'var(--svc-muted, #64748b)'}}>{bridgeOnline?'Online':boundBridge?'Offline':'Not selected'}</span></div><div style={{display:'flex',gap:9,alignItems:'end'}}><label style={{...label,flex:1}}>Available bridge<select className="pbi-settings-control" value={bridgeId} disabled={!canManage(role)||busy} onChange={e=>setBridgeId(e.target.value)} style={control}><option value="">No bridge</option>{bridges.map(bridge=><option key={bridge.id} value={bridge.id} disabled={bridge.status!=='online'}>{bridge.name} · {bridge.machine_name} · {bridge.status}</option>)}</select></label><button disabled={!canManage(role)||busy||bridgeId===String(binding?.bridge_id||'')||(!!bridgeId&&bridges.find(b=>b.id===bridgeId)?.status!=='online')} className="pbi-settings-btn-primary" style={primary} onClick={()=>void saveBridge()}>{busy?'Checking…':'Save bridge'}</button><button disabled={busy} className="pbi-settings-btn-secondary" style={secondary} onClick={()=>void loadBridges()}>Refresh status</button></div>{!bridges.length&&<Empty text="No Desktop Data Bridge is registered in this workspace."/>}</Section>
     <Section title="3. Refresh"><p style={hint}>{allCloud?'Cloud data sources (such as Google Sheets) are refreshed directly by Services in the cloud.':'Refresh requests are executed on the selected Desktop Data Bridge. Database credentials remain protected on that computer and are never returned to Services.'}</p>{canRefresh?<div className="pbi-settings-ready" style={ready}><span>Ready for manual refresh{refreshState?.status?` · ${refreshState.status}`:''}</span><button disabled={refreshBusy} className="pbi-settings-btn-primary" style={primary} onClick={()=>void runRefresh()}>{refreshBusy?'Refreshing…':'Refresh now'}</button></div>:<div className="pbi-settings-warning" style={warning}><b>Refresh is not ready.</b><span>{!sources.length?'Republish from the updated Desktop so the Unified Data Model includes its source identity.':allCloud?'Configure and connect all cloud data sources above.':!boundBridge?'Select and save a Desktop Data Bridge.':'Open VTAB Desktop and wait for the bridge to become Online.'}</span></div>}
       <div className="pbi-settings-tip" style={{marginTop:12,padding:'10px 14px',background:'var(--svc-success-bg, #f0fdf4)',border:'1px solid var(--svc-success-border, #bbf7d0)',borderRadius:8,display:'flex',alignItems:'center',gap:8}}>
-        <span style={{color:'var(--svc-success-title, #166534)',fontWeight:600,fontSize:13}}>✓ Automatic Email & In-App Alerts Active</span>
-        <span style={{color:'var(--svc-success-text, #15803d)',fontSize:12}}>— Whenever a refresh runs, an email will be automatically sent to your inbox on both success and failure.</span>
+        <span style={{color:'var(--svc-success-title, #166534)',fontWeight:600,fontSize:13}}>✓ Durable refresh notifications</span>
+        <span style={{color:'var(--svc-success-text, #15803d)',fontSize:12}}>— In-app and email delivery follows the schedule choices below and the configured email provider.</span>
       </div>
     </Section>
-    {!!runtime.parameters?.length&&<Section title="4. Parameters"><p style={hint}>{runtime.parameters.length} published parameter{runtime.parameters.length===1?' is':'s are'} available. Parameter values remain unchanged by this connectivity update.</p></Section>}
+    <Section title="4. Scheduled refresh"><p style={hint}>Run refresh automatically without opening Desktop. The service uses the connection and table mappings above and keeps the previous snapshot online if a run fails.</p>{canRefresh?<><div style={formGrid}><label style={label}>Frequency<select className="pbi-settings-control" value={schedule.preset} onChange={e=>setSchedule({...schedule,preset:e.target.value})} style={control}><option value="hourly">Hourly</option><option value="daily">Daily</option><option value="weekly">Weekly · Monday</option></select></label>{schedule.preset!=='hourly'&&<Field label="Run time" type="time" value={schedule.time} onChange={value=>setSchedule({...schedule,time:value})}/>}<label style={label}>Time zone<select className="pbi-settings-control" value={schedule.timezone} onChange={e=>setSchedule({...schedule,timezone:e.target.value})} style={control}>{Array.from(new Set([Intl.DateTimeFormat().resolvedOptions().timeZone,'Asia/Kolkata','UTC','America/New_York','Europe/London'])).filter(Boolean).map(zone=><option key={zone} value={zone}>{zone}</option>)}</select></label><label style={checkLabel}><input type="checkbox" checked={schedule.enabled} onChange={e=>setSchedule({...schedule,enabled:e.target.checked})}/>Enable automatic refresh</label><label style={checkLabel}><input type="checkbox" checked={schedule.notify_on_failure} onChange={e=>setSchedule({...schedule,notify_on_failure:e.target.checked})}/>Notify on failure</label><label style={checkLabel}><input type="checkbox" checked={schedule.notify_on_success} onChange={e=>setSchedule({...schedule,notify_on_success:e.target.checked})}/>Notify on success</label></div><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12,marginTop:14}}><small style={hint}>{runtime.schedule?`Current status: ${runtime.schedule.status||'active'} · Next run ${when(runtime.schedule.next_run)}`:'No schedule saved yet.'}</small><button disabled={!canManage(role)||scheduleBusy} className="pbi-settings-btn-primary" style={primary} onClick={()=>void saveSchedule()}>{scheduleBusy?'Saving…':'Save schedule'}</button></div></>:<div style={warning}><b>Finish refresh setup first.</b><span>A schedule can be activated after the data source or Desktop Data Bridge is ready.</span></div>}</Section>
+    {!!runtime.parameters?.length&&<Section title="5. Parameters"><p style={hint}>{runtime.parameters.length} published parameter{runtime.parameters.length===1?' is':'s are'} available. Parameter values remain unchanged by this connectivity update.</p></Section>}
     {editing&&<DirectConnectionDialog modelId={model.id} source={editing} current={connectionFor(editing)} onClose={()=>setEditing(null)} onSaved={async()=>{setEditing(null);await onReload()}}/>}
   </div>;
 }
 
+function extractSheetName(item: any, fallback = ''): string {
+  const direct = String(item?.sheet || item?.sheetName || item?.sheet_name || '').trim();
+  if (direct) return direct;
+  const range = String(item?.sheetRange || item?.sheet_range || '').trim();
+  if (range.includes('!')) {
+    const prefix = range.split('!')[0].trim().replace(/^'+|'+$/g, '').replace(/''/g, "'");
+    if (prefix) return prefix;
+  }
+  const obj = String(item?.sourceObject || '').trim();
+  if (obj && !/^imported_/i.test(obj)) return obj;
+  return fallback;
+}
+
 function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelId:string;source:Source;current?:Connection;onClose:()=>void;onSaved:()=>Promise<void>}){
   const isGoogleSheets = normalType(source.type) === 'google_sheets';
+  const isSnowflake = normalType(source.type) === 'snowflake';
+  const sourceTables = (source.tables && source.tables.length > 0) ? source.tables : [{ modelTable: source.name }];
+  const existingMap = new Map((current?.table_mappings || []).map((m: any) => [String(m?.table || '').trim(), m]));
+  const manifestSheets = sourceTables.map((item: any) => extractSheetName(item)).filter(Boolean);
+  const existingSheets = sourceTables.map((item: any) => {
+    const t = String(item.modelTable || item.table || item.name || '').trim();
+    return String(existingMap.get(t)?.sheet || '').trim();
+  }).filter(Boolean);
+  const clobberedDuplicateSheets =
+    sourceTables.length > 1 &&
+    new Set(manifestSheets).size > 1 &&
+    existingSheets.length === sourceTables.length &&
+    new Set(existingSheets).size === 1;
+
+  const initialSheetMappings = sourceTables.map((item: any) => {
+    const table = String(item.modelTable || item.table || item.name || '').trim();
+    const existing: any = existingMap.get(table);
+    const manifestSheet = extractSheetName(item);
+    const fallbackSheet = sourceTables.length === 1
+      ? (extractSheetName(source.configuration) || current?.connection_config?.sheet || source.name || 'Sheet1')
+      : table;
+    const resolvedSheet = clobberedDuplicateSheets
+      ? (manifestSheet || fallbackSheet)
+      : String(existing?.sheet || manifestSheet || fallbackSheet).trim();
+    return {
+      table,
+      query: item.query || existing?.query || '',
+      url: item.url || existing?.url || '',
+      sheet: resolvedSheet,
+      storage_path: item.managedStoragePath || existing?.storage_path || '',
+    };
+  }).filter((item: any) => item.table);
+
   const initial = {
     host: source.configuration?.host || source.configuration?.server || current?.connection_config?.host || '',
     port: source.configuration?.port || current?.connection_config?.port || (source.type === 'postgresql' ? 5432 : 1433),
@@ -62,23 +114,33 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
     username: '',
     password: '',
     sslmode: current?.connection_config?.sslmode || 'require',
-    url: source.configuration?.url || current?.connection_config?.url || '',
-    sheet: source.configuration?.sheet || source.configuration?.sheetName || current?.connection_config?.sheet || source.name || 'Sheet1',
+    url: current?.connection_config?.url || source.configuration?.url || '',
+    sheet: initialSheetMappings[0]?.sheet || extractSheetName(source.configuration) || current?.connection_config?.sheet || source.name || 'Sheet1',
+    sheetMappings: initialSheetMappings,
+    account: source.configuration?.account || current?.connection_config?.account || '',
+    warehouse: source.configuration?.warehouse || current?.connection_config?.warehouse || '',
+    schema: source.configuration?.schema || current?.connection_config?.schema || '',
+    role: source.configuration?.role || current?.connection_config?.role || '',
+    authenticator: current?.connection_config?.authenticator || source.configuration?.authenticator || 'snowflake',
   };
   const [form, setForm] = useState<any>(initial), [busy, setBusy] = useState(false), [error, setError] = useState('');
 
   const payload = () => {
     if (isGoogleSheets) {
       const cleanUrl = String(form.url || '').trim();
-      const cleanSheet = String(form.sheet || '').trim();
-      const tables = (source.tables && source.tables.length > 0) ? source.tables : [{ table: source.name }];
+      const mappings = (form.sheetMappings && form.sheetMappings.length > 0)
+        ? form.sheetMappings
+        : [{ table: source.name, sheet: String(form.sheet || '').trim() }];
+      const primarySheet = String(
+        mappings.length === 1 ? (form.sheet || mappings[0]?.sheet || '') : (mappings[0]?.sheet || form.sheet || '')
+      ).trim();
       return {
         id: current?.id,
         name: source.name,
         source_type: 'google_sheets',
         connection_config: {
           url: cleanUrl,
-          sheet: cleanSheet,
+          sheet: primarySheet,
         },
         credentials: {
           sheet_url: cleanUrl,
@@ -86,12 +148,37 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
         authentication_method: 'anonymous',
         privacy_level: 'organizational',
         encrypted_transport: true,
-        table_mappings: tables.map((item: any) => ({
-          table: item.modelTable || item.table || item.name,
+        table_mappings: mappings.map((item: any) => ({
+          table: item.table,
           query: item.query || '',
           url: cleanUrl || item.url || source.configuration?.url || '',
-          sheet: cleanSheet || item.sheet || item.name || '',
-          storage_path: item.managedStoragePath || '',
+          sheet: (mappings.length === 1 ? String(form.sheet || item.sheet || '').trim() : String(item.sheet || '').trim()) || item.table,
+          storage_path: item.storage_path || '',
+        })).filter((item: any) => item.table),
+      };
+    }
+
+    if (isSnowflake) {
+      return {
+        id: current?.id,
+        name: source.name,
+        source_type: 'snowflake',
+        connection_config: {
+          account: form.account,
+          warehouse: form.warehouse,
+          database: form.database,
+          schema: form.schema || undefined,
+          role: form.role || undefined,
+          user: form.username,
+          authenticator: form.authenticator,
+        },
+        credentials: form.authenticator === 'oauth' ? { token: form.password } : { password: form.password },
+        authentication_method: form.authenticator === 'oauth' ? 'oauth_token' : 'username_password',
+        privacy_level: 'organizational',
+        encrypted_transport: true,
+        table_mappings: source.tables.map((item: any) => ({
+          table: item.modelTable || item.table || item.name,
+          query: item.query || '',
         })).filter((item: any) => item.table),
       };
     }
@@ -146,6 +233,8 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
 
   const canSave = isGoogleSheets
     ? Boolean(String(form.url || '').trim())
+    : isSnowflake
+    ? Boolean(form.account && form.warehouse && form.database && form.username && (current || form.password))
     : Boolean(form.host && form.database && form.username && (current || form.password));
 
   return (
@@ -157,6 +246,8 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
         <p style={hint}>
           {isGoogleSheets
             ? 'Connect directly to Google Sheets for automated data refresh. Ensure sharing access is set to "Anyone with the link can view".'
+            : isSnowflake
+            ? 'Use a Snowflake password or a Snowflake-issued OAuth access token for unattended service refresh. Interactive Google/Microsoft browser login remains a Desktop/Data Bridge flow.'
             : 'This direct connection is tested by Services. Use Desktop Data Bridge instead when the host is localhost or private.'}
         </p>
         {error && <Notice error>{error}</Notice>}
@@ -167,11 +258,44 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
               value={form.url}
               onChange={value => setForm({ ...form, url: value })}
             />
-            <Field
-              label="Worksheet name"
-              value={form.sheet}
-              onChange={value => setForm({ ...form, sheet: value })}
-            />
+            {form.sheetMappings?.length > 1 ? (
+              <div style={{ display: 'grid', gap: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--svc-text, inherit)' }}>
+                  Table → Worksheet mapping
+                </span>
+                <div style={{ display: 'grid', gap: 8, maxHeight: 220, overflowY: 'auto', paddingRight: 2 }}>
+                  {form.sheetMappings.map((item: any, idx: number) => (
+                    <div key={item.table} style={{ display: 'grid', gridTemplateColumns: 'minmax(140px, 1fr) minmax(160px, 1fr)', gap: 10, alignItems: 'center' }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--svc-text, inherit)' }}>{item.table}</span>
+                      <input
+                        className="pbi-settings-control"
+                        type="text"
+                        value={item.sheet}
+                        placeholder="Worksheet tab name"
+                        onChange={e => {
+                          const next = form.sheetMappings.map((entry: any, i: number) =>
+                            i === idx ? { ...entry, sheet: e.target.value } : entry
+                          );
+                          setForm({ ...form, sheetMappings: next });
+                        }}
+                        style={control}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <Field
+                label="Worksheet name"
+                value={form.sheet}
+                onChange={value => {
+                  const next = (form.sheetMappings || []).map((entry: any, i: number) =>
+                    i === 0 ? { ...entry, sheet: value } : entry
+                  );
+                  setForm({ ...form, sheet: value, sheetMappings: next });
+                }}
+              />
+            )}
             <div
               className="pbi-connection-tip"
               style={{
@@ -186,6 +310,17 @@ function DirectConnectionDialog({modelId,source,current,onClose,onSaved}:{modelI
             >
               💡 <b>Google Sheets Access:</b> In Google Sheets, click <b>Share</b> → set General access to <b>&ldquo;Anyone with the link&rdquo;</b> (Role: <b>Viewer</b>). Services will securely pull the latest sheet data during refresh.
             </div>
+          </div>
+        ) : isSnowflake ? (
+          <div style={formGrid}>
+            <Field label="Account identifier" value={form.account} onChange={value => setForm({ ...form, account: value })} />
+            <Field label="Warehouse" value={form.warehouse} onChange={value => setForm({ ...form, warehouse: value })} />
+            <Field label="Database" value={form.database} onChange={value => setForm({ ...form, database: value })} />
+            <Field label="Schema (optional)" value={form.schema} onChange={value => setForm({ ...form, schema: value })} />
+            <Field label="Role (optional)" value={form.role} onChange={value => setForm({ ...form, role: value })} />
+            <label style={label}>Authentication<select className="pbi-settings-control" value={form.authenticator} onChange={e=>setForm({...form,authenticator:e.target.value,password:''})} style={control}><option value="snowflake">Username and password</option><option value="oauth">OAuth access token</option></select></label>
+            <Field label="User" value={form.username} onChange={value => setForm({ ...form, username: value })} />
+            <Field label={form.authenticator==='oauth'?'OAuth access token':'Password'} type="password" value={form.password} onChange={value => setForm({ ...form, password: value })} />
           </div>
         ) : (
           <div style={formGrid}>
@@ -234,6 +369,7 @@ const sourceGrid:React.CSSProperties={display:'grid',gridTemplateColumns:'minmax
 const bridgeCard:React.CSSProperties={display:'flex',alignItems:'center',gap:12,padding:13,border:'1px solid var(--svc-border, #e5e7eb)',borderRadius:7,marginBottom:12,background:'var(--svc-surface-2, transparent)',color:'var(--svc-text, inherit)'};
 const statusPill:React.CSSProperties={marginLeft:'auto',padding:'5px 9px',borderRadius:12,fontSize:11,fontWeight:800};
 const label:React.CSSProperties={display:'grid',gap:5,fontSize:12,fontWeight:700,color:'var(--svc-text, inherit)'};
+const checkLabel:React.CSSProperties={display:'flex',alignItems:'center',gap:8,minHeight:38,fontSize:12,fontWeight:700,color:'var(--svc-text, inherit)'};
 const control:React.CSSProperties={height:38,border:'1px solid var(--svc-border, #cbd5e1)',borderRadius:6,padding:'7px 9px',background:'var(--svc-surface-2, #fff)',color:'var(--svc-text, inherit)'};
 const secondary:React.CSSProperties={height:38,border:'1px solid var(--svc-border, #cbd5e1)',borderRadius:6,padding:'7px 12px',background:'var(--svc-surface-3, #fff)',color:'var(--svc-text, inherit)',fontWeight:700,cursor:'pointer'};
 const primary:React.CSSProperties={...secondary,background:'#6d28d9',borderColor:'#6d28d9',color:'#fff'};

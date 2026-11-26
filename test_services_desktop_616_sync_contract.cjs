@@ -18,7 +18,7 @@ const checks = [
   ['iterator-local VAR blocks are parsed', parser.includes('return self.parse_var_block()')],
   ['population volatility is executable', registry.includes('STDEV.P') && engine.includes('STDDEV_POP')],
   ['AI measure generation is absent from Services', !server.includes("@app.post('/api/v1/measures/ai-generate')") && !server.includes('suggest_measure_from_prompt')],
-  ['category colors are stable by category identity', colors.includes('stableCategoryColor') && colors.includes('Math.imul') && chart.includes('stableCategoryColor(cat, palette)')],
+  ['category colors are stable by category identity', colors.includes('stableCategoryColor') && colors.includes('Math.imul') && chart.includes('return distinctCategoryColors(values,palette,overrides)')],
   ['legend series use persistent category colors', chart.includes('color:categoryColor(sn,si,0)') && schema.includes("title:'Legend and category colors'")],
   ['published slicers consume desktop typography', viewer.includes("'--slicer-size':`${f.tableFontSize||11}px`") && viewer.includes('slicerTileButton')],
   ['Services keeps independent slicer filters', viewer.includes('interactionFilterMap') && viewer.includes('handleCrossFilter') && viewer.includes('activeFilter={activeFilter}')],

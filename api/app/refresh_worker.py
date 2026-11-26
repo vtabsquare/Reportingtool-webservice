@@ -41,6 +41,10 @@ def source_frame(source_type: str, credentials: dict, mapping: dict) -> pd.DataF
         # New schedules store the selected worksheet name. Read that worksheet
         # from the XLSX export so multi-tab spreadsheets refresh the correct table.
         sheet_name = str(mapping.get("sheet") or mapping.get("sheet_name") or "").strip()
+        if not sheet_name:
+            sheet_range = str(mapping.get("sheetRange") or mapping.get("sheet_range") or "").strip()
+            if "!" in sheet_range:
+                sheet_name = sheet_range.split("!", 1)[0].strip().strip("'\"").replace("''", "'")
         if sheet_name:
             try:
                 xlsx_data = _download_public_xlsx(url)
@@ -82,6 +86,68 @@ def source_frame(source_type: str, credentials: dict, mapping: dict) -> pd.DataF
         return pd.read_sql_query(query, connection)
     finally:
         connection.close()
+
+
+def validate_refresh_frame(frame: pd.DataFrame, table_name: str, table_definition: dict[str, Any]) -> pd.DataFrame:
+    """Keep a refresh from activating a snapshot that breaks the published model.
+
+    Model columns map the semantic name to the physical source column.  Database
+    drivers sometimes change only identifier casing, which is safe to normalize;
+    genuinely missing or duplicate columns must fail the run so the previous
+    known-good snapshot remains online.
+    """
+    if not isinstance(frame, pd.DataFrame):
+        raise ValueError(f'Refresh for "{table_name}" did not return a tabular result.')
+    source_columns = [str(column) for column in frame.columns]
+    duplicates = sorted({column for column in source_columns if source_columns.count(column) > 1})
+    if duplicates:
+        raise ValueError(f'Refresh for "{table_name}" returned duplicate columns: {", ".join(duplicates)}.')
+
+    column_map = (table_definition or {}).get("columns") or {}
+    if isinstance(column_map, dict):
+        expected = [str(physical or semantic) for semantic, physical in column_map.items()]
+    elif isinstance(column_map, list):
+        expected = [str(item.get("physical") or item.get("name") or "") for item in column_map if isinstance(item, dict)]
+    else:
+        expected = []
+    expected = [column for column in expected if column]
+    if not expected:
+        return frame
+
+    folded: dict[str, list[str]] = {}
+    for column in source_columns:
+        folded.setdefault(column.casefold(), []).append(column)
+    rename: dict[str, str] = {}
+    missing: list[str] = []
+    for column in expected:
+        if column in source_columns:
+            continue
+        matches = folded.get(column.casefold(), [])
+        if len(matches) == 1:
+            rename[matches[0]] = column
+        else:
+            missing.append(column)
+    if missing:
+        preview = ", ".join(missing[:12]) + ("…" if len(missing) > 12 else "")
+        raise ValueError(
+            f'Refresh for "{table_name}" is missing model columns: {preview}. '
+            "Check that this model table is mapped to the correct source query. "
+            "The previous successful snapshot remains active."
+        )
+    return frame.rename(columns=rename) if rename else frame
+
+
+def _read_parquet_bytes(payload: bytes) -> pd.DataFrame:
+    import duckdb
+    with tempfile.TemporaryDirectory(prefix="vtab-read-pq-") as directory:
+        target = Path(directory) / "snapshot.parquet"
+        target.write_bytes(payload)
+        con = duckdb.connect()
+        try:
+            escaped = target.as_posix().replace("'", "''")
+            return con.execute(f"SELECT * FROM read_parquet('{escaped}')").df()
+        finally:
+            con.close()
 
 
 def parquet_bytes(frame: pd.DataFrame) -> bytes:
@@ -177,11 +243,12 @@ def execute_refresh(job: dict[str, Any], client=None) -> dict[str, Any]:
                 raise ValueError(f'Managed file mapping for "{table_name}" has no storage asset.')
             try:
                 managed_payload = client.storage.from_("vtab-reports").download(storage_path)
-                frame = pd.read_parquet(io.BytesIO(managed_payload))
+                frame = _read_parquet_bytes(managed_payload)
             except Exception as error:
                 raise ValueError(f'Managed file for "{table_name}" is unavailable: {error}') from error
         else:
             frame = source_frame(active_source_type, active_credentials, current_mapping)
+        frame = validate_refresh_frame(frame, table_name, model_tables[table_name])
         payload = parquet_bytes(frame)
         digest = hashlib.sha256(payload).hexdigest()[:16]
         safe = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in table_name)[:80] or "Table"

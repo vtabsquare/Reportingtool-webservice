@@ -719,7 +719,7 @@ export default function PublishedViewer({reportId,initialItem,embedded=false,clo
     .catch((error:any)=>{if(!controller.signal.aborted)setVisualLoadError(error?.message||String(error))})
     .finally(()=>{if(!controller.signal.aborted)setVisualLoading(false)});
    return()=>controller.abort();
- },[reportId,item?.id,page?.id,JSON.stringify(queryVisualIds),JSON.stringify(combinedFilters),publishedMode,visualReloadKey]);
+ },[reportId,item?.id,item?.updated_at,page?.id,JSON.stringify(queryVisualIds),JSON.stringify(combinedFilters),publishedMode,visualReloadKey]);
  useEffect(()=>{const targetPage=new URLSearchParams(location.search).get('page');if(targetPage){const index=pages.findIndex((item:any)=>item.id===targetPage);if(index>=0)setPageIndex(index)}},[item?.id]);
  const width=s.pageWidth||1920,height=s.pageHeight||1080;
  // Desktop always uses the dark-theme canvas as the base layer when the page

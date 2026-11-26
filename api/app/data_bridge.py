@@ -142,10 +142,14 @@ _CLOUD_SOURCE_TYPES = frozenset({
     "azure_blob", "adls_gen2", "s3", "gcs",
     "salesforce", "dynamics365", "servicenow", "jira", "github",
 })
+_SERVICE_REFRESH_TYPES = _CLOUD_SOURCE_TYPES | frozenset({
+    "postgresql", "postgres", "redshift", "sqlserver", "synapse",
+    "fabric_warehouse", "mysql", "mariadb", "snowflake",
+})
 
 
-def _model_is_cloud_only(semantic_model_id: str, access_token: str | None = None) -> bool:
-    """Return True when every live connection is a cloud source (no DB / bridge needed)."""
+def _model_has_service_refresh_connections(semantic_model_id: str, access_token: str | None = None) -> bool:
+    """Return True when every live source can execute in the Services worker."""
     try:
         from .supabase_store import _admin_client
         client = _anon_client(access_token) if access_token else _admin_client()
@@ -160,7 +164,7 @@ def _model_is_cloud_only(semantic_model_id: str, access_token: str | None = None
         live = [r for r in rows if (r.get("source_type") or "").lower() != "managed_file"]
         if not live:
             return False
-        return all((r.get("source_type") or "").lower() in _CLOUD_SOURCE_TYPES for r in live)
+        return all((r.get("source_type") or "").lower() in _SERVICE_REFRESH_TYPES for r in live)
     except Exception:
         return False
 
@@ -310,40 +314,18 @@ def request_bridge_refresh(semantic_model_id: str, authorization: str | None = H
             raise HTTPException(404, "Semantic model not found.")
         model = m_row[0]
 
-    # ── Cloud-source fast path ────────────────────────────────────────────────
-    # Google Sheets, REST APIs and other cloud connectors are refreshed by the
-    # server-side RefreshWorker directly in Services without needing a Desktop Data Bridge.
-    if _model_is_cloud_only(semantic_model_id, access_token):
-        import threading
-        from datetime import datetime, timezone
-        from .supabase_store import _admin_client, _supabase_user_id_from_token_nothrow, semantic_model_refresh_now
+    # ── Services-worker path ──────────────────────────────────────────────────
+    # Cloud endpoints and directly reachable databases (including Snowflake)
+    # use the durable scheduled-job queue. This avoids a duplicate background
+    # thread and gives manual and scheduled refresh identical safety behavior.
+    if _model_has_service_refresh_connections(semantic_model_id, access_token):
+        from .supabase_store import _supabase_user_id_from_token_nothrow, semantic_model_refresh_now
         user_id = _supabase_user_id_from_token_nothrow(authorization) or str(model.get("created_by") or "")
-        sb = _admin_client()
-        report_id = str(model.get("report_id") or "")
-        
-        # Ensure a scheduled_job exists for foreign key constraint
         sched_res = semantic_model_refresh_now(semantic_model_id, user_id)
         job_id = (sched_res.get("job") or {}).get("id")
-
-        run_row = sb.table("refresh_runs").insert({
-            "job_id": job_id,
-            "report_id": report_id,
-            "semantic_model_id": semantic_model_id,
-            "requested_by": user_id,
-            "trigger_type": "manual",
-            "status": "running",
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "tables_total": 1,
-        }).execute().data[0]
-        run_id = run_row["id"]
-
-        thread = threading.Thread(
-            target=_run_cloud_refresh_async,
-            args=(run_id, semantic_model_id, report_id, user_id),
-            daemon=True
-        )
-        thread.start()
-        return {"ok": True, "job_id": run_id, "status": "running"}
+        if not job_id:
+            raise HTTPException(503, "Services could not create the durable refresh job.")
+        return {"ok": True, "job_id": job_id, "status": "queued"}
 
     # ── Desktop Bridge path (database sources) ────────────────────────────────
     try:
@@ -359,6 +341,27 @@ def request_bridge_refresh(semantic_model_id: str, authorization: str | None = H
         raise HTTPException(503, f"Could not queue the Data Bridge refresh. Apply migration 014 and retry. {error}")
 
 
+def _invalidate_semantic_model_reports(sb, semantic_model_id: str, report_id_hint: str = "") -> None:
+    """Clear report definition/snapshot/query caches for reports using a model."""
+    try:
+        from .reporting_service import invalidate_report_cache
+        report_ids: set[str] = set()
+        if report_id_hint:
+            report_ids.add(str(report_id_hint))
+        m_rows = sb.table("semantic_models").select("report_id").eq("id", semantic_model_id).limit(1).execute().data or []
+        for row in m_rows:
+            if row.get("report_id"):
+                report_ids.add(str(row["report_id"]))
+        rep_rows = sb.table("published_reports").select("id").eq("semantic_model_id", semantic_model_id).execute().data or []
+        for row in rep_rows:
+            if row.get("id"):
+                report_ids.add(str(row["id"]))
+        for rid in report_ids:
+            invalidate_report_cache(rid)
+    except Exception:
+        pass
+
+
 @router.get("/semantic-models/{semantic_model_id}/bridge-refresh/{job_id}")
 def bridge_refresh_status(semantic_model_id: str, job_id: str, authorization: str | None = Header(default=None)):
     try:
@@ -366,6 +369,7 @@ def bridge_refresh_status(semantic_model_id: str, job_id: str, authorization: st
     except HTTPException:
         access_token = None
 
+    model = None
     if access_token:
         model = get_semantic_model(semantic_model_id, access_token)
         _workspace(access_token, str(model["workspace_id"]))
@@ -373,10 +377,10 @@ def bridge_refresh_status(semantic_model_id: str, job_id: str, authorization: st
     # 1. Check refresh_runs first (for cloud refreshes)
     try:
         from .supabase_store import _admin_client
+        sb = _admin_client()
         runs = (
-            _admin_client()
-            .table("refresh_runs")
-            .select("id,status,trigger_type,started_at,completed_at,error_message,details,rows_processed")
+            sb.table("refresh_runs")
+            .select("id,report_id,status,trigger_type,started_at,completed_at,error_message,details,rows_processed")
             .eq("id", job_id)
             .limit(1)
             .execute()
@@ -387,6 +391,8 @@ def bridge_refresh_status(semantic_model_id: str, job_id: str, authorization: st
             result = r.get("details") or {}
             if "rows" not in result and r.get("rows_processed") is not None:
                 result["rows"] = r.get("rows_processed")
+            if r.get("status") == "succeeded":
+                _invalidate_semantic_model_reports(sb, semantic_model_id, str(r.get("report_id") or (model or {}).get("report_id") or ""))
             return {
                 "id": r["id"],
                 "status": r["status"],
@@ -400,7 +406,26 @@ def bridge_refresh_status(semantic_model_id: str, job_id: str, authorization: st
     except Exception:
         pass
 
-    # 2. Check vtab_bridge_refresh_jobs (for Desktop Bridge refreshes)
+    # 2. Check the durable Services scheduler job and its latest run.
+    try:
+        from .supabase_store import _admin_client
+        sb = _admin_client()
+        jobs = sb.table("scheduled_jobs").select("id,report_id,run_requested_at,locked_at,last_run,last_run_status,error_message").eq("id", job_id).eq("semantic_model_id", semantic_model_id).limit(1).execute().data or []
+        if jobs:
+            job = jobs[0]
+            latest = sb.table("refresh_runs").select("id,report_id,status,trigger_type,started_at,completed_at,error_message,details,rows_processed").eq("job_id", job_id).eq("semantic_model_id", semantic_model_id).order("created_at", desc=True).limit(1).execute().data or []
+            if latest and not job.get("run_requested_at"):
+                run = latest[0];result = run.get("details") or {}
+                if "rows" not in result and run.get("rows_processed") is not None:result["rows"] = run.get("rows_processed")
+                status_val = run.get("status") or job.get("last_run_status") or "queued"
+                if status_val == "succeeded":
+                    _invalidate_semantic_model_reports(sb, semantic_model_id, str(run.get("report_id") or job.get("report_id") or (model or {}).get("report_id") or ""))
+                return {"id":run["id"],"status":status_val,"trigger_type":run.get("trigger_type") or "manual","created_at":run.get("started_at"),"claimed_at":run.get("started_at"),"completed_at":run.get("completed_at"),"error_message":run.get("error_message"),"result":result}
+            return {"id":job_id,"status":"running" if job.get("locked_at") else "queued","trigger_type":"manual","created_at":job.get("run_requested_at"),"claimed_at":job.get("locked_at"),"completed_at":None,"error_message":job.get("error_message"),"result":{}}
+    except Exception:
+        pass
+
+    # 3. Check vtab_bridge_refresh_jobs (for Desktop Bridge refreshes)
     try:
         rows = (
             _anon_client(access_token).table("vtab_bridge_refresh_jobs")
@@ -411,17 +436,12 @@ def bridge_refresh_status(semantic_model_id: str, job_id: str, authorization: st
             job_row = rows[0]
             if job_row.get("status") == "succeeded":
                 res = job_row.get("result") or {}
-                report_id = str(model.get("report_id") or "")
-                if report_id:
-                    try:
-                        from .reporting_service import invalidate_report_cache
-                        invalidate_report_cache(report_id)
-                    except Exception:
-                        pass
+                report_id = str((model or {}).get("report_id") or "")
+                from .supabase_store import _admin_client
+                _invalidate_semantic_model_reports(_admin_client(), semantic_model_id, report_id)
                 if isinstance(res, dict) and not res.get("after_refresh_queued"):
                     try:
                         from .automation_service import queue_after_refresh
-                        report_id = str(model.get("report_id") or "")
                         if report_id:
                             queue_after_refresh(report_id)
                         res["after_refresh_queued"] = True

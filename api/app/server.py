@@ -1757,6 +1757,63 @@ def semantic_model_runtime(semantic_model_id: str, authorization: str | None = H
         _service_error(error)
 
 
+def _validate_google_sheets_table_mappings(model: dict, config: dict, mappings: list[dict]) -> dict | None:
+    """Verify every mapped worksheet exists and matches its model table columns."""
+    import io
+    import openpyxl
+    import pandas as pd
+    from .connectors import _download_public_xlsx, list_google_sheets
+    from .refresh_worker import validate_refresh_frame
+    from .reporting_service import _extract_sheet_name
+
+    if not mappings:
+        return None
+    definition = model.get('definition') or {}
+    if isinstance(definition, str):
+        definition = json.loads(definition or '{}')
+    model_tables = (definition.get('tables') or {}) if isinstance(definition, dict) else {}
+    token = config.get('access_token') or config.get('token')
+    xlsx_cache: dict[str, bytes] = {}
+
+    for raw_mapping in mappings:
+        if not isinstance(raw_mapping, dict):
+            continue
+        table_name = str(raw_mapping.get('table') or '').strip()
+        if not table_name:
+            continue
+        url = str(raw_mapping.get('url') or config.get('url') or config.get('sheet_url') or '').strip()
+        if not url or '/spreadsheets/d/' not in url:
+            continue
+        sheet_name = str(raw_mapping.get('sheet') or raw_mapping.get('sheet_name') or '').strip() or _extract_sheet_name(raw_mapping)
+        if token:
+            sheets = list_google_sheets(url, token)
+            titles = [str(item.get('title') or '') for item in sheets if item.get('title')]
+            if sheet_name and titles and sheet_name not in titles:
+                return {'ok': False, 'message': f'Worksheet "{sheet_name}" for table "{table_name}" was not found. Available worksheets: {", ".join(titles)}.'}
+            continue
+        if url not in xlsx_cache:
+            xlsx_cache[url] = _download_public_xlsx(url)
+        xlsx_data = xlsx_cache[url]
+        wb = openpyxl.load_workbook(io.BytesIO(xlsx_data), read_only=True, data_only=True)
+        try:
+            titles = list(wb.sheetnames)
+        finally:
+            wb.close()
+        if sheet_name and sheet_name not in titles:
+            return {'ok': False, 'message': f'Worksheet "{sheet_name}" for table "{table_name}" was not found. Available worksheets: {", ".join(titles)}.'}
+        target_sheet: Any = sheet_name or (titles[0] if titles else 0)
+        try:
+            frame = pd.read_excel(io.BytesIO(xlsx_data), sheet_name=target_sheet, nrows=5, engine='openpyxl')
+        except Exception as err:
+            return {'ok': False, 'message': f'Could not read worksheet "{target_sheet}" for table "{table_name}": {err}'}
+        if table_name in model_tables:
+            try:
+                validate_refresh_frame(frame, table_name, model_tables[table_name])
+            except ValueError as err:
+                return {'ok': False, 'message': str(err)}
+    return None
+
+
 def _test_semantic_model_connection_payload(semantic_model_id: str, payload: dict, authorization: str | None) -> dict:
     from .supabase_store import _admin_client, _semantic_model_manager
     from .credential_vault import decrypt_credentials
@@ -1779,7 +1836,12 @@ def _test_semantic_model_connection_payload(semantic_model_id: str, payload: dic
         if rows:
             credentials = {**decrypt_credentials(rows[0].get('credentials_enc')), **credentials}
     config = {**(payload.get('connection_config') or {}), **credentials}
-    return test_connection({'type': payload.get('source_type'), 'config': config})
+    result = test_connection({'type': payload.get('source_type'), 'config': config})
+    if result.get('ok') and str(payload.get('source_type') or '').strip().lower() == 'google_sheets':
+        mapping_error = _validate_google_sheets_table_mappings(model, config, payload.get('table_mappings') or [])
+        if mapping_error is not None:
+            return mapping_error
+    return result
 
 
 @app.post('/api/v1/service/semantic-models/{semantic_model_id}/connections/test')
@@ -2013,7 +2075,7 @@ def scheduler_create_job(payload: dict, authorization: str | None = Header(defau
     notify_on_success = payload.get('notify_on_success', False)
     if not report_id or not source_type or not cron_expr:
         raise HTTPException(400, 'report_id, source_type, and cron_expr are required')
-    allowed = ('google_sheets', 'postgresql', 'postgres', 'redshift', 'sqlserver', 'synapse', 'fabric_warehouse', 'mysql', 'mariadb')
+    allowed = ('google_sheets', 'postgresql', 'postgres', 'redshift', 'sqlserver', 'synapse', 'fabric_warehouse', 'mysql', 'mariadb', 'snowflake')
     if source_type not in allowed:
         raise HTTPException(400, f"source_type must be one of: {', '.join(allowed)}")
     try:
@@ -2100,7 +2162,7 @@ def scheduler_discover_tables(payload: dict, authorization: str | None = Header(
             raise HTTPException(400, f'Unable to discover Google Sheets worksheets: {error}')
     try:
         from .connectors import list_database_tables
-        if source_type not in ('postgresql', 'postgres', 'redshift', 'sqlserver', 'synapse', 'fabric_warehouse', 'mysql', 'mariadb'):
+        if source_type not in ('postgresql', 'postgres', 'redshift', 'sqlserver', 'synapse', 'fabric_warehouse', 'mysql', 'mariadb', 'snowflake'):
             raise ValueError(f'Table discovery is not available for {source_type}.')
         return list_database_tables(source_type, credentials)
     except Exception as error:
@@ -3478,21 +3540,35 @@ def _get_cloud_project(report_id: str, bypass_cache: bool = False):
     if not bypass_cache:
         with _cloud_project_cache_lock:
             item = _cloud_project_cache.get(report_id)
-            if item and now - item['time'] < 300:
+            if item and now - item['time'] < 1.5:
                 return item['project']
     load_lock = _cloud_project_load_locks.setdefault(report_id, threading.Lock())
     # A report page starts all visuals together. Collapse those concurrent
     # first loads so the full definition crosses the network only once.
     with load_lock:
         now = time.time()
+        cached_item = None
         if not bypass_cache:
             with _cloud_project_cache_lock:
                 item = _cloud_project_cache.get(report_id)
-                if item and now - item['time'] < 300:
+                if item and now - item['time'] < 1.5:
                     return item['project']
+                if item and now - item['time'] < 300:
+                    cached_item = item
         from .supabase_store import _admin_client
         sb = _admin_client()
         try:
+            if cached_item is not None:
+                stamp_res = sb.table("published_reports").select("updated_at").eq("id", report_id).limit(1).execute()
+                if stamp_res.data:
+                    latest_updated = stamp_res.data[0].get('updated_at')
+                    if latest_updated == cached_item.get('updated_at'):
+                        with _cloud_project_cache_lock:
+                            if report_id in _cloud_project_cache:
+                                _cloud_project_cache[report_id]['time'] = now
+                        return cached_item['project']
+                invalidate_report_cache(report_id)
+
             res = sb.table("published_reports").select("project_json, updated_at, published_at, name").eq("id", report_id).limit(1).execute()
             if not res.data:
                 return None
@@ -3502,7 +3578,7 @@ def _get_cloud_project(report_id: str, bypass_cache: bool = False):
             if isinstance(p, dict):
                 p_report = p.setdefault('report', {})
                 if row.get('updated_at'):
-                    p_report.setdefault('updated_at', row.get('updated_at'))
+                    p_report['updated_at'] = row.get('updated_at')
                     p['updated_at'] = row.get('updated_at')
                 if row.get('published_at'):
                     p_report.setdefault('published_at', row.get('published_at'))
@@ -3510,11 +3586,11 @@ def _get_cloud_project(report_id: str, bypass_cache: bool = False):
                 if row.get('name') and not p_report.get('name'):
                     p_report['name'] = row.get('name')
             with _cloud_project_cache_lock:
-                _cloud_project_cache[report_id] = {'time': now, 'project': p}
+                _cloud_project_cache[report_id] = {'time': now, 'updated_at': row.get('updated_at'), 'project': p}
             return p
         except Exception as err:
             print(f"VTAB _get_cloud_project error: {err}", flush=True)
-            return None
+            return cached_item['project'] if cached_item is not None else None
 
 
 def _published_visual_definition(project:dict,visual_id:str):

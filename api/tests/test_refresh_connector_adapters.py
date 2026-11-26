@@ -33,3 +33,28 @@ def test_mysql_connection_url_is_parsed_and_tls_is_enabled(monkeypatch):
 
 def test_mariadb_uses_mysql_driver_family():
     assert connectors._database_family("mariadb") == "mysql"
+
+
+def test_snowflake_oauth_uses_token_without_password(monkeypatch):
+    connect = Mock(return_value="connection")
+    monkeypatch.setattr("snowflake.connector.connect", connect)
+    assert connectors._snowflake_connect({
+        "account":"myorg-myaccount", "user":"reader@example.com", "password":"oauth-token",
+        "warehouse":"COMPUTE_WH", "database":"ANALYTICS", "authenticator":"oauth",
+    }) == "connection"
+    kwargs = connect.call_args.kwargs
+    assert kwargs["token"] == "oauth-token"
+    assert "password" not in kwargs
+
+
+def test_snowflake_oidc_authorization_code_needs_no_password(monkeypatch):
+    connect = Mock(return_value="connection")
+    monkeypatch.setattr("snowflake.connector.connect", connect)
+    connectors._snowflake_connect({
+        "account":"myorg-myaccount", "user":"reader@example.com",
+        "warehouse":"COMPUTE_WH", "database":"ANALYTICS",
+        "authenticator":"OAUTH_AUTHORIZATION_CODE",
+    })
+    kwargs = connect.call_args.kwargs
+    assert kwargs["login_timeout"] == 180
+    assert "password" not in kwargs

@@ -1104,17 +1104,19 @@ def get_semantic_model_runtime(semantic_model_id: str, user_id: str) -> dict:
         'tested_connection_count': len([row for row in live_connections if row.get('status') == 'connected']),
         'blockers': blockers,
     }
+    from .reporting_service import enrich_source_manifest
     return {
         'semantic_model_id': semantic_model_id,
         'workspace_id': model['workspace_id'],
         'report_id': model.get('report_id'),
-        'source_manifest': definition.get('sourceManifest') or {'version': 1, 'sources': []},
+        'source_manifest': enrich_source_manifest(definition),
         'connections': connections, 'gateways': gateways, 'schedule': schedule,
         'parameters': list(parameter_map.values()), 'readiness': readiness,
     }
 
 
 def save_semantic_model_connection(semantic_model_id: str, payload: dict, user_id: str) -> dict:
+    from .reporting_service import _extract_sheet_name
     sb = _admin_client()
     model = _semantic_model_manager(sb, semantic_model_id, user_id)
     name = str(payload.get('name') or '').strip()
@@ -1123,7 +1125,14 @@ def save_semantic_model_connection(semantic_model_id: str, payload: dict, user_i
         raise ValueError('Connection name and data source type are required.')
     connection_id = str(payload.get('id') or '').strip()
     credentials = {key: value for key, value in (payload.get('credentials') or {}).items() if value not in ('', None)}
-    mappings = payload.get('table_mappings') or []
+    mappings = []
+    for raw_item in (payload.get('table_mappings') or []):
+        item = dict(raw_item) if isinstance(raw_item, dict) else {}
+        if source_type == 'google_sheets' and not str(item.get('sheet') or item.get('sheet_name') or '').strip():
+            inferred_sheet = _extract_sheet_name(item)
+            if inferred_sheet:
+                item['sheet'] = inferred_sheet
+        mappings.append(item)
     mapped_names = [str(item.get('table') or '').strip() for item in mappings]
     if any(not value for value in mapped_names) or len(mapped_names) != len(set(mapped_names)):
         raise ValueError('Every model table can appear only once in a connection mapping.')

@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 from app.notification_service import DEFAULT_PREFERENCES, _channel_flags
+from app import email_worker
 
 
 class NotificationFoundationTests(unittest.TestCase):
@@ -23,6 +24,19 @@ class NotificationFoundationTests(unittest.TestCase):
         self.assertIn("idempotency_key text NOT NULL UNIQUE", migration)
         self.assertIn("FOR UPDATE SKIP LOCKED", migration)
         self.assertIn("claim_vtab_email_jobs", migration)
+
+    def test_immediate_email_trigger_wakes_durable_worker(self):
+        class Worker:
+            def __init__(self): self.woken = False
+            def wake(self): self.woken = True; return self
+        worker = Worker()
+        original = email_worker.start_email_worker
+        try:
+            email_worker.start_email_worker = lambda: worker
+            self.assertIs(email_worker.trigger_email_worker(), worker)
+            self.assertTrue(worker.woken)
+        finally:
+            email_worker.start_email_worker = original
 
 
 if __name__ == "__main__":

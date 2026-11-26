@@ -17,7 +17,7 @@ def client(monkeypatch):
     return TestClient(server.app)
 
 
-@pytest.mark.parametrize("source_type", ["postgresql", "postgres", "sqlserver", "mysql", "mariadb"])
+@pytest.mark.parametrize("source_type", ["postgresql", "postgres", "sqlserver", "mysql", "mariadb", "snowflake"])
 def test_database_connection_endpoint_uses_shared_connector(client, monkeypatch, source_type):
     seen = {}
     def fake_test(payload):
