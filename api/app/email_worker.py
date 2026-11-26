@@ -83,11 +83,14 @@ class EmailDeliveryWorker:
                     attachment_name=job.get("attachment_name"), attachment_type=job.get("attachment_type"),
                 )
                 provider_message_id = result.get("providerMessageId") if isinstance(result, dict) else None
-                sb.table("email_delivery_attempts").insert({
-                    "job_id": job["id"], "attempt_number": attempt, "status": "accepted",
-                    "provider": provider, "provider_message_id": provider_message_id,
-                    "duration_ms": int((time.time() - started) * 1000),
-                }).execute()
+                try:
+                    sb.table("email_delivery_attempts").insert({
+                        "job_id": job["id"], "attempt_number": attempt, "status": "accepted",
+                        "provider": provider, "provider_message_id": provider_message_id,
+                        "duration_ms": int((time.time() - started) * 1000),
+                    }).execute()
+                except Exception as log_err:
+                    print(f"VTAB warning: failed to log successful email delivery attempt: {log_err}", flush=True)
                 sb.table("email_delivery_jobs").update({
                     "status": "sent", "provider": provider, "provider_message_id": provider_message_id,
                     "sent_at": _now(), "last_error": None, "locked_at": None, "locked_by": None, "updated_at": _now(),
@@ -99,11 +102,14 @@ class EmailDeliveryWorker:
                 message = str(error)[:1500]
                 final = attempt >= int(job.get("max_attempts") or 4)
                 delay = min(60, 2 ** max(0, attempt - 1))
-                sb.table("email_delivery_attempts").insert({
-                    "job_id": job["id"], "attempt_number": attempt, "status": "failed",
-                    "provider": provider, "error_message": message,
-                    "duration_ms": int((time.time() - started) * 1000),
-                }).execute()
+                try:
+                    sb.table("email_delivery_attempts").insert({
+                        "job_id": job["id"], "attempt_number": attempt, "status": "failed",
+                        "provider": provider, "error_message": message,
+                        "duration_ms": int((time.time() - started) * 1000),
+                    }).execute()
+                except Exception as log_err:
+                    print(f"VTAB warning: failed to log failed email delivery attempt: {log_err}", flush=True)
                 sb.table("email_delivery_jobs").update({
                     "status": "failed" if final else "retrying", "provider": provider,
                     "last_error": message, "next_attempt_at": (datetime.now(timezone.utc) + timedelta(minutes=delay)).isoformat(),
