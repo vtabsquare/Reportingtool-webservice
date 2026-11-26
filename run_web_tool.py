@@ -345,6 +345,7 @@ def main() -> int:
         env["VTAB_PRODUCT_VERSION"] = expected_version
         env.setdefault("VTAB_REFRESH_WORKER_ENABLED", "1")
         env.setdefault("VTAB_REFRESH_POLL_SECONDS", "30")
+        env.setdefault("VTAB_EMAIL_WORKER_ENABLED", "0")
         api_host = values.get("VTAB_API_HOST", "127.0.0.1")
         api_port = int(values.get("VTAB_API_PORT", "8830"))
         web_host = values.get("VTAB_WEB_HOST", "127.0.0.1")
