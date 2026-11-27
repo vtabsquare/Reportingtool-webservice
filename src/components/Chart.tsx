@@ -308,28 +308,39 @@ function PremiumDataTable({rows,formats,visual,model={},matrix=false,conditional
   const startResize=(e:any,c:string)=>{
     e.stopPropagation();
     e.preventDefault();
-    const startX = e.pageX;
-    const th = e.target.closest('th');
+    const startX = e.pageX ?? e.clientX;
+    const th = (e.target as HTMLElement).closest('th') as HTMLElement | null;
     const tr = th?.closest('tr');
+    const rectW = th?.getBoundingClientRect().width || 0;
+    const layoutW = th?.offsetWidth || 0;
+    const cssScale = layoutW > 0 && rectW > 0 ? rectW / layoutW : 1;
     const initial={...colWidthsRef.current};
     if(Object.keys(initial).length===0&&tr){
       Array.from(tr.querySelectorAll('th')).forEach((cell:any,index)=>{
-        if(columns[index])initial[columns[index]]=Math.round(cell.getBoundingClientRect().width);
+        if(columns[index])initial[columns[index]]=clampColumnWidth(Math.round(cell.offsetWidth||fixedColumnWidths[index]||100));
       });
     }
-    const startW=initial[c]??(th?th.getBoundingClientRect().width:100);
+    const startW=initial[c]??clampColumnWidth(th?Math.round(th.offsetWidth||fixedColumnWidths[columns.indexOf(c)]||100):100);
     colWidthsRef.current=initial;setColWidths(initial);
+    let finished=false;
     const move = (me: any) => {
-      const next={...colWidthsRef.current,[c]:clampColumnWidth(startW+(me.pageX-startX))};
+      const currentX=me.pageX??me.clientX;
+      const next={...colWidthsRef.current,[c]:clampColumnWidth(startW+((currentX-startX)/cssScale))};
       colWidthsRef.current=next;setColWidths(next);
     };
     const up = () => {
+      if(finished)return;
+      finished=true;
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
       onFormatChange?.({tableColumnWidths:{...colWidthsRef.current},tableAutoWidth:false});
     };
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
   };
   const autoFitColumn=(e:any,c:string)=>{
     e.stopPropagation();e.preventDefault();
@@ -347,8 +358,8 @@ function PremiumDataTable({rows,formats,visual,model={},matrix=false,conditional
   const fixedTableWidth=Math.round(fixedColumnWidths.reduce((sum,width)=>sum+width,0));
   return <div className={'premiumDataTable '+(matrix?'matrixMode':'')+(visual.format.tableHeaderVisible===false?' hideTableHeader':'')} style={tableStyle}>
     {(visual.format.tableSearchVisible===true||visual.format.tableRowCountVisible===true)&&<div className="premiumTableToolbar">{visual.format.tableSearchVisible===true?<div className="premiumTableSearch">⌕<input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search rows…"/></div>:<span/>}{visual.format.tableRowCountVisible===true&&<span>{filtered.length.toLocaleString()} rows</span>}</div>}
-    <div className="tableWrap premiumTable"><table style={{tableLayout:'fixed',width:`${fixedTableWidth}px`,minWidth:0}}><colgroup>{columns.map((c,index)=><col key={c} style={{width:fixedColumnWidths[index]}}/>)}</colgroup><thead><tr>{columns.map(c=><th key={c} draggable onDragStart={event=>{setDraggedColumn(c);event.dataTransfer.effectAllowed='move'}} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect='move'}} onDrop={event=>{event.preventDefault();moveColumn(c)}} onDragEnd={()=>setDraggedColumn(null)} onClick={()=>setSort(s=>s?.field===c?{field:c,dir:s.dir==='asc'?'desc':'asc'}:{field:c,dir:'asc'})} style={{position:'relative',opacity:draggedColumn===c?0.72:1}} title="Click to sort · drag to reorder">{formatColumnHeaderLocal(c)}<span>{sort?.field===c?(sort.dir==='asc'?' ↑':' ↓'):''}</span><div className="tableColumnResizeHandle" title="Drag to resize · double-click to auto-fit · right-click to reset" onDoubleClick={(e)=>autoFitColumn(e,c)} onContextMenu={e=>resetColumn(e,c)} onMouseDown={(e)=>startResize(e,c)} /></th>)}</tr></thead><tbody>{visible.map((row,ri)=><tr key={ri}>{columns.map((c,ci)=>{const numeric=typeof row[c]==='number';const pct=numeric?Math.min(100,Math.abs(row[c])/numericMax[c]*100):0;const hasFormat=!!formats?.[c];const ruleStyle=tableConditionalStyle(visual,c,row[c],conditionalValues);const textColor=ruleStyle.__textColor;const userColor=textColor||tableStyle['--table-text'];const rowBg=visual.format.tableAlternatingRows===false?tableStyle['--table-bg']:(ri%2!==0?tableStyle['--table-alt']:tableStyle['--table-bg']);const tdStyle:any={...(numeric?{backgroundImage:conditionalCell(row[c],pct)}:{}),...ruleStyle};if(textColor)delete tdStyle.__textColor;// Set CSS variables directly on td so the resolved theme and conditional formatting remain authoritative.
-tdStyle['--cell-text']=userColor;tdStyle['--table-text']=userColor;tdStyle['--cell-bg']=ruleStyle['--cell-bg']||rowBg;tdStyle['--table-font-size']=visual.format.tableFontSize?`${visual.format.tableFontSize}px`:undefined;tdStyle.fontSize=visual.format.tableFontSize?`${visual.format.tableFontSize}px`:undefined;tdStyle.fontFamily=visual.format.tableFontFamily||undefined;tdStyle.textAlign=visual.format.tableTextAlign||undefined;tdStyle.fontWeight=visual.format.tableTextBold?700:undefined;tdStyle.fontStyle=visual.format.tableTextItalic?'italic':undefined;tdStyle.whiteSpace=visual.format.tableTextWrap?'normal':'nowrap';const content=numeric||hasFormat?formatForField(row[c],c,formats):String(row[c]??'');return <td key={c} className={matrix&&ci===0?'matrixRowHeader':''} style={tdStyle}>{content}</td>})}</tr>)}</tbody>
+    <div className="tableWrap premiumTable"><table style={{tableLayout:'fixed',width:`${fixedTableWidth}px`,minWidth:0}}><colgroup>{columns.map((c,index)=><col key={c} style={{width:fixedColumnWidths[index]}}/>)}</colgroup><thead><tr>{columns.map(c=><th key={c} draggable onDragStart={event=>{setDraggedColumn(c);event.dataTransfer.effectAllowed='move'}} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect='move'}} onDrop={event=>{event.preventDefault();moveColumn(c)}} onDragEnd={()=>setDraggedColumn(null)} onClick={()=>setSort(s=>s?.field===c?{field:c,dir:s.dir==='asc'?'desc':'asc'}:{field:c,dir:'asc'})} style={{position:'relative',opacity:draggedColumn===c?0.72:1}} title="Click to sort · drag to reorder">{formatColumnHeaderLocal(c)}<span>{sort?.field===c?(sort.dir==='asc'?' ↑':' ↓'):''}</span><div className="tableColumnResizeHandle" data-resize-handle draggable={false} title="Drag to resize · double-click to auto-fit · right-click to reset" onClick={e=>e.stopPropagation()} onDragStart={e=>{e.preventDefault();e.stopPropagation()}} onDoubleClick={(e)=>autoFitColumn(e,c)} onContextMenu={e=>resetColumn(e,c)} onPointerDown={(e)=>{e.stopPropagation();startResize(e,c)}} onMouseDown={(e)=>{if(typeof PointerEvent==='undefined')startResize(e,c)}} /></th>)}</tr></thead><tbody>{visible.map((row,ri)=><tr key={ri}>{columns.map((c,ci)=>{const numeric=typeof row[c]==='number';const pct=numeric?Math.min(100,Math.abs(row[c])/numericMax[c]*100):0;const hasFormat=!!formats?.[c];const ruleStyle=tableConditionalStyle(visual,c,row[c],conditionalValues);const textColor=ruleStyle.__textColor;const userColor=textColor||tableStyle['--table-text'];const rowBg=visual.format.tableAlternatingRows===false?tableStyle['--table-bg']:(ri%2!==0?tableStyle['--table-alt']:tableStyle['--table-bg']);const tdStyle:any={...(numeric?{backgroundImage:conditionalCell(row[c],pct)}:{}),...ruleStyle};if(textColor)delete tdStyle.__textColor;// Set CSS variables directly on td so the resolved theme and conditional formatting remain authoritative.
+tdStyle['--cell-text']=userColor;tdStyle['--table-text']=userColor;tdStyle['--cell-bg']=ruleStyle['--cell-bg']||rowBg;tdStyle['--table-font-size']=visual.format.tableFontSize?`${visual.format.tableFontSize}px`:undefined;tdStyle.fontSize=visual.format.tableFontSize?`${visual.format.tableFontSize}px`:undefined;tdStyle.fontFamily=visual.format.tableFontFamily||undefined;tdStyle.textAlign=visual.format.tableTextAlign||undefined;tdStyle.fontWeight=visual.format.tableTextBold?700:undefined;tdStyle.fontStyle=visual.format.tableTextItalic?'italic':undefined;tdStyle.whiteSpace=visual.format.tableTextWrap?'normal':'nowrap';const content=numeric||hasFormat?formatForField(row[c],c,formats):String(row[c]??'');return <td key={c} className={matrix&&ci===0?'matrixRowHeader':''} style={tdStyle} title={content}>{content}</td>})}</tr>)}</tbody>
     {visual.format.tableGrandTotal!==false&&<tfoot><tr>{columns.map((c,i)=>{
       if(i===0) return <th key={c}>{visual.format.tableTotalLabel||'Total'}</th>;
       const isNum = filtered.some(r=>typeof r[c]==='number');
